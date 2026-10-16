@@ -2,7 +2,7 @@
 
 A userscript that adds extra tools to [AniList](https://anilist.co/), including a one-way **AniList → MyAnimeList sync**, a score and progress editor, airing indicators, OP/ED songs and quick links to other sites.
 
-- **Version:** 0.6.2 ([changelog](./CHANGELOG.md))
+- **Version:** 0.7.0 ([changelog](./CHANGELOG.md))
 - **License:** GPL-3.0-or-later
 - **Author:** Daiya
 - **Runs on:** [anilist.co](https://anilist.co/) and [myanimelist.net](https://myanimelist.net/) (the MAL site is used for connecting your account)
@@ -40,7 +40,7 @@ Every feature can be turned on or off in the settings panel.
 | **List Score & Progress Editor** | Edit your score and episode/chapter progress from the sidebar of any anime or manga page. |
 | **Airing Progress Indicator** | Shows an orange dot on releasing shows in your *Watching* list when you are behind the aired episode count. |
 | **Anime OP/ED songs** | Lists opening and ending themes on anime pages. Click a song to play its video inline. |
-| **Settings panel** | One place to configure everything, including a mobile-friendly layout. |
+| **Settings panel** | One place to configure everything, including a mobile-friendly layout. Includes a button linking to [AniList Fast Load](https://greasyfork.org/en/scripts/598442-anilist-fast-load). |
 
 ### Feature details
 
@@ -138,6 +138,8 @@ Each feature has a toggle, and some have options:
 | Automatic Sync Interval | 6 hours | 1–720 hours. |
 | Decimal Score Conversion | Round | **Ceil** rounds up (7.4 → 8), **Round** rounds normally (7.4 → 7, 7.5 → 8), **Floor** rounds down (7.9 → 7). |
 
+The panel also has a **Get it** button for [AniList Fast Load](https://greasyfork.org/en/scripts/598442-anilist-fast-load), my separate performance userscript (lazy media, request caching, smoother scrolling). It only opens the Greasy Fork page in a new tab, and it disappears once Fast Load is installed. It is optional, and AL Additions works the same without it.
+
 Changes apply when you press **Save and reload**. **Reset to defaults** restores the defaults in the panel, and you still need to press Save.
 
 ---
@@ -157,7 +159,7 @@ The script runs on `anilist.co` and `myanimelist.net`. It contacts only the serv
 
 Settings, tokens and caches are stored in your userscript manager's storage and are not sent anywhere else. There is no analytics or tracking.
 
-Nyaa and Keyframe Staff List are only opened as links in a new tab when you click them; the script doesn't make background requests to them.
+The AniList Fast Load button in settings and Nyaa and Keyframe Staff List are only opened as links in a new tab when you click them; the script doesn't make background requests to them.
 
 The MAL connection uses the OAuth PKCE flow with a public client ID, so there is no client secret in the script. As with any userscript, only install scripts you trust and read the source before granting permissions.
 
