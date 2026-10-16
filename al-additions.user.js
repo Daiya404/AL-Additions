@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AL Additions
 // @namespace    daiya.al-additions-v3
-// @version      0.6.1
+// @version      0.6.2
 // @description  AniList additions: sync, list tools, airing indicators, songs, links, and utilities.
 // @author       Daiya
 // @icon         https://anilist.co/img/icons/favicon-32x32.png
@@ -24,8 +24,8 @@
 // @run-at       document-start
 // @noframes
 // @license      GPL-3.0-or-later
-// @downloadURL https://update.greasyfork.org/scripts/594705/AL%20Additions.user.js
-// @updateURL https://update.greasyfork.org/scripts/594705/AL%20Additions.meta.js
+// @downloadURL  https://raw.githubusercontent.com/Daiya404/AL-Additions/main/al-additions.user.js
+// @updateURL    https://raw.githubusercontent.com/Daiya404/AL-Additions/main/al-additions.user.js
 // ==/UserScript==
 
 (function () {
