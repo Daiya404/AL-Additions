@@ -2,7 +2,7 @@
 
 A userscript that adds extra tools to [AniList](https://anilist.co/), including a one-way **AniList → MyAnimeList sync**, a score and progress editor, airing indicators, OP/ED songs and quick links to other sites.
 
-- **Version:** 0.7.0 ([changelog](./CHANGELOG.md))
+- **Version:** 0.7.1 ([changelog](./CHANGELOG.md))
 - **License:** GPL-3.0-or-later
 - **Author:** Daiya
 - **Runs on:** [anilist.co](https://anilist.co/) and [myanimelist.net](https://myanimelist.net/) (the MAL site is used for connecting your account)
