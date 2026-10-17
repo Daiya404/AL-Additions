@@ -14,7 +14,7 @@ import { store, tryOr, esc, debounce } from '../../utils/helpers';
 import { addStyle, icon } from '../../utils/dom';
 import { Core } from '../../core/observer';
 import { progress, syncStatus, onProgressChange, onStateChange } from './state';
-import { startManualSync, fullResync, currentListType, maybeAutoSync } from './engine';
+import { startManualSync, fullResync, currentListType, maybeAutoSync, LIST_PATH_RE } from './engine';
 
 addStyle(
   'almal-style',
@@ -340,7 +340,6 @@ let lastMountTry = 0;
 let retryTimer: ReturnType<typeof setTimeout> | 0 = 0;
 let selfLookup = false;
 
-const LIST_PATH_RE = /^\/user\/[^/]+\/(anime|manga)list/;
 const OWNER_RE = /^\/user\/([^/]+)\/(?:anime|manga)list/;
 const decodeName = (s: string): string => {
   try {

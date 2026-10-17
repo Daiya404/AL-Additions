@@ -10,18 +10,35 @@ A userscript that adds extra tools to [AniList](https://anilist.co/), including 
 
 ---
 
+## Why this exists
+
+I wanted these features without the slowdown. In my experience the MALSync browser extension made AniList load very slowly, and some userscripts I relied on, such as Morimasa's Anisongs and Plennhar's airing dots, had stopped working. So I updated and fixed the broken ones, wrote the sync "myself", and combined everything into one script that shares a single page observer to stay light.
+
+**AI disclosure:** a lot of AI was involved. Much of the code, including the sync, was written with heavy help from Claude and ChatGPT. I direct the work, test it and maintain it.
+
+---
+
 ## Contents
 
-- [Features](#features)
-- [Installation](#installation)
-- [AniList → MyAnimeList sync](#anilist--myanimelist-sync)
-- [Settings](#settings)
-- [Privacy and permissions](#privacy-and-permissions)
-- [Troubleshooting](#troubleshooting)
-- [Reporting bugs or requesting features](#reporting-bugs-or-requesting-features)
-- [Development](#development)
-- [Credits](#credits)
-- [License](#license)
+- [AL Additions](#al-additions)
+    - [Why this exists](#why-this-exists)
+    - [Contents](#contents)
+    - [Features](#features)
+        - [Feature details](#feature-details)
+    - [Installation](#installation)
+        - [Alternative: install directly from GitHub](#alternative-install-directly-from-github)
+    - [AniList → MyAnimeList sync](#anilist--myanimelist-sync)
+        - [Connecting your accounts](#connecting-your-accounts)
+        - [Using it](#using-it)
+        - [How it works](#how-it-works)
+        - [Disconnecting and resetting](#disconnecting-and-resetting)
+    - [Settings](#settings)
+    - [Privacy and permissions](#privacy-and-permissions)
+    - [Troubleshooting](#troubleshooting)
+    - [Reporting bugs or requesting features](#reporting-bugs-or-requesting-features)
+    - [Development](#development)
+    - [Credits](#credits)
+    - [License](#license)
 
 ---
 
@@ -238,25 +255,30 @@ npm run build
 
 The production build compiles the code through TypeScript and Vite into `dist/al-additions.user.js`, then automatically copies the output to the root `al-additions.user.js` so Greasy Fork and GitHub raw URLs stay up to date.
 
-1. Bump `version` in `package.json` and in `vite.config.ts`.
-2. Add an entry to [`CHANGELOG.md`](./CHANGELOG.md) and update the version in this README.
-3. Run `npm run build` to type-check and generate the root `al-additions.user.js`.
+1. Run `npm run bump -- patch`, `npm run bump -- minor`, or `npm run bump -- major`. This updates the package metadata; `vite.config.ts` reads the package version directly, then the script type-checks and rebuilds the userscript.
+2. Add an entry to [`CHANGELOG.md`](./CHANGELOG.md) and update the version near the top of this README.
+3. Review the generated `al-additions.user.js` and the complete diff.
 4. Commit your changes and push to `main`. Greasy Fork syncs automatically from this repository.
 
-Always bump the version, otherwise userscript managers will not prompt users to update.
+Use the bump script for releases instead of editing version fields manually, so all package and userscript metadata stay synchronized. Always bump the version, otherwise userscript managers will not prompt users to update.
 
 ---
 
 ## Credits
 
-- **Daiya** – combining, fixing and adding original features
-- **Claude & ChatGPT** – AI assistance throughout consolidation and fixes
-- **Plennhar** – Episode Dots, Anisong and Minimum Tags
-- **Samu** – Find on Nyaa
-- **DJ-TrainR3k** – Banner Downloader
-- **Meatloaf1** – Remove Titles from URL
-- **MALSync** – base MALSync, episode/chapter and score embedding
-- **Matix** – API limit fix idea
+AL Additions combines and builds on the work of these authors, and is inspired by MALSync (its code is not copied). Everything not credited here, such as the Keyframe Staff List button and the List Score & Progress Editor, is original work by Daiya. The same list is available in the settings panel.
+
+| Who                                                            | What                                                                          | Original work                                                                                                                                                                                                                                                         |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Daiya](https://github.com/Daiya404)                           | Combining, fixing and maintaining this script                                 | [AL-Additions](https://github.com/Daiya404/AL-Additions)                                                                                                                                                                                                              |
+| [Plennhar](https://greasyfork.org/en/users/1323916-plennhar)   | Browse Tag Rank Filter, Airing Progress Indicator                             | [Minimum tag percentage](https://greasyfork.org/en/scripts/559539-anilist-browse-set-default-minimum-tag-percentage-to-50), [Airing dots](https://greasyfork.org/en/scripts/563899-anilist-color-airing-dots-on-anime-lists-orange-if-the-user-is-behind-on-episodes) |
+| [Morimasa](https://greasyfork.org/en/users/61126-morimasa)     | Anime OP/ED songs                                                             | [Anisongs](https://greasyfork.org/en/scripts/374785-anisongs)                                                                                                                                                                                                         |
+| [Samu](https://greasyfork.org/en/users/17840-samu)             | Nyaa search link                                                              | [Find on Nyaa](https://greasyfork.org/en/scripts/379776-find-on-nyaa)                                                                                                                                                                                                 |
+| [trevor229](https://greasyfork.org/en/users/158806-trevor229)  | Banner Downloader                                                             | [AniList Banner Downloader](https://greasyfork.org/en/scripts/370470-anilist-banner-downloader)                                                                                                                                                                       |
+| [meatloaf1](https://greasyfork.org/en/users/1630083-meatloaf1) | Short AniList URLs                                                            | [Remove AniList titles from URL](https://greasyfork.org/en/scripts/589540-remove-anilist-titles-from-url)                                                                                                                                                             |
+| [MALSync](https://github.com/MALSync)                          | Inspiration for the MAL sync, and for the episode/chapter and score embedding | [MALSync](https://github.com/MALSync/MALSync)                                                                                                                                                                                                                         |
+| [MatiX221](https://github.com/MatiX221)                        | API limit fix idea, modularising refactor                                     | [MatiX221/AL-Additions](https://github.com/MatiX221/AL-Additions)                                                                                                                                                                                                     |
+| Claude & ChatGPT                                               | AI assistance throughout consolidation and fixes                              |                                                                                                                                                                                                                                                                       |
 
 Theme data is provided by [AnimeThemes](https://animethemes.moe/). Chapter data comes from [MangaUpdates](https://www.mangaupdates.com/) and [NovelUpdates](https://www.novelupdates.com/).
 

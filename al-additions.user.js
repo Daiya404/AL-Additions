@@ -3,11 +3,11 @@
 // @namespace    daiya.al-additions-v3
 // @version      0.8.0
 // @author       Daiya
-// @description  AniList additions: sync, list tools, airing indicators, songs, links, and utilities.
+// @description  A userscript that adds extra tools to AniList, including a one-way AniList → MyAnimeList sync, a score and progress editor, airing indicators, OP/ED songs and quick links to other sites.
 // @license      GPL-3.0-or-later
 // @icon         https://anilist.co/img/icons/favicon-32x32.png
 // @homepage     https://github.com/Daiya404/AL-Additions#readme
-// @homepageURL  https://github.com/Daiya404/AL-Additions#readme
+// @homepageURL  https://github.com/Daiya404/AL-Additions
 // @source       https://github.com/Daiya404/AL-Additions.git
 // @supportURL   https://github.com/Daiya404/AL-Additions/issues
 // @downloadURL  https://raw.githubusercontent.com/Daiya404/AL-Additions/main/al-additions.user.js
@@ -156,7 +156,7 @@
 			return JSON.parse(await gm.text(url, o));
 		}
 	};
-	function randomString$1(len) {
+	function randomString(len) {
 		const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 		const arr = new Uint8Array(len);
 		crypto.getRandomValues(arr);
@@ -170,6 +170,10 @@
 		let observer = null;
 		let lastHref = location.href;
 		let muted = false;
+		const pageWin = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+		const OWN_UI = "#almal-panel,#almal-toast,#ala-media-info,#daiya-anisongs,#ala-settings-backdrop";
+		let queued = [];
+		let flushTimer = 0;
 		const fire = (list, arg) => {
 			for (const cb of list.slice()) safe(() => cb(arg), "core");
 		};
@@ -179,12 +183,14 @@
 			fire(navCbs);
 		}
 		for (const name of ["pushState", "replaceState"]) {
-			const orig = history[name];
-			history[name] = function(...args) {
-				const r = orig.apply(this, args);
-				notifyNav();
-				return r;
-			};
+			const orig = pageWin.history[name];
+			try {
+				pageWin.history[name] = function(...args) {
+					const r = orig.apply(this, args);
+					notifyNav();
+					return r;
+				};
+			} catch (_) {}
 		}
 		window.addEventListener("popstate", notifyNav);
 		window.addEventListener("hashchange", notifyNav);
@@ -195,7 +201,18 @@
 		}
 		function ensureObserver() {
 			if (observer || !document.body) return;
-			observer = new MutationObserver((m) => fire(bodyCbs, m));
+			const isOwn = (m) => {
+				return !!(m.target.nodeType === 1 ? m.target : m.target.parentElement)?.closest(OWN_UI);
+			};
+			observer = new MutationObserver((records) => {
+				for (const record of records) if (!isOwn(record)) queued.push(record);
+				if (queued.length && !flushTimer) flushTimer = setTimeout(() => {
+					flushTimer = 0;
+					const batch = queued;
+					queued = [];
+					fire(bodyCbs, batch);
+				}, 50);
+			});
 			observer.observe(document.body, {
 				childList: true,
 				subtree: true,
@@ -351,15 +368,61 @@
 		migrate
 	};
 	var CREDITS = [
-		["Daiya", "Combining, fixing, and adding original features."],
-		["Claude & ChatGPT", "AI assistance throughout the consolidation and fixes."],
-		["Plennhar", "Behind Episode Dots, Anisong, and Minimum Tags."],
-		["Samu", "Find on Nyaa."],
-		["DJ-TrainR3k", "Banner Downloader."],
-		["Meatloaf1", "Remove Titles from URL."],
-		["MALSync", "Base MALSync, episode/chapter and score embedding."],
-		["Matix", "API Limit Fix Idea."]
+		{
+			name: "Daiya",
+			url: "https://github.com/Daiya404",
+			note: "Combining, fixing and maintaining this script. Everything not credited below, such as the Keyframe Staff List button and the List Score & Progress Editor, is original work.",
+			works: [["AL-Additions on GitHub", "https://github.com/Daiya404/AL-Additions"]]
+		},
+		{
+			name: "Plennhar",
+			url: "https://greasyfork.org/en/users/1323916-plennhar",
+			note: "Browse Tag Rank Filter and Airing Progress Indicator.",
+			works: [["AniList Browse: set default minimum tag percentage to 50", "https://greasyfork.org/en/scripts/559539-anilist-browse-set-default-minimum-tag-percentage-to-50"], ["AniList: color airing dots on anime lists orange if the user is behind on episodes", "https://greasyfork.org/en/scripts/563899-anilist-color-airing-dots-on-anime-lists-orange-if-the-user-is-behind-on-episodes"]]
+		},
+		{
+			name: "Morimasa",
+			url: "https://greasyfork.org/en/users/61126-morimasa",
+			note: "Anime OP/ED songs.",
+			works: [["Anisongs", "https://greasyfork.org/en/scripts/374785-anisongs"]]
+		},
+		{
+			name: "Samu",
+			url: "https://greasyfork.org/en/users/17840-samu",
+			note: "Nyaa search link.",
+			works: [["Find on Nyaa", "https://greasyfork.org/en/scripts/379776-find-on-nyaa"]]
+		},
+		{
+			name: "trevor229",
+			url: "https://greasyfork.org/en/users/158806-trevor229",
+			note: "Banner Downloader.",
+			works: [["AniList Banner Downloader", "https://greasyfork.org/en/scripts/370470-anilist-banner-downloader"]]
+		},
+		{
+			name: "meatloaf1",
+			url: "https://greasyfork.org/en/users/1630083-meatloaf1",
+			note: "Short AniList URLs.",
+			works: [["Remove AniList titles from URL", "https://greasyfork.org/en/scripts/589540-remove-anilist-titles-from-url"]]
+		},
+		{
+			name: "MALSync",
+			url: "https://github.com/MALSync",
+			note: "Inspiration for the MyAnimeList sync, and for the episode/chapter and score embedding.",
+			works: [["MALSync on GitHub", "https://github.com/MALSync/MALSync"]]
+		},
+		{
+			name: "MatiX221",
+			url: "https://github.com/MatiX221",
+			note: "The API limit fix idea, and a refactor that modularises the code.",
+			works: [["MatiX221/AL-Additions", "https://github.com/MatiX221/AL-Additions"]]
+		},
+		{
+			name: "Claude & ChatGPT",
+			note: "AI assistance throughout the consolidation and fixes."
+		}
 	];
+	var creditLink = (url, text, cls = "") => `<a${cls ? ` class="${cls}"` : ""} href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>`;
+	var creditsHtml = () => CREDITS.map((c) => `<div class="ala-credit"><b>${c.url ? creditLink(c.url, c.name) : esc(c.name)}</b> — ${esc(c.note)}${c.works ? `<ul>${c.works.map(([label, url]) => `<li>${creditLink(url, label)}</li>`).join("")}</ul>` : ""}</div>`).join("");
 	var FAST_LOAD_URL = "https://greasyfork.org/en/scripts/598442-anilist-fast-load";
 	function fastLoadInstalled() {
 		try {
@@ -462,7 +525,10 @@
   .ala-promo .ala-btn{flex:0 0 auto;gap:6px;text-decoration:none}
   .ala-credits{margin:18px 2px 10px;color:rgb(var(--color-text-lighter));font-size:12px}
   .ala-credits summary{cursor:pointer;padding:4px 0}
-  .ala-credits div{margin-top:4px}
+  .ala-credit{margin-top:10px}
+  .ala-credit ul{margin:3px 0 0;padding-left:18px;list-style:disc}
+  .ala-credit a{color:rgb(var(--color-blue));text-decoration:none}
+  .ala-credit a:hover{text-decoration:underline}
 
   @media (max-width:700px){
     .ala-settings-nav-section{display:none!important}
@@ -516,7 +582,7 @@
     <div class="ala-sheet-body">
       ${sectionsHtml()}
       ${fastLoadInstalled() ? "" : `<div class="ala-promo">${rowText("AniList Fast Load", "My other userscript: faster loading, lazy images, request caching and smoother scrolling on AniList. Opens its Greasy Fork page.")}<a class="ala-btn" href="${FAST_LOAD_URL}" target="_blank" rel="noopener noreferrer" aria-label="Get AniList Fast Load on Greasy Fork (opens in a new tab)">Get it ${icon("external", 16)}</a></div>`}
-      <details class="ala-credits"><summary>Credits</summary>${CREDITS.map(([n, d]) => `<div><b>${esc(n)}</b> — ${esc(d)}</div>`).join("")}</details>
+      <details class="ala-credits"><summary>Credits</summary>${creditsHtml()}</details>
     </div>
     <footer class="ala-sheet-foot">
       <button class="ala-btn ala-btn--primary ala-save" type="button">Save and reload</button>
@@ -728,14 +794,17 @@
 		const y = normTitle(b);
 		if (!x || !y) return 0;
 		if (x === y) return 100;
-		if (x.includes(y) || y.includes(x)) return 85;
+		if (x.includes(y) || y.includes(x)) {
+			const ratio = Math.min(x.length, y.length) / Math.max(x.length, y.length);
+			return Math.round(50 + ratio * 35);
+		}
 		const setA = new Set(x.split(" "));
 		const setB = new Set(y.split(" "));
 		let common = 0;
 		for (const w of setA) if (setB.has(w)) common++;
 		return Math.round(common / Math.max(setA.size, setB.size) * 70);
 	}
-	function bestMatch(list, title, getTitle, min = 45) {
+	function bestMatch(list, title, getTitle, min = 70) {
 		let best = null;
 		let bestScore = -1;
 		for (const item of list) {
@@ -892,14 +961,6 @@
 	var MAL_REDIRECT = "https://myanimelist.net/";
 	var MAL_CLIENT_ID = "f8197fe8cb24188073de4c0227307edf";
 	var hooks = {};
-	function randomString(len) {
-		const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-		const arr = new Uint8Array(len);
-		crypto.getRandomValues(arr);
-		let out = "";
-		for (let i = 0; i < len; i++) out += chars[arr[i] % 62];
-		return out;
-	}
 	var logLines = [];
 	var lastNotice = "";
 	function log(msg, level = "info") {
@@ -1450,12 +1511,6 @@
 			const frag = Settings.get("nyaaProviders").map(encodeURIComponent).join("&text=");
 			return `https://nyaa.si/?f=0&c=1_2&s=seeders&o=desc&q=${encodeURI(q)}#:~:text=${frag}`;
 		};
-		async function openMal(route) {
-			const media = await MediaData.get(route.id, route.type);
-			if (!media?.idMal) return false;
-			openTab(`https://myanimelist.net/${route.kind}/${media.idMal}`);
-			return true;
-		}
 		function attach(h1, route) {
 			const a = document.createElement("a");
 			a.id = ID;
@@ -1505,7 +1560,16 @@
 					e.stopPropagation();
 					return;
 				}
-				if (e.ctrlKey || e.metaKey || !await openMal(route)) searchNyaa();
+				const w = window.open("about:blank", "_blank");
+				let target = nyaaUrl(titleText());
+				if (!e.ctrlKey && !e.metaKey) {
+					const media = await MediaData.get(route.id, route.type);
+					if (media?.idMal) target = `https://myanimelist.net/${route.kind}/${media.idMal}`;
+				}
+				if (w) {
+					w.opener = null;
+					w.location.href = target;
+				} else openTab(target);
 			});
 			h1.appendChild(a);
 		}
@@ -1816,6 +1880,18 @@
 			clearTimeout(timer);
 			timer = setTimeout(() => render(), ms);
 		};
+		function renderConnect(key) {
+			const spot = findSpot();
+			if (!spot) return void schedule(800);
+			const box = document.createElement("div");
+			box.id = ID;
+			box.dataset.mode = "connect";
+			box.innerHTML = `<div style="margin-bottom:10px;color:rgb(var(--color-text-lighter))">Connect AniList to edit your score and progress here.</div><button class="ala-mi-save" type="button">Connect AniList</button>`;
+			box.querySelector("button").addEventListener("click", alConnect);
+			panel()?.remove();
+			spot.parent.insertBefore(box, spot.before);
+			shown = key;
+		}
 		function changeProgress(delta, input, limit) {
 			const next = Number(input.value) + delta;
 			if (!Number.isInteger(next) || next < 0 || limit !== null && next > limit) return;
@@ -1876,6 +1952,7 @@
 				if (Date.now() - routeAt < 15e3) schedule(800);
 				return;
 			}
+			if (!store.get("al_token", null)) return renderConnect(key);
 			const g = gen;
 			const stale = () => g !== gen || mediaRoute()?.id !== route.id;
 			rendering = true;
@@ -2018,7 +2095,13 @@
 			schedule(1200);
 		});
 		Core.onBodyMutation(() => {
-			if (mediaRoute() && !panel() && !rendering && !saving) schedule(500);
+			const r = mediaRoute();
+			if (!r || panel() || rendering || saving) return;
+			if (retry.key === `${r.type}:${r.id}` && retry.count >= MAX_FAILURES) return;
+			schedule(500);
+		});
+		window.addEventListener("focus", () => {
+			if (panel()?.dataset.mode === "connect" && store.get("al_token", null)) render(true);
 		});
 	});
 	defineFeature({
@@ -2192,7 +2275,7 @@
 					if (batch.length >= BATCH) break;
 				}
 				running++;
-				updateBatch(batch).finally(() => {
+				updateBatch(batch).catch((e) => console.error("[AL-Additions] airing batch", e)).finally(() => {
 					batch.forEach((id) => active.delete(id));
 					running--;
 					queueIDs([]);
@@ -2314,6 +2397,7 @@
 		const API = "https://api.animethemes.moe/anime";
 		const ROOT = "daiya-anisongs";
 		const TTL = 6048e5;
+		const EMPTY_TTL = 432e5;
 		addStyle("daiya-anisongs-style", `
       #${ROOT}{width:100%;margin-top:30px}
       #${ROOT} .daiya-anisongs-columns{display:flex;gap:30px;width:100%}
@@ -2325,7 +2409,7 @@
       #${ROOT} video{display:block;width:100%;max-width:39em;margin-top:10px;cursor:auto}
       #${ROOT} .daiya-anisongs-empty{text-align:center;opacity:.7;padding:10px}
       @media (max-width:700px){#${ROOT} .daiya-anisongs-columns{flex-direction:column;gap:10px}}`);
-		const cacheStore = persistent("daiya_anisongs_cache_v5", (d) => {
+		const cacheStore = persistent("daiya_anisongs_cache_v6", (d) => {
 			for (const id of Object.keys(d)) if (!(Number(d[id]?.expires) > Date.now())) delete d[id];
 		});
 		const cache = cacheStore.data;
@@ -2380,8 +2464,9 @@
 			});
 			const result = await gm.json(`${API}?${params}`, { headers: { Accept: "application/json" } });
 			const data = groupThemes(Array.isArray(result?.anime) ? result.anime[0] : null);
+			const empty = !data.OP.length && !data.ED.length;
 			cache[String(id)] = {
-				expires: Date.now() + TTL,
+				expires: Date.now() + (empty ? EMPTY_TTL : TTL),
 				data
 			};
 			cacheStore.save();
@@ -2494,14 +2579,14 @@
 		}
 		Core.ready(sync);
 		Core.onNavigate(sync);
-		Core.onBodyMutation(repair);
+		Core.onBodyMutation(debounce(repair, 200));
 	});
 	var TYPES = ["ANIME", "MANGA"];
 	var ID_MISS_TTL_MS$1 = 6048e5;
 	var SETTLED_TTL_MS = 3888e6;
 	var LOCK_STALE_MS = 45e3;
 	var LOCK_HEARTBEAT_MS = 1e4;
-	var TAB_ID = randomString$1(10);
+	var TAB_ID = randomString(10);
 	var LOCK_KEY = "sync_lock_heartbeat";
 	var progress = {
 		phase: "idle",
@@ -2539,35 +2624,25 @@
 			throw e;
 		}
 	};
-	var stores = {
-		ANIME: {
-			ids: persistent("sync_idmap_ANIME", (d) => {
-				for (const k of Object.keys(d)) {
-					const r = d[k];
-					if (!r || typeof r !== "object" || !(r.m > 0) && !(Date.now() - r.t < ID_MISS_TTL_MS$1)) delete d[k];
-				}
-			}),
-			settled: persistent("sync_settled_ANIME", (d) => {
-				for (const k of Object.keys(d)) {
-					const r = d[k];
-					if (!Array.isArray(r) || !(Date.now() - r[2] < SETTLED_TTL_MS)) delete d[k];
-				}
-			})
-		},
-		MANGA: {
-			ids: persistent("sync_idmap_MANGA", (d) => {
-				for (const k of Object.keys(d)) {
-					const r = d[k];
-					if (!r || typeof r !== "object" || !(r.m > 0) && !(Date.now() - r.t < ID_MISS_TTL_MS$1)) delete d[k];
-				}
-			}),
-			settled: persistent("sync_settled_MANGA", (d) => {
-				for (const k of Object.keys(d)) {
-					const r = d[k];
-					if (!Array.isArray(r) || !(Date.now() - r[2] < SETTLED_TTL_MS)) delete d[k];
-				}
-			})
+	var pruneIds = (d) => {
+		for (const k of Object.keys(d)) {
+			const r = d[k];
+			if (!r || typeof r !== "object" || !(r.m > 0) && !(Date.now() - r.t < ID_MISS_TTL_MS$1)) delete d[k];
 		}
+	};
+	var pruneSettled = (d) => {
+		for (const k of Object.keys(d)) {
+			const r = d[k];
+			if (!Array.isArray(r) || !(Date.now() - r[2] < SETTLED_TTL_MS)) delete d[k];
+		}
+	};
+	var makeStores = (t) => ({
+		ids: persistent(`sync_idmap_${t}`, pruneIds),
+		settled: persistent(`sync_settled_${t}`, pruneSettled)
+	});
+	var stores = {
+		ANIME: makeStores("ANIME"),
+		MANGA: makeStores("MANGA")
 	};
 	var clearCache = (c) => {
 		for (const k of Object.keys(c.data)) delete c.data[k];
@@ -2892,7 +2967,7 @@
 	var FULL_COMPARE_MS = 6048e5;
 	var BREAKER_MAX_TRIPS = 3;
 	var RETRY_AFTER_FAILURE_MS = 6e5;
-	var LIST_PATH_RE$1 = /^\/user\/[^/]+\/(anime|manga)list/;
+	var LIST_PATH_RE = /^\/user\/[^/]+\/(anime|manga)list/;
 	var typeLabel = (t) => t === "ANIME" ? "Anime" : "Manga";
 	var ENTRY_FIELDS = "status score(format: POINT_100) progress progressVolumes repeat notes updatedAt startedAt { year month day } completedAt { year month day }";
 	var MEDIA_FIELDS = "id idMal startDate { year } synonyms title { userPreferred english romaji native }";
@@ -3113,7 +3188,7 @@
 		return { ok };
 	}
 	var currentListType = () => {
-		const m = location.pathname.match(LIST_PATH_RE$1);
+		const m = location.pathname.match(LIST_PATH_RE);
 		return m ? m[1].toUpperCase() : null;
 	};
 	async function confirmDecimalScores() {
@@ -3481,7 +3556,6 @@
 	var lastMountTry = 0;
 	var retryTimer = 0;
 	var selfLookup = false;
-	var LIST_PATH_RE = /^\/user\/[^/]+\/(anime|manga)list/;
 	var OWNER_RE = /^\/user\/([^/]+)\/(?:anime|manga)list/;
 	var decodeName = (s) => {
 		try {

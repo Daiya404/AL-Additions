@@ -205,11 +205,13 @@ defineFeature(
           if (batch.length >= BATCH) break;
         }
         running++;
-        updateBatch(batch).finally(() => {
-          batch.forEach((id) => active.delete(id));
-          running--;
-          queueIDs([]);
-        });
+        updateBatch(batch)
+          .catch((e) => console.error('[AL-Additions] airing batch', e))
+          .finally(() => {
+            batch.forEach((id) => active.delete(id));
+            running--;
+            queueIDs([]);
+          });
       }
     }
 

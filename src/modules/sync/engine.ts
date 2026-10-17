@@ -43,7 +43,7 @@ hooks.checkCancel = checkCancel;
 const FULL_COMPARE_MS = 7 * 86400e3;
 const BREAKER_MAX_TRIPS = 3;
 const RETRY_AFTER_FAILURE_MS = 10 * 60e3;
-const LIST_PATH_RE = /^\/user\/[^/]+\/(anime|manga)list/;
+export const LIST_PATH_RE = /^\/user\/[^/]+\/(anime|manga)list/;
 const typeLabel = (t: string): string => (t === 'ANIME' ? 'Anime' : 'Manga');
 
 const ENTRY_FIELDS =

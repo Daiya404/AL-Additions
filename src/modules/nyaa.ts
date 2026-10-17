@@ -40,13 +40,6 @@ defineFeature(
       return `https://nyaa.si/?f=0&c=1_2&s=seeders&o=desc&q=${encodeURI(q)}#:~:text=${frag}`;
     };
 
-    async function openMal(route: MediaRoute): Promise<boolean> {
-      const media = await MediaData.get(route.id, route.type);
-      if (!media?.idMal) return false;
-      openTab(`https://myanimelist.net/${route.kind}/${media.idMal}`);
-      return true;
-    }
-
     function attach(h1: HTMLElement, route: MediaRoute): void {
       const a = document.createElement('a');
       a.id = ID;
@@ -113,7 +106,17 @@ defineFeature(
           e.stopPropagation();
           return;
         }
-        if (e.ctrlKey || e.metaKey || !(await openMal(route))) searchNyaa();
+        const w = window.open('about:blank', '_blank');
+        const nyaa = nyaaUrl(titleText());
+        let target = nyaa;
+        if (!e.ctrlKey && !e.metaKey) {
+          const media = await MediaData.get(route.id, route.type);
+          if (media?.idMal) target = `https://myanimelist.net/${route.kind}/${media.idMal}`;
+        }
+        if (w) {
+          w.opener = null;
+          w.location.href = target;
+        } else openTab(target);
       });
 
       h1.appendChild(a);

@@ -20,7 +20,10 @@ export function titleScore(a: string | null | undefined, b: string | null | unde
   const y = normTitle(b);
   if (!x || !y) return 0;
   if (x === y) return 100;
-  if (x.includes(y) || y.includes(x)) return 85;
+  if (x.includes(y) || y.includes(x)) {
+    const ratio = Math.min(x.length, y.length) / Math.max(x.length, y.length);
+    return Math.round(50 + ratio * 35);
+  }
 
   const setA = new Set(x.split(' '));
   const setB = new Set(y.split(' '));
@@ -35,7 +38,7 @@ export function bestMatch<T>(
   list: T[],
   title: string,
   getTitle: (item: T) => string | null | undefined,
-  min = 45
+  min = 70
 ): T | null {
   let best: T | null = null;
   let bestScore = -1;
