@@ -1,7 +1,7 @@
 import { Settings, TYPES, ROWS, features } from './settings';
-import { CREDITS, FAST_LOAD_URL, fastLoadInstalled } from './credits';
+import { FAST_LOAD_URL, fastLoadInstalled, creditsHtml } from './credits';
 import { addStyle, findExactText, icon } from '../utils/dom';
-import { esc, debounce } from '../utils/helpers';
+import { debounce } from '../utils/helpers';
 import { Core } from '../core/observer';
 import type { SettingRow, RegisteredFeature } from '../types';
 
@@ -57,7 +57,10 @@ const CSS = `
   .ala-promo .ala-btn{flex:0 0 auto;gap:6px;text-decoration:none}
   .ala-credits{margin:18px 2px 10px;color:rgb(var(--color-text-lighter));font-size:12px}
   .ala-credits summary{cursor:pointer;padding:4px 0}
-  .ala-credits div{margin-top:4px}
+  .ala-credit{margin-top:10px}
+  .ala-credit ul{margin:3px 0 0;padding-left:18px;list-style:disc}
+  .ala-credit a{color:rgb(var(--color-blue));text-decoration:none}
+  .ala-credit a:hover{text-decoration:underline}
 
   @media (max-width:700px){
     .ala-settings-nav-section{display:none!important}
@@ -130,7 +133,7 @@ export function showPanel(): void {
           ? ''
           : `<div class="ala-promo">${rowText('AniList Fast Load', 'My other userscript: faster loading, lazy images, request caching and smoother scrolling on AniList. Opens its Greasy Fork page.')}<a class="ala-btn" href="${FAST_LOAD_URL}" target="_blank" rel="noopener noreferrer" aria-label="Get AniList Fast Load on Greasy Fork (opens in a new tab)">Get it ${icon('external', 16)}</a></div>`
       }
-      <details class="ala-credits"><summary>Credits</summary>${CREDITS.map(([n, d]) => `<div><b>${esc(n)}</b> — ${esc(d)}</div>`).join('')}</details>
+      <details class="ala-credits"><summary>Credits</summary>${creditsHtml()}</details>
     </div>
     <footer class="ala-sheet-foot">
       <button class="ala-btn ala-btn--primary ala-save" type="button">Save and reload</button>

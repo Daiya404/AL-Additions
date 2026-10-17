@@ -21,24 +21,24 @@ I wanted these features without the slowdown. In my experience the MALSync brows
 ## Contents
 
 - [AL Additions](#al-additions)
-  - [Why this exists](#why-this-exists)
-  - [Contents](#contents)
-  - [Features](#features)
-    - [Feature details](#feature-details)
-  - [Installation](#installation)
-    - [Alternative: install directly from GitHub](#alternative-install-directly-from-github)
-  - [AniList → MyAnimeList sync](#anilist--myanimelist-sync)
-    - [Connecting your accounts](#connecting-your-accounts)
-    - [Using it](#using-it)
-    - [How it works](#how-it-works)
-    - [Disconnecting and resetting](#disconnecting-and-resetting)
-  - [Settings](#settings)
-  - [Privacy and permissions](#privacy-and-permissions)
-  - [Troubleshooting](#troubleshooting)
-  - [Reporting bugs or requesting features](#reporting-bugs-or-requesting-features)
-  - [Development](#development)
-  - [Credits](#credits)
-  - [License](#license)
+    - [Why this exists](#why-this-exists)
+    - [Contents](#contents)
+    - [Features](#features)
+        - [Feature details](#feature-details)
+    - [Installation](#installation)
+        - [Alternative: install directly from GitHub](#alternative-install-directly-from-github)
+    - [AniList → MyAnimeList sync](#anilist--myanimelist-sync)
+        - [Connecting your accounts](#connecting-your-accounts)
+        - [Using it](#using-it)
+        - [How it works](#how-it-works)
+        - [Disconnecting and resetting](#disconnecting-and-resetting)
+    - [Settings](#settings)
+    - [Privacy and permissions](#privacy-and-permissions)
+    - [Troubleshooting](#troubleshooting)
+    - [Reporting bugs or requesting features](#reporting-bugs-or-requesting-features)
+    - [Development](#development)
+    - [Credits](#credits)
+    - [License](#license)
 
 ---
 
@@ -255,12 +255,12 @@ npm run build
 
 The production build compiles the code through TypeScript and Vite into `dist/al-additions.user.js`, then automatically copies the output to the root `al-additions.user.js` so Greasy Fork and GitHub raw URLs stay up to date.
 
-1. Bump `version` in `package.json` and in `vite.config.ts`.
-2. Add an entry to [`CHANGELOG.md`](./CHANGELOG.md) and update the version in this README.
-3. Run `npm run build` to type-check and generate the root `al-additions.user.js`.
+1. Run `npm run bump -- patch`, `npm run bump -- minor`, or `npm run bump -- major`. This updates `package.json`, `package-lock.json`, and `vite.config.ts`, then type-checks and rebuilds the userscript.
+2. Add an entry to [`CHANGELOG.md`](./CHANGELOG.md) and update the version near the top of this README.
+3. Review the generated `al-additions.user.js` and the complete diff.
 4. Commit your changes and push to `main`. Greasy Fork syncs automatically from this repository.
 
-Always bump the version, otherwise userscript managers will not prompt users to update.
+Use the bump script for releases instead of editing version fields manually, so all package and userscript metadata stay synchronized. Always bump the version, otherwise userscript managers will not prompt users to update.
 
 ---
 

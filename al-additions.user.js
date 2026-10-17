@@ -7,7 +7,7 @@
 // @license      GPL-3.0-or-later
 // @icon         https://anilist.co/img/icons/favicon-32x32.png
 // @homepage     https://github.com/Daiya404/AL-Additions#readme
-// @homepageURL  https://github.com/Daiya404/AL-Additions#readme
+// @homepageURL  https://github.com/Daiya404/AL-Additions
 // @source       https://github.com/Daiya404/AL-Additions.git
 // @supportURL   https://github.com/Daiya404/AL-Additions/issues
 // @downloadURL  https://raw.githubusercontent.com/Daiya404/AL-Additions/main/al-additions.user.js
@@ -351,15 +351,61 @@
 		migrate
 	};
 	var CREDITS = [
-		["Daiya", "Combining, fixing, and adding original features."],
-		["Claude & ChatGPT", "AI assistance throughout the consolidation and fixes."],
-		["Plennhar", "Behind Episode Dots, Anisong, and Minimum Tags."],
-		["Samu", "Find on Nyaa."],
-		["DJ-TrainR3k", "Banner Downloader."],
-		["Meatloaf1", "Remove Titles from URL."],
-		["MALSync", "Base MALSync, episode/chapter and score embedding."],
-		["Matix", "API Limit Fix Idea."]
+		{
+			name: "Daiya",
+			url: "https://github.com/Daiya404",
+			note: "Combining, fixing and maintaining this script. Everything not credited below, such as the Keyframe Staff List button and the List Score & Progress Editor, is original work.",
+			works: [["AL-Additions on GitHub", "https://github.com/Daiya404/AL-Additions"]]
+		},
+		{
+			name: "Plennhar",
+			url: "https://greasyfork.org/en/users/1323916-plennhar",
+			note: "Browse Tag Rank Filter and Airing Progress Indicator.",
+			works: [["AniList Browse: set default minimum tag percentage to 50", "https://greasyfork.org/en/scripts/559539-anilist-browse-set-default-minimum-tag-percentage-to-50"], ["AniList: color airing dots on anime lists orange if the user is behind on episodes", "https://greasyfork.org/en/scripts/563899-anilist-color-airing-dots-on-anime-lists-orange-if-the-user-is-behind-on-episodes"]]
+		},
+		{
+			name: "Morimasa",
+			url: "https://greasyfork.org/en/users/61126-morimasa",
+			note: "Anime OP/ED songs.",
+			works: [["Anisongs", "https://greasyfork.org/en/scripts/374785-anisongs"]]
+		},
+		{
+			name: "Samu",
+			url: "https://greasyfork.org/en/users/17840-samu",
+			note: "Nyaa search link.",
+			works: [["Find on Nyaa", "https://greasyfork.org/en/scripts/379776-find-on-nyaa"]]
+		},
+		{
+			name: "trevor229",
+			url: "https://greasyfork.org/en/users/158806-trevor229",
+			note: "Banner Downloader.",
+			works: [["AniList Banner Downloader", "https://greasyfork.org/en/scripts/370470-anilist-banner-downloader"]]
+		},
+		{
+			name: "meatloaf1",
+			url: "https://greasyfork.org/en/users/1630083-meatloaf1",
+			note: "Short AniList URLs.",
+			works: [["Remove AniList titles from URL", "https://greasyfork.org/en/scripts/589540-remove-anilist-titles-from-url"]]
+		},
+		{
+			name: "MALSync",
+			url: "https://github.com/MALSync",
+			note: "Inspiration for the MyAnimeList sync, and for the episode/chapter and score embedding.",
+			works: [["MALSync on GitHub", "https://github.com/MALSync/MALSync"]]
+		},
+		{
+			name: "MatiX221",
+			url: "https://github.com/MatiX221",
+			note: "The API limit fix idea, and a refactor that modularises the code.",
+			works: [["MatiX221/AL-Additions", "https://github.com/MatiX221/AL-Additions"]]
+		},
+		{
+			name: "Claude & ChatGPT",
+			note: "AI assistance throughout the consolidation and fixes."
+		}
 	];
+	var creditLink = (url, text, cls = "") => `<a${cls ? ` class="${cls}"` : ""} href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>`;
+	var creditsHtml = () => CREDITS.map((c) => `<div class="ala-credit"><b>${c.url ? creditLink(c.url, c.name) : esc(c.name)}</b> — ${esc(c.note)}${c.works ? `<ul>${c.works.map(([label, url]) => `<li>${creditLink(url, label)}</li>`).join("")}</ul>` : ""}</div>`).join("");
 	var FAST_LOAD_URL = "https://greasyfork.org/en/scripts/598442-anilist-fast-load";
 	function fastLoadInstalled() {
 		try {
@@ -462,7 +508,10 @@
   .ala-promo .ala-btn{flex:0 0 auto;gap:6px;text-decoration:none}
   .ala-credits{margin:18px 2px 10px;color:rgb(var(--color-text-lighter));font-size:12px}
   .ala-credits summary{cursor:pointer;padding:4px 0}
-  .ala-credits div{margin-top:4px}
+  .ala-credit{margin-top:10px}
+  .ala-credit ul{margin:3px 0 0;padding-left:18px;list-style:disc}
+  .ala-credit a{color:rgb(var(--color-blue));text-decoration:none}
+  .ala-credit a:hover{text-decoration:underline}
 
   @media (max-width:700px){
     .ala-settings-nav-section{display:none!important}
@@ -516,7 +565,7 @@
     <div class="ala-sheet-body">
       ${sectionsHtml()}
       ${fastLoadInstalled() ? "" : `<div class="ala-promo">${rowText("AniList Fast Load", "My other userscript: faster loading, lazy images, request caching and smoother scrolling on AniList. Opens its Greasy Fork page.")}<a class="ala-btn" href="${FAST_LOAD_URL}" target="_blank" rel="noopener noreferrer" aria-label="Get AniList Fast Load on Greasy Fork (opens in a new tab)">Get it ${icon("external", 16)}</a></div>`}
-      <details class="ala-credits"><summary>Credits</summary>${CREDITS.map(([n, d]) => `<div><b>${esc(n)}</b> — ${esc(d)}</div>`).join("")}</details>
+      <details class="ala-credits"><summary>Credits</summary>${creditsHtml()}</details>
     </div>
     <footer class="ala-sheet-foot">
       <button class="ala-btn ala-btn--primary ala-save" type="button">Save and reload</button>
