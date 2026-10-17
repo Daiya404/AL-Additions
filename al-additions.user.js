@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AL Additions
 // @namespace    daiya.al-additions-v3
-// @version      0.7.0
+// @version      0.7.1
 // @description  AniList additions: sync, list tools, airing indicators, songs, links, and utilities.
 // @author       Daiya
 // @icon         https://anilist.co/img/icons/favicon-32x32.png
@@ -44,7 +44,7 @@
    *   7. Boot
    * All state lives in GM storage, so it is shared by every tab and by both sites.
    */
-  // Shown in the settings panel's Credits section: [name, contribution].
+  // Greasy Fork page of the companion script AniList Fast Load, linked from the settings panel.
   const FAST_LOAD_URL = 'https://greasyfork.org/en/scripts/598442-anilist-fast-load';
   // AniList Fast Load sets this flag on the page's window at document-start. AL Additions runs in the
   // userscript sandbox, so the page window is reached through unsafeWindow. Checked when the panel opens.
@@ -54,6 +54,7 @@
       return !!(w.__ANILIST_FAST_LOAD__ || w.__ANILIST_FAST_LOAD_V4__);
     } catch (_) { return false; }
   };
+  // Shown in the settings panel's Credits section: [name, contribution].
   const CREDITS = [
     ['Daiya', 'Combining, fixing, and adding original features.'],
     ['Claude & ChatGPT', 'AI assistance throughout the consolidation and fixes.'],
@@ -491,6 +492,8 @@
         .ala-status{flex-basis:100%;order:3}
         .ala-row{min-height:60px}
         .ala-options .ala-row{flex-direction:column;align-items:stretch;gap:8px}
+        .ala-promo{flex-direction:column;align-items:stretch;gap:10px}
+        .ala-promo .ala-btn{min-height:44px}
         #ala-settings-panel input[type=number],#ala-settings-panel input[type=text],#ala-settings-panel select{width:100%;height:44px;font-size:16px}
         #ala-settings-mobile-launcher{display:inline-flex;align-items:center;gap:8px;position:fixed;left:16px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:99998;min-height:46px;padding:0 18px;border:1px solid rgba(255,255,255,.16);border-radius:999px;background:rgb(var(--color-blue));color:#fff;font:inherit;font-size:14px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.35);cursor:pointer}
         #ala-settings-mobile-launcher:active{transform:translateY(1px)}
@@ -550,7 +553,7 @@
         </header>
         <div class="ala-sheet-body">
           ${sectionsHtml()}
-          ${fastLoadInstalled() ? '' : `<div class="ala-promo">${rowText('AniList Fast Load', 'My other userscript: faster loading, lazy images, request caching and smoother scrolling on AniList. Opens its Greasy Fork page.')}<a class="ala-btn" href="${FAST_LOAD_URL}" target="_blank" rel="noopener noreferrer">Get it ${icon('external', 16)}</a></div>`}
+          ${fastLoadInstalled() ? '' : `<div class="ala-promo">${rowText('AniList Fast Load', 'My other userscript: faster loading, lazy images, request caching and smoother scrolling on AniList. Opens its Greasy Fork page.')}<a class="ala-btn" href="${FAST_LOAD_URL}" target="_blank" rel="noopener noreferrer" aria-label="Get AniList Fast Load on Greasy Fork (opens in a new tab)">Get it ${icon('external', 16)}</a></div>`}
           <details class="ala-credits"><summary>Credits</summary>${CREDITS.map(([n, d]) => `<div><b>${esc(n)}</b> — ${esc(d)}</div>`).join('')}</details>
         </div>
         <footer class="ala-sheet-foot">
