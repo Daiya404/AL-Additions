@@ -10,9 +10,18 @@ A userscript that adds extra tools to [AniList](https://anilist.co/), including 
 
 ---
 
+## Why this exists
+
+I wanted these features without the slowdown. In my experience the MALSync browser extension made AniList load very slowly, and some userscripts I relied on, such as Morimasa's Anisongs and Plennhar's airing dots, had stopped working. So I updated and fixed the broken ones, wrote the sync "myself", and combined everything into one script that shares a single page observer to stay light.
+
+**AI disclosure:** a lot of AI was involved. Much of the code, including the sync, was written with heavy help from Claude and ChatGPT. I direct the work, test it and maintain it.
+
+---
+
 ## Contents
 
 - [AL Additions](#al-additions)
+  - [Why this exists](#why-this-exists)
   - [Contents](#contents)
   - [Features](#features)
     - [Feature details](#feature-details)
