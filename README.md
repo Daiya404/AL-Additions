@@ -2,7 +2,7 @@
 
 A userscript that adds extra tools to [AniList](https://anilist.co/), including a one-way **AniList → MyAnimeList sync**, a score and progress editor, airing indicators, OP/ED songs and quick links to other sites.
 
-- **Version:** 0.7.2 ([changelog](./CHANGELOG.md))
+- **Version:** 0.8.0 ([changelog](./CHANGELOG.md))
 - **License:** GPL-3.0-or-later
 - **Author:** Daiya
 - **Runs on:** [anilist.co](https://anilist.co/) and [myanimelist.net](https://myanimelist.net/) (the MAL site is used for connecting your account)
@@ -61,19 +61,19 @@ Every feature can be turned on or off in the settings panel.
 
 ### Feature details
 
-**Browse Tag Rank Filter**
+**Browse Tag Rank Filter**  
 Applies only on the anime and manga search pages, and only once a tag or genre is selected. The minimum rank is configurable (1–100).
 
-**MyAnimeList & Nyaa links**
+**MyAnimeList & Nyaa links**  
 The Nyaa search is sorted by seeders and highlights your chosen release groups. The default groups are SubsPlease and ToonsHub, and you can change them in settings.
 
-**List Score & Progress Editor**
+**List Score & Progress Editor**  
 Works with whichever score format your AniList account uses (100 point, 10 point, 10 point decimal, 5 star or 3 smiley). The +/− buttons only change the field; nothing is saved until you press **Save**. Saving the last episode or chapter marks the entry as completed, and it does not overwrite an existing completion date. For manga and novels, the released chapter count is looked up from MangaUpdates or NovelUpdates.
 
-**Airing Progress Indicator**
+**Airing Progress Indicator**  
 Only entries in the _Watching_ section of your anime list are checked, and the data is cached to keep requests low.
 
-**Anime OP/ED songs**
+**Anime OP/ED songs**  
 Theme data comes from [AnimeThemes](https://animethemes.moe/) and is cached for 7 days.
 
 ---
@@ -88,7 +88,7 @@ Releases are published on GitHub first, and Greasy Fork syncs from this reposito
 
 ### Alternative: install directly from GitHub
 
-Open the [raw script file](https://raw.githubusercontent.com/Daiya404/AL-Additions/main/al-additions.user.js). Your userscript manager should offer to install it and will check GitHub for updates.
+Open the [raw script file](https://raw.githubusercontent.com/Daiya404/AL-Additions/main/al-additions.user.js). Your userscript manager will offer to install it and will check GitHub for updates.
 
 Use either Greasy Fork or GitHub, not both, to avoid running two copies.
 
@@ -184,22 +184,22 @@ The MAL connection uses the OAuth PKCE flow with a public client ID, so there is
 
 ## Troubleshooting
 
-**The sync panel doesn't appear.**
+**The sync panel doesn't appear.**  
 It only shows on **your own** anime or manga list page and only while the sync feature is enabled. AniList loads the sidebar late, so wait a moment or reload.
 
-**A title wasn't synced ("no confident MAL match").**
+**A title wasn't synced ("no confident MAL match").**  
 The script skips titles it can't match safely. Add or fix the entry on MAL, then run **Full resync**.
 
-**MAL keeps rejecting or not keeping a value.**
+**MAL keeps rejecting or not keeping a value.**  
 The log will say which entry and field. Those values are suppressed to avoid a write loop until the AniList entry changes or you run **Full resync**.
 
-**"API limit reached" appears.**
+**"API limit reached" appears.**  
 This is normal. The script waits for the cooldown and carries on by itself.
 
-**Connection broke or looks stuck.**
+**Connection broke or looks stuck.**  
 Use the **Disconnect** menu commands and connect again, or use **Reset all data**.
 
-**A feature stopped working after an AniList update.**
+**A feature stopped working after an AniList update.**  
 AniList changes its page layout from time to time. Please [open an issue](https://github.com/Daiya404/AL-Additions/issues) with the page and what you saw.
 
 ---
@@ -219,22 +219,48 @@ Use [Issues](https://github.com/Daiya404/AL-Additions/issues). Please include:
 
 ## Development
 
-The whole script lives in one file, [`al-additions.user.js`](./al-additions.user.js). It is organised as:
+The project is written in **TypeScript** and bundled using **Vite** with [`vite-plugin-monkey`](https://github.com/lisonge/vite-plugin-monkey).
 
-1. shared utilities (storage, rate limiter, caching helpers),
-2. a core with one navigation detector and one DOM observer shared by all features,
-3. a module registry and a settings registry (the settings panel is generated from it),
-4. an AniList API client,
-5. the feature modules,
-6. boot.
+### Project structure
 
-**Release routine**
+```text
+src/
+├── api/             # API clients (AniList GraphQL, MAL REST/OAuth, external chapter scrapers)
+├── core/            # Navigation listener, DOM MutationObserver, module registry
+├── modules/         # Standalone feature modules
+│   └── sync/        # AniList → MAL sync engine, reconciliation, and UI panel
+├── settings/        # Feature settings registry, storage normalization, and modal UI
+├── utils/           # Shared utilities (rate limiter, DOM helpers, string matching)
+├── types.ts         # Shared TypeScript interfaces
+└── main.ts          # Script bootstrap entry point
+```
 
-1. Bump `@version` in `al-additions.user.js`.
-2. Add an entry to [`CHANGELOG.md`](./CHANGELOG.md) and update the version here.
-3. Push to `main`. Greasy Fork syncs from this repository.
+### Setup & Commands
 
-Always bump `@version`, otherwise no update will be offered to users. Keep the metadata block (`@match`, `@grant`, `@connect`, `@license`, `@homepageURL`, `@downloadURL`, `@updateURL`) consistent when publishing.
+```bash
+# Install dependencies
+npm install
+
+# Start Vite dev server (requires CSP bypass on AniList)
+npm run dev
+
+# Continuous build on file change (recommended for local testing)
+npm run watch
+
+# Type-check and build production bundle
+npm run build
+```
+
+### Release routine
+
+The production build compiles the code through TypeScript and Vite into `dist/al-additions.user.js`, then automatically copies the output to the root `al-additions.user.js` so Greasy Fork and GitHub raw URLs stay up to date.
+
+1. Bump `version` in `package.json` and in `vite.config.ts`.
+2. Add an entry to [`CHANGELOG.md`](./CHANGELOG.md) and update the version in this README.
+3. Run `npm run build` to type-check and generate the root `al-additions.user.js`.
+4. Commit your changes and push to `main`. Greasy Fork syncs automatically from this repository.
+
+Always bump the version, otherwise userscript managers will not prompt users to update.
 
 ---
 

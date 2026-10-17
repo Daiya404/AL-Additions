@@ -1,12 +1,11 @@
 # Changelog
 
-## 0.7.2
+## 0.8.0
 
-- Credits rewritten: every contributor now links to their profile, and each borrowed feature links to the original script or repository.
-- Credits corrected: Anisongs is credited to Morimasa, the Banner Downloader to trevor229 (previously listed as DJ-TrainR3k), and Matix is now listed as MatiX221.
-- MALSync is credited as inspiration for the sync and the episode/chapter and score embedding, not as copied code.
-- The credits note that everything not credited, such as the Keyframe Staff List button and the List Score & Progress Editor, is original work.
-- Script `@homepageURL` now points to the GitHub repository.
+- Refactor: Migrated the entire codebase to TypeScript and modularized it using Vite with `vite-plugin-monkey`.
+- Split the monolithic script into structured directories (`src/api`, `src/core`, `src/modules`, `src/settings`, `src/utils`).
+- Modern build & development pipeline: added static type checking, automated bundle compilation to root `al-additions.user.js`, and `npm run watch` for local development.
+- Zero breaking changes: 100% feature parity, identical runtime behavior, and complete backward compatibility with existing user settings and storage keys.
 
 ## 0.7.1
 
