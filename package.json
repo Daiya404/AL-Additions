@@ -7,7 +7,8 @@
     "scripts": {
         "dev": "vite",
         "watch": "vite build --watch",
-        "build": "tsc && vite build && node -e \"require('fs').copyFileSync('dist/al-additions.user.js', 'al-additions.user.js')\""
+        "build": "tsc && vite build && node -e \"require('fs').copyFileSync('dist/al-additions.user.js', 'al-additions.user.js')\"",
+        "bump": "node scripts/bump.mjs"
     },
     "repository": {
         "type": "git",

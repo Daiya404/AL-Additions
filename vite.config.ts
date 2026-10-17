@@ -11,6 +11,7 @@ export default defineConfig({
         version: '0.8.0',
         description: 'AniList additions: sync, list tools, airing indicators, songs, links, and utilities.',
         author: 'Daiya',
+        homepageURL: 'https://github.com/Daiya404/AL-Additions',
         icon: 'https://anilist.co/img/icons/favicon-32x32.png',
         match: [
             'https://anilist.co/*',
