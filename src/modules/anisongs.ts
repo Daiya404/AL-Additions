@@ -1,7 +1,7 @@
 import { defineFeature } from '../core/registry';
 import { Core } from '../core/observer';
 import { addStyle, mediaRoute } from '../utils/dom';
-import { persistent, gm, memo } from '../utils/helpers';
+import { persistent, gm, memo, debounce } from '../utils/helpers';
 
 interface SongEntry {
   sequence: number;
@@ -38,6 +38,7 @@ defineFeature(
     const API = 'https://api.animethemes.moe/anime';
     const ROOT = 'daiya-anisongs';
     const TTL = 7 * 86400e3;
+    const EMPTY_TTL = 12 * 3600e3;
 
     addStyle(
       'daiya-anisongs-style',
@@ -54,7 +55,7 @@ defineFeature(
       @media (max-width:700px){#${ROOT} .daiya-anisongs-columns{flex-direction:column;gap:10px}}`
     );
 
-    const cacheStore = persistent<Record<string, AnimeThemesCacheEntry>>('daiya_anisongs_cache_v5', (d) => {
+    const cacheStore = persistent<Record<string, AnimeThemesCacheEntry>>('daiya_anisongs_cache_v6', (d) => {
       for (const id of Object.keys(d)) {
         if (!(Number(d[id]?.expires) > Date.now())) delete d[id];
       }
@@ -124,7 +125,8 @@ defineFeature(
       });
       const result = await gm.json(`${API}?${params}`, { headers: { Accept: 'application/json' } });
       const data = groupThemes(Array.isArray(result?.anime) ? result.anime[0] : null);
-      cache[String(id)] = { expires: Date.now() + TTL, data };
+      const empty = !data.OP.length && !data.ED.length;
+      cache[String(id)] = { expires: Date.now() + (empty ? EMPTY_TTL : TTL), data };
       cacheStore.save();
       return data;
     });
@@ -234,6 +236,6 @@ defineFeature(
 
     Core.ready(sync);
     Core.onNavigate(sync);
-    Core.onBodyMutation(repair);
+    Core.onBodyMutation(debounce(repair, 200));
   }
 );
