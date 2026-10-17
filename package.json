@@ -1,0 +1,28 @@
+{
+    "name": "al-additions",
+    "version": "0.8.0",
+    "description": "A userscript that adds extra tools to [AniList](https://anilist.co/), including a one-way **AniList → MyAnimeList sync**, a score and progress editor, airing indicators, OP/ED songs and quick links to other sites.",
+    "main": "al-additions.user.js",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "watch": "vite build --watch",
+        "build": "tsc && vite build && node -e \"require('fs').copyFileSync('dist/al-additions.user.js', 'al-additions.user.js')\""
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Daiya404/AL-Additions.git"
+    },
+    "keywords": [],
+    "author": "Daiya",
+    "license": "GPL-3.0-or-later",
+    "bugs": {
+        "url": "https://github.com/Daiya404/AL-Additions/issues"
+    },
+    "homepage": "https://github.com/Daiya404/AL-Additions#readme",
+    "devDependencies": {
+        "typescript": "^7.0.2",
+        "vite": "^8.3.4",
+        "vite-plugin-monkey": "^8.1.1"
+    }
+}

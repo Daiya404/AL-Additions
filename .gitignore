@@ -1,9 +1,44 @@
-# Editor / OS files
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
 
-# Temporary files
+# Build outputs & caches
+dist/
+dist-ssr/
+.vite/
+*.tsbuildinfo
+
+# Environment & local tooling
+.envrc
+.envrc.local
+.direnv/
+*.local
+.env
+.env.*
+!.env.example
+
+# Temporary & log files
 *.tmp
 *.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / IDE
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
