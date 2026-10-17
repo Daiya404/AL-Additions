@@ -2,7 +2,7 @@
 
 A userscript that adds extra tools to [AniList](https://anilist.co/), including a one-way **AniList → MyAnimeList sync**, a score and progress editor, airing indicators, OP/ED songs and quick links to other sites.
 
-- **Version:** 0.7.1 ([changelog](./CHANGELOG.md))
+- **Version:** 0.7.2 ([changelog](./CHANGELOG.md))
 - **License:** GPL-3.0-or-later
 - **Author:** Daiya
 - **Runs on:** [anilist.co](https://anilist.co/) and [myanimelist.net](https://myanimelist.net/) (the MAL site is used for connecting your account)
@@ -37,18 +37,18 @@ A userscript that adds extra tools to [AniList](https://anilist.co/), including 
 
 Every feature can be turned on or off in the settings panel.
 
-| Feature | What it does |
-| --- | --- |
-| **AniList → MAL sync** | One-way sync of your anime and manga lists to MyAnimeList, manual or automatic. |
-| **Browse Tag Rank Filter** | Automatically adds a minimum tag-rank percentage (default 50%) when you browse with a tag or genre. |
-| **Short AniList URLs** | Removes the title slug from anime, manga, staff and character URLs and links. |
-| **Banner Downloader** | Adds a download button to the banner on anime and manga pages. User profile banners are optional. |
-| **MyAnimeList & Nyaa links** | A link icon next to the title opens the MAL page. Ctrl/Cmd+click on desktop, or long-press on mobile, searches Nyaa instead. |
-| **Keyframe Staff List links** | A button on staff and studio pages that opens the same person or studio on Keyframe Staff List. |
-| **List Score & Progress Editor** | Edit your score and episode/chapter progress from the sidebar of any anime or manga page. |
-| **Airing Progress Indicator** | Shows an orange dot on releasing shows in your *Watching* list when you are behind the aired episode count. |
-| **Anime OP/ED songs** | Lists opening and ending themes on anime pages. Click a song to play its video inline. |
-| **Settings panel** | One place to configure everything, including a mobile-friendly layout. Includes a button linking to [AniList Fast Load](https://greasyfork.org/en/scripts/598442-anilist-fast-load). |
+| Feature                          | What it does                                                                                                                                                                         |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **AniList → MAL sync**           | One-way sync of your anime and manga lists to MyAnimeList, manual or automatic.                                                                                                      |
+| **Browse Tag Rank Filter**       | Automatically adds a minimum tag-rank percentage (default 50%) when you browse with a tag or genre.                                                                                  |
+| **Short AniList URLs**           | Removes the title slug from anime, manga, staff and character URLs and links.                                                                                                        |
+| **Banner Downloader**            | Adds a download button to the banner on anime and manga pages. User profile banners are optional.                                                                                    |
+| **MyAnimeList & Nyaa links**     | A link icon next to the title opens the MAL page. Ctrl/Cmd+click on desktop, or long-press on mobile, searches Nyaa instead.                                                         |
+| **Keyframe Staff List links**    | A button on staff and studio pages that opens the same person or studio on Keyframe Staff List.                                                                                      |
+| **List Score & Progress Editor** | Edit your score and episode/chapter progress from the sidebar of any anime or manga page.                                                                                            |
+| **Airing Progress Indicator**    | Shows an orange dot on releasing shows in your _Watching_ list when you are behind the aired episode count.                                                                          |
+| **Anime OP/ED songs**            | Lists opening and ending themes on anime pages. Click a song to play its video inline.                                                                                               |
+| **Settings panel**               | One place to configure everything, including a mobile-friendly layout. Includes a button linking to [AniList Fast Load](https://greasyfork.org/en/scripts/598442-anilist-fast-load). |
 
 ### Feature details
 
@@ -62,7 +62,7 @@ The Nyaa search is sorted by seeders and highlights your chosen release groups. 
 Works with whichever score format your AniList account uses (100 point, 10 point, 10 point decimal, 5 star or 3 smiley). The +/− buttons only change the field; nothing is saved until you press **Save**. Saving the last episode or chapter marks the entry as completed, and it does not overwrite an existing completion date. For manga and novels, the released chapter count is looked up from MangaUpdates or NovelUpdates.
 
 **Airing Progress Indicator**
-Only entries in the *Watching* section of your anime list are checked, and the data is cached to keep requests low.
+Only entries in the _Watching_ section of your anime list are checked, and the data is cached to keep requests low.
 
 **Anime OP/ED songs**
 Theme data comes from [AnimeThemes](https://animethemes.moe/) and is cached for 7 days.
@@ -98,12 +98,12 @@ The sync is **one-way**: it copies your AniList lists to MyAnimeList and never w
 
 ### Using it
 
-| Control | Action |
-| --- | --- |
-| **Sync** | Syncs the list you are viewing, or both lists if you are not on a list page. |
+| Control                          | Action                                                                                                                                   |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Sync**                         | Syncs the list you are viewing, or both lists if you are not on a list page.                                                             |
 | **Full resync** (circular arrow) | Re-checks your entire AniList library against MAL and clears cached match and suppression decisions. Use it after fixing entries on MAL. |
-| **Stop** (square) | Stops a running sync after the current requests finish. |
-| **Logs** (list icon) | Shows a running activity log. |
+| **Stop** (square)                | Stops a running sync after the current requests finish.                                                                                  |
+| **Logs** (list icon)             | Shows a running activity log.                                                                                                            |
 
 The first manual sync for each list asks for confirmation if your AniList account uses **decimal scores**, because MAL only accepts whole numbers.
 
@@ -138,13 +138,13 @@ Your userscript manager's menu for this script has three commands:
 
 Each feature has a toggle, and some have options:
 
-| Setting | Default | Notes |
-| --- | --- | --- |
-| Minimum Tag Rank | 50 | 1–100. |
-| User Profile Banners | Off | Show the banner download button on profile banners too. |
-| Nyaa Search Providers | SubsPlease, ToonsHub | Comma-separated release group names. |
-| Automatic Sync Interval | 6 hours | 1–720 hours. |
-| Decimal Score Conversion | Round | **Ceil** rounds up (7.4 → 8), **Round** rounds normally (7.4 → 7, 7.5 → 8), **Floor** rounds down (7.9 → 7). |
+| Setting                  | Default              | Notes                                                                                                        |
+| ------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Minimum Tag Rank         | 50                   | 1–100.                                                                                                       |
+| User Profile Banners     | Off                  | Show the banner download button on profile banners too.                                                      |
+| Nyaa Search Providers    | SubsPlease, ToonsHub | Comma-separated release group names.                                                                         |
+| Automatic Sync Interval  | 6 hours              | 1–720 hours.                                                                                                 |
+| Decimal Score Conversion | Round                | **Ceil** rounds up (7.4 → 8), **Round** rounds normally (7.4 → 7, 7.5 → 8), **Floor** rounds down (7.9 → 7). |
 
 The panel also has a **Get it** button for [AniList Fast Load](https://greasyfork.org/en/scripts/598442-anilist-fast-load), my separate performance userscript (lazy media, request caching, smoother scrolling). It only opens the Greasy Fork page in a new tab, and it disappears once Fast Load is installed. It is optional, and AL Additions works the same without it.
 
@@ -156,14 +156,14 @@ Changes apply when you press **Save and reload**. **Reset to defaults** restores
 
 The script runs on `anilist.co` and `myanimelist.net`. It contacts only the services its features need:
 
-| Service | Used for |
-| --- | --- |
-| `graphql.anilist.co` | Reading media and your list; the sync; the score editor. |
-| `myanimelist.net`, `api.myanimelist.net` | Connecting and syncing your MAL list. |
-| `api.animethemes.moe` | OP/ED song data. |
-| `api.mangaupdates.com`, `www.mangaupdates.com` | Latest chapter counts for manga. |
-| `www.novelupdates.com` | Latest chapter counts for novels. |
-| `s4.anilist.co` | AniList-hosted images such as banners. |
+| Service                                        | Used for                                                 |
+| ---------------------------------------------- | -------------------------------------------------------- |
+| `graphql.anilist.co`                           | Reading media and your list; the sync; the score editor. |
+| `myanimelist.net`, `api.myanimelist.net`       | Connecting and syncing your MAL list.                    |
+| `api.animethemes.moe`                          | OP/ED song data.                                         |
+| `api.mangaupdates.com`, `www.mangaupdates.com` | Latest chapter counts for manga.                         |
+| `www.novelupdates.com`                         | Latest chapter counts for novels.                        |
+| `s4.anilist.co`                                | AniList-hosted images such as banners.                   |
 
 Settings, tokens and caches are stored in your userscript manager's storage and are not sent anywhere else. There is no analytics or tracking.
 
@@ -225,20 +225,25 @@ The whole script lives in one file, [`al-additions.user.js`](./al-additions.user
 2. Add an entry to [`CHANGELOG.md`](./CHANGELOG.md) and update the version here.
 3. Push to `main`. Greasy Fork syncs from this repository.
 
-Always bump `@version`, otherwise no update will be offered to users. Keep the metadata block (`@match`, `@grant`, `@connect`, `@license`, `@downloadURL`, `@updateURL`) consistent when publishing.
+Always bump `@version`, otherwise no update will be offered to users. Keep the metadata block (`@match`, `@grant`, `@connect`, `@license`, `@homepageURL`, `@downloadURL`, `@updateURL`) consistent when publishing.
 
 ---
 
 ## Credits
 
-- **Daiya** – combining, fixing and adding original features
-- **Claude & ChatGPT** – AI assistance throughout consolidation and fixes
-- **Plennhar** – Episode Dots, Anisong and Minimum Tags
-- **Samu** – Find on Nyaa
-- **DJ-TrainR3k** – Banner Downloader
-- **Meatloaf1** – Remove Titles from URL
-- **MALSync** – base MALSync, episode/chapter and score embedding
-- **Matix** – API limit fix idea
+AL Additions combines and builds on the work of these authors, and is inspired by MALSync (its code is not copied). Everything not credited here, such as the Keyframe Staff List button and the List Score & Progress Editor, is original work by Daiya. The same list is available in the settings panel.
+
+| Who                                                            | What                                                                          | Original work                                                                                                                                                                                                                                                         |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Daiya](https://github.com/Daiya404)                           | Combining, fixing and maintaining this script                                 | [AL-Additions](https://github.com/Daiya404/AL-Additions)                                                                                                                                                                                                              |
+| [Plennhar](https://greasyfork.org/en/users/1323916-plennhar)   | Browse Tag Rank Filter, Airing Progress Indicator                             | [Minimum tag percentage](https://greasyfork.org/en/scripts/559539-anilist-browse-set-default-minimum-tag-percentage-to-50), [Airing dots](https://greasyfork.org/en/scripts/563899-anilist-color-airing-dots-on-anime-lists-orange-if-the-user-is-behind-on-episodes) |
+| [Morimasa](https://greasyfork.org/en/users/61126-morimasa)     | Anime OP/ED songs                                                             | [Anisongs](https://greasyfork.org/en/scripts/374785-anisongs)                                                                                                                                                                                                         |
+| [Samu](https://greasyfork.org/en/users/17840-samu)             | Nyaa search link                                                              | [Find on Nyaa](https://greasyfork.org/en/scripts/379776-find-on-nyaa)                                                                                                                                                                                                 |
+| [trevor229](https://greasyfork.org/en/users/158806-trevor229)  | Banner Downloader                                                             | [AniList Banner Downloader](https://greasyfork.org/en/scripts/370470-anilist-banner-downloader)                                                                                                                                                                       |
+| [meatloaf1](https://greasyfork.org/en/users/1630083-meatloaf1) | Short AniList URLs                                                            | [Remove AniList titles from URL](https://greasyfork.org/en/scripts/589540-remove-anilist-titles-from-url)                                                                                                                                                             |
+| [MALSync](https://github.com/MALSync)                          | Inspiration for the MAL sync, and for the episode/chapter and score embedding | [MALSync](https://github.com/MALSync/MALSync)                                                                                                                                                                                                                         |
+| [MatiX221](https://github.com/MatiX221)                        | API limit fix idea, modularising refactor                                     | [MatiX221/AL-Additions](https://github.com/MatiX221/AL-Additions)                                                                                                                                                                                                     |
+| Claude & ChatGPT                                               | AI assistance throughout consolidation and fixes                              |                                                                                                                                                                                                                                                                       |
 
 Theme data is provided by [AnimeThemes](https://animethemes.moe/). Chapter data comes from [MangaUpdates](https://www.mangaupdates.com/) and [NovelUpdates](https://www.novelupdates.com/).
 
