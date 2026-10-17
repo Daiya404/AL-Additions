@@ -12,16 +12,24 @@ A userscript that adds extra tools to [AniList](https://anilist.co/), including 
 
 ## Contents
 
-- [Features](#features)
-- [Installation](#installation)
-- [AniList → MyAnimeList sync](#anilist--myanimelist-sync)
-- [Settings](#settings)
-- [Privacy and permissions](#privacy-and-permissions)
-- [Troubleshooting](#troubleshooting)
-- [Reporting bugs or requesting features](#reporting-bugs-or-requesting-features)
-- [Development](#development)
-- [Credits](#credits)
-- [License](#license)
+- [AL Additions](#al-additions)
+  - [Contents](#contents)
+  - [Features](#features)
+    - [Feature details](#feature-details)
+  - [Installation](#installation)
+    - [Alternative: install directly from GitHub](#alternative-install-directly-from-github)
+  - [AniList → MyAnimeList sync](#anilist--myanimelist-sync)
+    - [Connecting your accounts](#connecting-your-accounts)
+    - [Using it](#using-it)
+    - [How it works](#how-it-works)
+    - [Disconnecting and resetting](#disconnecting-and-resetting)
+  - [Settings](#settings)
+  - [Privacy and permissions](#privacy-and-permissions)
+  - [Troubleshooting](#troubleshooting)
+  - [Reporting bugs or requesting features](#reporting-bugs-or-requesting-features)
+  - [Development](#development)
+  - [Credits](#credits)
+  - [License](#license)
 
 ---
 
