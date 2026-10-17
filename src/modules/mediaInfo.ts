@@ -1,9 +1,10 @@
 import { defineFeature } from '../core/registry';
 import { Core } from '../core/observer';
 import { AniList, MediaData } from '../api/anilist';
+import { alConnect } from '../api/mal';
 import { externalReleased } from '../api/scrapers';
 import { addStyle, mediaRoute } from '../utils/dom';
-import { tryOr, safe } from '../utils/helpers';
+import { tryOr, safe, store } from '../utils/helpers';
 import type { MediaRoute } from '../types';
 
 defineFeature(
@@ -93,6 +94,19 @@ defineFeature(
       timer = setTimeout(() => render(), ms);
     };
 
+    function renderConnect(key: string): void {
+      const spot = findSpot();
+      if (!spot) return void schedule(800);
+      const box = document.createElement('div');
+      box.id = ID;
+      box.dataset.mode = 'connect';
+      box.innerHTML = `<div style="margin-bottom:10px;color:rgb(var(--color-text-lighter))">Connect AniList to edit your score and progress here.</div><button class="ala-mi-save" type="button">Connect AniList</button>`;
+      box.querySelector('button')!.addEventListener('click', alConnect);
+      panel()?.remove();
+      spot.parent.insertBefore(box, spot.before);
+      shown = key;
+    }
+
     function changeProgress(delta: number, input: HTMLInputElement, limit: number | null): void {
       const next = Number(input.value) + delta;
       if (!Number.isInteger(next) || next < 0 || (limit !== null && next > limit)) return;
@@ -161,6 +175,7 @@ defineFeature(
         if (Date.now() - routeAt < 15000) schedule(800);
         return;
       }
+      if (!store.get('al_token', null)) return renderConnect(key);
 
       const g = gen;
       const stale = (): boolean => g !== gen || mediaRoute()?.id !== route.id;
@@ -307,7 +322,13 @@ defineFeature(
       schedule(1200);
     });
     Core.onBodyMutation(() => {
-      if (mediaRoute() && !panel() && !rendering && !saving) schedule(500);
+      const r = mediaRoute();
+      if (!r || panel() || rendering || saving) return;
+      if (retry.key === `${r.type}:${r.id}` && retry.count >= MAX_FAILURES) return;
+      schedule(500);
+    });
+    window.addEventListener('focus', () => {
+      if (panel()?.dataset.mode === 'connect' && store.get('al_token', null)) render(true);
     });
   }
 );

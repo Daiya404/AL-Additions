@@ -255,7 +255,7 @@ npm run build
 
 The production build compiles the code through TypeScript and Vite into `dist/al-additions.user.js`, then automatically copies the output to the root `al-additions.user.js` so Greasy Fork and GitHub raw URLs stay up to date.
 
-1. Run `npm run bump -- patch`, `npm run bump -- minor`, or `npm run bump -- major`. This updates `package.json`, `package-lock.json`, and `vite.config.ts`, then type-checks and rebuilds the userscript.
+1. Run `npm run bump -- patch`, `npm run bump -- minor`, or `npm run bump -- major`. This updates the package metadata; `vite.config.ts` reads the package version directly, then the script type-checks and rebuilds the userscript.
 2. Add an entry to [`CHANGELOG.md`](./CHANGELOG.md) and update the version near the top of this README.
 3. Review the generated `al-additions.user.js` and the complete diff.
 4. Commit your changes and push to `main`. Greasy Fork syncs automatically from this repository.

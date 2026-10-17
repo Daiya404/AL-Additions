@@ -39,35 +39,26 @@ export const checkCancel = (): void => {
   }
 };
 
-export const stores: Record<SyncMediaType, { ids: any; settled: any }> = {
-  ANIME: {
-    ids: persistent<Record<string, any>>('sync_idmap_ANIME', (d) => {
-      for (const k of Object.keys(d)) {
-        const r = d[k];
-        if (!r || typeof r !== 'object' || (!(r.m > 0) && !(Date.now() - r.t < ID_MISS_TTL_MS))) delete d[k];
-      }
-    }),
-    settled: persistent<Record<string, any>>('sync_settled_ANIME', (d) => {
-      for (const k of Object.keys(d)) {
-        const r = d[k];
-        if (!Array.isArray(r) || !(Date.now() - r[2] < SETTLED_TTL_MS)) delete d[k];
-      }
-    })
-  },
-  MANGA: {
-    ids: persistent<Record<string, any>>('sync_idmap_MANGA', (d) => {
-      for (const k of Object.keys(d)) {
-        const r = d[k];
-        if (!r || typeof r !== 'object' || (!(r.m > 0) && !(Date.now() - r.t < ID_MISS_TTL_MS))) delete d[k];
-      }
-    }),
-    settled: persistent<Record<string, any>>('sync_settled_MANGA', (d) => {
-      for (const k of Object.keys(d)) {
-        const r = d[k];
-        if (!Array.isArray(r) || !(Date.now() - r[2] < SETTLED_TTL_MS)) delete d[k];
-      }
-    })
+const pruneIds = (d: Record<string, any>): void => {
+  for (const k of Object.keys(d)) {
+    const r = d[k];
+    if (!r || typeof r !== 'object' || (!(r.m > 0) && !(Date.now() - r.t < ID_MISS_TTL_MS))) delete d[k];
   }
+};
+const pruneSettled = (d: Record<string, any>): void => {
+  for (const k of Object.keys(d)) {
+    const r = d[k];
+    if (!Array.isArray(r) || !(Date.now() - r[2] < SETTLED_TTL_MS)) delete d[k];
+  }
+};
+const makeStores = (t: SyncMediaType) => ({
+  ids: persistent<Record<string, any>>(`sync_idmap_${t}`, pruneIds),
+  settled: persistent<Record<string, any>>(`sync_settled_${t}`, pruneSettled)
+});
+
+export const stores: Record<SyncMediaType, { ids: any; settled: any }> = {
+  ANIME: makeStores('ANIME'),
+  MANGA: makeStores('MANGA')
 };
 
 export const clearCache = (c: { data: Record<string, any>; save: () => void }): void => {

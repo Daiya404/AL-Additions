@@ -1,4 +1,5 @@
 import { safe } from '../utils/helpers';
+import { unsafeWindow } from 'vite-plugin-monkey/dist/client';
 
 export const Core = (() => {
   const navCbs: Array<() => void> = [];
@@ -6,6 +7,10 @@ export const Core = (() => {
   let observer: MutationObserver | null = null;
   let lastHref = location.href;
   let muted = false;
+  const pageWin = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as Window;
+  const OWN_UI = '#almal-panel,#almal-toast,#ala-media-info,#daiya-anisongs,#ala-settings-backdrop';
+  let queued: MutationRecord[] = [];
+  let flushTimer: ReturnType<typeof setTimeout> | 0 = 0;
 
   const fire = <T>(list: Array<(arg: T) => void>, arg?: T): void => {
     for (const cb of list.slice()) safe(() => cb(arg!), 'core');
@@ -18,12 +23,14 @@ export const Core = (() => {
   }
 
   for (const name of ['pushState', 'replaceState'] as const) {
-    const orig = history[name];
-    history[name] = function (...args: any[]) {
-      const r = (orig as any).apply(this, args);
-      notifyNav();
-      return r;
-    };
+    const orig = pageWin.history[name];
+    try {
+      pageWin.history[name] = function (this: History, ...args: any[]) {
+        const r = (orig as any).apply(this, args);
+        notifyNav();
+        return r;
+      };
+    } catch (_) {}
   }
 
   window.addEventListener('popstate', notifyNav);
@@ -37,7 +44,21 @@ export const Core = (() => {
 
   function ensureObserver(): void {
     if (observer || !document.body) return;
-    observer = new MutationObserver((m) => fire(bodyCbs, m));
+    const isOwn = (m: MutationRecord): boolean => {
+      const t = m.target.nodeType === 1 ? (m.target as Element) : m.target.parentElement;
+      return !!t?.closest(OWN_UI);
+    };
+    observer = new MutationObserver((records) => {
+      for (const record of records) if (!isOwn(record)) queued.push(record);
+      if (queued.length && !flushTimer) {
+        flushTimer = setTimeout(() => {
+          flushTimer = 0;
+          const batch = queued;
+          queued = [];
+          fire(bodyCbs, batch);
+        }, 50);
+      }
+    });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
   }
 

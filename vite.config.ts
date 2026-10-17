@@ -1,3 +1,4 @@
+import pkg from './package.json' with { type: 'json' };
 import { defineConfig } from 'vite';
 import monkey from 'vite-plugin-monkey';
 
@@ -8,9 +9,9 @@ export default defineConfig({
       userscript: {
         name: 'AL Additions',
         namespace: 'daiya.al-additions-v3',
-        version: '0.8.0',
-        description: 'AniList additions: sync, list tools, airing indicators, songs, links, and utilities.',
-        author: 'Daiya',
+        version: pkg.version,
+        description: pkg.description,
+        author: pkg.author,
         homepageURL: 'https://github.com/Daiya404/AL-Additions',
         icon: 'https://anilist.co/img/icons/favicon-32x32.png',
         match: [

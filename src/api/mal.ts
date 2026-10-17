@@ -1,5 +1,5 @@
 import { RateLimiter } from '../utils/limiter';
-import { store, gm, sleep, memo, openTab, authError, safe } from '../utils/helpers';
+import { store, gm, sleep, memo, openTab, authError, safe, randomString } from '../utils/helpers';
 import { strictTitle } from '../utils/matching';
 import { Core } from '../core/observer';
 import { AniList } from './anilist';
@@ -13,15 +13,6 @@ export const MAL_REDIRECT = 'https://myanimelist.net/';
 export const MAL_CLIENT_ID = 'f8197fe8cb24188073de4c0227307edf';
 export const MAL_CLIENT_SECRET = '';
 export const hooks: { checkCancel?: () => void } = {};
-
-export function randomString(len: number): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  const arr = new Uint8Array(len);
-  crypto.getRandomValues(arr);
-  let out = '';
-  for (let i = 0; i < len; i++) out += chars[arr[i] % chars.length];
-  return out;
-}
 
 export let logLines: string[] = [];
 export let lastNotice = '';
