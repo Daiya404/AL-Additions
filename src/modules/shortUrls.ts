@@ -13,7 +13,10 @@ defineFeature(
   },
   () => {
     const SLUG_HREF = /^(?:https:\/\/anilist\.co)?\/(?:manga|anime|staff|character)\/\d{1,10}\/./;
-    const strip = (s: string): string => s.replace(/(\/\d{1,10}\/)[^?#]*/, '$1');
+    // Only strip when the slug is the final path segment, so sub-pages such as
+    // /anime/1/slug/characters keep their full path and continue to work.
+    const strip = (s: string): string =>
+      s.replace(/^((?:https:\/\/anilist\.co)?\/(?:manga|anime|staff|character)\/\d{1,10}\/)[^/?#]+\/?(?=[?#]|$)/, '$1');
 
     function fixLocation(): void {
       if (

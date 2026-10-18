@@ -209,7 +209,7 @@ function backupRestoreHtml(): string {
           <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
             <span class="ala-text">
               <span class="ala-title">Export with Credentials</span>
-              <span class="ala-help">Include AniList and MyAnimeList tokens. Encrypting with a password is strongly recommended.</span>
+              <span class="ala-help">Include AniList and MyAnimeList tokens. A password is required.</span>
             </span>
             <button type="button" class="ala-btn ala-btn--danger" id="ala-btn-export-secrets">Export with Secrets</button>
           </div>
@@ -683,11 +683,15 @@ export function showPanel(): void {
     if (!confirmed) return;
 
     const pwd = prompt(
-      'Set a password to encrypt your credentials (strongly recommended).\n\n' +
-      'Leave blank to export unencrypted:',
+      'Set a password to encrypt your credentials.\n\n' +
+      'A password is required when exporting credentials:',
       ''
     );
     if (pwd === null) return;
+    if (!pwd.trim()) {
+      setStatus('A password is required to export credentials.', true);
+      return;
+    }
     try {
       setStatus('Generating backup…');
       const envelope = await createBackup(true, pwd, getPanelOverrides());

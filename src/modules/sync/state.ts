@@ -1,7 +1,7 @@
 import { persistent, jsonGet, jsonSet, store, randomString, sleep } from '../../utils/helpers';
 import { TYPES, SyncMediaType, SyncProgress, FlaggedError } from './types';
 
-const ID_MISS_TTL_MS = 7 * 86400e3;
+export const ID_MISS_TTL_MS = 7 * 86400e3;
 const SETTLED_TTL_MS = 45 * 86400e3;
 const LOCK_STALE_MS = 45e3;
 const LOCK_HEARTBEAT_MS = 10e3;

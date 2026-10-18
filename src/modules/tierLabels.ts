@@ -205,7 +205,13 @@ defineFeature(
       isPercentage = false,
       isBlockView = false
     ): void {
-      if (el.dataset.tierModified) return;
+      if (el.dataset.tierModified) {
+        // Re-process when the page re-rendered the cell (our badge is gone) or its score attribute changed.
+        const attrNow = el.getAttribute('score');
+        const changed = attrNow !== null && attrNow !== el.dataset.tierSource;
+        if (el.querySelector('.ala-tier-container') && !changed) return;
+        delete el.dataset.tierModified;
+      }
 
       const attr = el.getAttribute('score');
       const rawText = (attr || el.textContent || '').replace('%', '').trim();
@@ -222,6 +228,7 @@ defineFeature(
       if (!tier) return;
 
       el.dataset.tierModified = 'true';
+      el.dataset.tierSource = attr ?? '';
 
       const container = document.createElement('div');
       container.className = `ala-tier-container ${isBlockView ? 'ala-tier-container--block' : ''}`;
@@ -250,8 +257,10 @@ defineFeature(
     function processTop100Elements(tiers: TierConfig[], colorScore: boolean): void {
       document.querySelectorAll<HTMLElement>('.row.score').forEach((row) => {
         const percentageEl = row.querySelector<HTMLElement>('.percentage');
-        if (!percentageEl || percentageEl.classList.contains('popularity') || percentageEl.dataset.tierModified) {
-          return;
+        if (!percentageEl || percentageEl.classList.contains('popularity')) return;
+        if (percentageEl.dataset.tierModified) {
+          if (percentageEl.querySelector('.ala-tier-container')) return;
+          delete percentageEl.dataset.tierModified;
         }
 
         const childNodes = Array.from(percentageEl.childNodes);
@@ -318,7 +327,6 @@ defineFeature(
           if (
             label &&
             value &&
-            !value.dataset.tierModified &&
             ((label.textContent || '').includes('Average Score') || (label.textContent || '').includes('Mean Score'))
           ) {
             processScoreElement(value, tiers, colorScore, true, false);
@@ -339,8 +347,14 @@ defineFeature(
         });
         applyTierLabels();
       });
+      let scanQueued = false;
       Core.onBodyMutation(() => {
-        applyTierLabels();
+        if (scanQueued) return;
+        scanQueued = true;
+        setTimeout(() => {
+          scanQueued = false;
+          applyTierLabels();
+        }, 100);
       });
     });
   }

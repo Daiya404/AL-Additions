@@ -1,6 +1,8 @@
 export const TYPES = ['ANIME', 'MANGA'] as const;
 export type SyncMediaType = (typeof TYPES)[number];
 
+export const typeLabel = (t: string): string => (t === 'ANIME' ? 'Anime' : 'Manga');
+
 export interface SyncProgress {
   phase: 'idle' | 'fetching' | 'pushing';
   done: number;

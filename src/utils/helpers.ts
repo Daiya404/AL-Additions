@@ -43,6 +43,8 @@ export function debounce<T extends (...args: any[]) => void>(fn: T, ms = 0): (..
   };
 }
 
+const MEMO_MAX_ENTRIES = 1000;
+
 interface MemoOptions {
   keepNull?: boolean;
   ttl?: number;
@@ -70,6 +72,11 @@ export function memo<TArgs extends any[], TReturn>(
           throw e;
         }
       );
+    if (m.size >= MEMO_MAX_ENTRIES) {
+      const now = Date.now();
+      for (const [key, v] of m) if (ttl && now - v.at >= ttl) m.delete(key);
+      while (m.size >= MEMO_MAX_ENTRIES) m.delete(m.keys().next().value as string);
+    }
     m.set(k, entry);
     return entry.p;
   };

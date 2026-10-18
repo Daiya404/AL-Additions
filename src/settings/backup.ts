@@ -128,6 +128,10 @@ export async function createBackup(
   password?: string,
   overrides?: Record<string, any>
 ): Promise<Uint8Array> {
+  if (includeSecrets && !(password && password.trim().length > 0)) {
+    throw new Error('A password is required to export credentials.');
+  }
+
   const data: Record<string, any> = {};
 
   for (const r of Object.values(ROWS)) {
@@ -303,12 +307,7 @@ export async function importBackup(fileInput: Uint8Array | string): Promise<Impo
     data = payload.data;
   }
 
-  switch (payload.version) {
-    case 1:
-      return applyVersion1Settings(data);
-    default:
-      throw new Error('Unsupported backup version: ' + payload.version);
-  }
+  return applyVersion1Settings(data);
 }
 
 export async function readFileAsBytes(file: File): Promise<Uint8Array> {
