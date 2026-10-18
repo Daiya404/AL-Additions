@@ -59,6 +59,7 @@ Every feature can be turned on or off in the settings panel (all features are of
 | **Anime OP/ED songs**            | Lists opening and ending themes on anime pages. Click a song to play its video inline.                                                                           |
 | **AniList Fast Load**            | Performance optimizer: lazy media, off-screen row skipping, observer coalescing, safe GraphQL cache/de-duplication, navigation prefetch and early request start. |
 | **AniList Tier Labels**          | Adds customizable tier badges (S+, S, A, etc.) next to ratings across list, card, browse, and compare views.                                                     |
+| **Compare View Improvements**    | Interactive sorting by title/scores and dual-user status filtering checkboxes on list comparison pages.                                                          |
 | **Settings panel**               | One place to configure everything, including a mobile-friendly layout and Backup & Restore.                                                                      |
 
 ### Feature details
@@ -80,6 +81,14 @@ Theme data comes from [AnimeThemes](https://animethemes.moe/) and is cached for 
 
 **AniList Tier Labels**  
 Adds customizable tier badges to anime and manga ratings in list table and card views, average/mean scores on profiles and media pages, browse rankings, and list comparisons. Score ranges, labels, and badge/text colors can be customized via the settings panel, and list comparison scoring format detection is fully fixed.
+
+**Compare View Improvements**  
+Enhances list comparison pages (`/animelist/compare` and `/mangalist/compare`) with interactive sorting and status filtering:
+- **Column Sorting**: Sort by Title (A-Z / Z-A), Your Score, or Other User's Score (high-to-low / low-to-high) with directional arrow indicators locked beside header labels.
+- **Dual-User Status Filter**: Filter entries with checkboxes for Completed, Planning, Current, Paused, and Dropped, with real-time entry counts and Select all / Clear all shortcuts. Entries display only when both users share a checked status.
+- **Automatic Full-List Loading**: Seamlessly loads all common entries in the background so sorting and filtering apply across the entire dataset.
+- **Responsive Layout**: Features a sticky sidebar aligned to the outer-left margin on desktop, and a clean collapsible dropdown on mobile devices with breakpoint auto-toggling.
+- **Theme-Adaptive Hover Highlights**: Automatically measures your theme color's perceived luminance to apply high-contrast column highlights when hovering header edges.
 
 ---
 
