@@ -1,4 +1,3 @@
-import { unsafeWindow } from 'vite-plugin-monkey/dist/client';
 import { esc } from '../utils/helpers';
 
 export interface CreditItem {
@@ -12,8 +11,11 @@ export const CREDITS: CreditItem[] = [
   {
     name: 'Daiya',
     url: 'https://github.com/Daiya404',
-    note: 'Combining, fixing and maintaining this script. Everything not credited below, such as the Keyframe Staff List button and the List Score & Progress Editor, is original work.',
-    works: [['AL-Additions on GitHub', 'https://github.com/Daiya404/AL-Additions']]
+    note: 'Combining, fixing and maintaining this script. Everything not credited below, such as the Keyframe Staff List button, the List Score & Progress Editor, and AniList Fast Load, is original work.',
+    works: [
+      ['AL-Additions on GitHub', 'https://github.com/Daiya404/AL-Additions'],
+      ['AniList Fast Load on GitHub', 'https://github.com/Daiya404/AL-Fast-Load']
+    ]
   },
   {
     name: 'Plennhar',
@@ -60,6 +62,12 @@ export const CREDITS: CreditItem[] = [
     note: 'The API limit fix idea, and a refactor that modularises the code.',
     works: [['MatiX221/AL-Additions', 'https://github.com/MatiX221/AL-Additions']]
   },
+  {
+    name: 'ercarp',
+    url: 'https://greasyfork.org/en/users/1434372-ercarp',
+    note: 'AniList Tier Labels.',
+    works: [['AniList Tier Labels', 'https://greasyfork.org/en/scripts/526694-anilist-tier-labels']]
+  },
   { name: 'Claude & ChatGPT', note: 'AI assistance throughout the consolidation and fixes.' }
 ];
 
@@ -73,14 +81,3 @@ export const creditsHtml = (): string =>
         c.works ? `<ul>${c.works.map(([label, url]) => `<li>${creditLink(url, label)}</li>`).join('')}</ul>` : ''
       }</div>`
   ).join('');
-
-export const FAST_LOAD_URL = 'https://greasyfork.org/en/scripts/598442-anilist-fast-load';
-
-export function fastLoadInstalled(): boolean {
-  try {
-    const w = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
-    return !!(w.__ANILIST_FAST_LOAD__ || w.__ANILIST_FAST_LOAD_V4__);
-  } catch (_) {
-    return false;
-  }
-}

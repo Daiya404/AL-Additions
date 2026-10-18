@@ -13,6 +13,7 @@ defineFeature(
     id: 'keyframe',
     key: 'keyframeEnabled',
     section: 'External Links & Downloads',
+    def: false,
     legacy: ['keyframeEnabled'],
     title: 'Keyframe Staff List Links',
     help: 'Add a button on staff and studio pages that opens the same person or studio on Keyframe Staff List.'

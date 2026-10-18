@@ -29,19 +29,48 @@ defineFeature(
     section: 'Sync',
     hosts: ['anilist.co', 'myanimelist.net'],
     alwaysRun: true,
+    def: false,
     legacy: ['syncEnabled', 'syncOn'],
     title: 'AniList → MyAnimeList Sync',
-    help: 'Enable syncing your AniList list to MyAnimeList, including automatic syncs.',
+    help: 'Enable sync and show the list page sync panel',
     options: [
       {
-        key: 'syncIntervalHours',
+        key: 'syncAutoAnime',
+        type: 'toggle',
+        def: false,
+        legacy: ['syncAutoAnime'],
+        title: 'Auto-Sync Anime',
+        help: 'Automatically sync your anime list to MyAnimeList in the background.'
+      },
+      {
+        key: 'syncIntervalAnime',
         type: 'number',
+        childOf: 'syncAutoAnime',
         def: 6,
         min: 1,
         max: 720,
-        legacy: ['syncIntervalHours', 'autoSyncIntervalHours', 'autoSyncInterval'],
-        title: 'Automatic Sync Interval',
-        help: 'How often automatic syncing checks and updates MyAnimeList. The minimum is 1 hour.'
+        legacy: ['syncIntervalAnime', 'syncIntervalHours', 'autoSyncIntervalHours', 'autoSyncInterval'],
+        title: 'Auto-Sync Anime Interval',
+        help: 'How often to automatically sync your anime list (in hours, minimum 1).'
+      },
+      {
+        key: 'syncAutoManga',
+        type: 'toggle',
+        def: false,
+        legacy: ['syncAutoManga'],
+        title: 'Auto-Sync Manga',
+        help: 'Automatically sync your manga list to MyAnimeList in the background.'
+      },
+      {
+        key: 'syncIntervalManga',
+        type: 'number',
+        childOf: 'syncAutoManga',
+        def: 6,
+        min: 1,
+        max: 720,
+        legacy: ['syncIntervalManga', 'syncIntervalMangaHours', 'autoSyncIntervalMangaHours', 'syncIntervalHours'],
+        title: 'Auto-Sync Manga Interval',
+        help: 'How often to automatically sync your manga list (in hours, minimum 1).'
       },
       {
         key: 'syncScoreRounding',

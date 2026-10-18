@@ -11,6 +11,7 @@ defineFeature(
     id: 'nyaa',
     key: 'nyaaEnabled',
     section: 'External Links & Downloads',
+    def: false,
     legacy: ['nyaaEnabled', 'malNyaaLinksEnabled', 'malNyaaEnabled'],
     title: 'MyAnimeList & Nyaa Links',
     help: 'Show a MyAnimeList link, with Nyaa search available by Ctrl/Cmd-click on desktop or long-press on mobile.',

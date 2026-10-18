@@ -8,6 +8,7 @@ defineFeature(
     key: 'tagFilterEnabled',
     section: 'AniList Enhancements',
     early: true,
+    def: false,
     legacy: ['tagFilterEnabled', 'browseTagRankFilterEnabled'],
     title: 'Browse Tag Rank Filter',
     help: 'Automatically apply a minimum tag-rank percentage when you search with a tag or genre.',

@@ -30,6 +30,7 @@ defineFeature(
     id: 'aniSongs',
     key: 'aniSongsEnabled',
     section: 'AniList Enhancements',
+    def: false,
     legacy: ['aniSongsEnabled', 'animeThemeSongsEnabled', 'anisongsEnabled'],
     title: 'Anime Opening & Ending Songs',
     help: 'Show OP/ED theme songs on anime pages.'

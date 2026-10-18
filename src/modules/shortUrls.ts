@@ -6,6 +6,7 @@ defineFeature(
     id: 'removeTitle',
     key: 'linkShortenerEnabled',
     section: 'AniList Enhancements',
+    def: false,
     legacy: ['linkShortenerEnabled', 'shortAniListUrlsEnabled', 'shortAniListUrls'],
     title: 'Short AniList URLs',
     help: 'Remove the title slug from AniList anime, manga, staff, and character URLs.'
