@@ -1,4 +1,4 @@
-export type SettingType = 'toggle' | 'number' | 'select' | 'list';
+export type SettingType = 'toggle' | 'number' | 'select' | 'list' | 'json';
 
 export interface SettingOption {
   key: string;
@@ -10,6 +10,8 @@ export interface SettingOption {
   max?: number;
   options?: [string, string][];
   legacy?: string[];
+  validate?: (v: any) => any;
+  childOf?: string;
 }
 
 export interface SettingRow extends SettingOption {

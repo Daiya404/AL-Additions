@@ -117,7 +117,7 @@ export function updateProgressUI(force = false): void {
 }
 
 export function renderRateLimitWarning(panelEl: HTMLElement | null): void {
-  if (!panelEl) return;
+  if (!panelEl || !panelEl.isConnected) return;
   const now = Date.now();
   const limited = [
     ['AniList', AniList.resumeAt()],
@@ -293,6 +293,7 @@ const ACTIONS: Record<string, () => void> = {
     saveAniListToken(token);
     log('AniList connected (manual).');
     renderPanel();
+    maybeAutoSync();
   },
   'mal-manual-save': async () => {
     const code = (document.getElementById('almal-mal-manual') as HTMLInputElement | null)?.value.trim();
@@ -301,6 +302,7 @@ const ACTIONS: Record<string, () => void> = {
       await exchangeMalCode(code);
       log('MAL connected (manual).');
       renderPanel();
+      maybeAutoSync();
     } catch (e: any) {
       log('MAL token exchange failed: ' + e.message);
     }

@@ -12,6 +12,7 @@ defineFeature(
     id: 'mediaInfo',
     key: 'mediaInfoEnabled',
     section: 'AniList Enhancements',
+    def: false,
     legacy: ['mediaInfoEnabled', 'mediaListEditorEnabled'],
     title: 'List Score & Progress Editor',
     help: 'Show your score and episode/chapter progress controls on anime and manga pages.'
@@ -32,6 +33,7 @@ defineFeature(
       #${ID} .ala-mi-box:focus-within{box-shadow:inset 0 0 0 1px rgb(var(--color-blue))}
       #${ID} input{flex:1 1 auto;width:100%;min-width:0;height:100%;margin:0;padding:0 4px;border:0;outline:none;background:transparent;color:rgb(var(--color-text));font:inherit;font-size:1.5rem;text-align:center;-moz-appearance:textfield}
       #${ID} input::placeholder{color:rgb(var(--color-text-lighter))}
+      #${ID} input:focus::placeholder{color:transparent}
       #${ID} input::-webkit-outer-spin-button,#${ID} input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
       #${ID} .ala-mi-step{flex:0 0 34px;display:flex;align-items:center;justify-content:center;padding:0;border:0;background:transparent;color:rgb(var(--color-text-lighter));font:inherit;font-size:1.8rem;line-height:1;cursor:pointer;transition:color .15s}
       #${ID} .ala-mi-step:hover{color:rgb(var(--color-blue))}
@@ -43,11 +45,13 @@ defineFeature(
       #${ID} .ala-mi-aired,#${ID} .ala-mi-done{position:absolute;top:0;bottom:0;left:0;width:0;border-radius:2px;transition:width .2s ease}
       #${ID} .ala-mi-aired{background:rgba(var(--color-blue),.3)}
       #${ID} .ala-mi-done{background:rgb(var(--color-blue))}
-      #${ID} .ala-mi-save{display:block;width:100%;height:36px;padding:0;border:0;border-radius:4px;background:rgb(var(--color-blue));color:rgb(var(--color-white,255,255,255));font:inherit;font-size:1.4rem;cursor:pointer;transition:filter .15s,opacity .15s}
+      #${ID} .ala-mi-save{display:block;width:100%;height:36px;padding:0;border:0;border-radius:4px;background:rgb(var(--color-blue));color:rgb(var(--color-white,255,255,255));font:inherit;font-size:1.4rem;cursor:pointer;transition:filter .15s,opacity .15s,background .2s,color .2s}
       #${ID} .ala-mi-save:hover:not(:disabled){filter:brightness(1.1)}
       #${ID} .ala-mi-save:disabled{opacity:.45;cursor:default}
+      #${ID} .ala-mi-save.is-saving,#${ID} .ala-mi-save.is-saving:disabled{opacity:.7;cursor:wait}
+      #${ID} .ala-mi-save.is-saved,#${ID} .ala-mi-save.is-saved:disabled{background:rgb(var(--color-green,76,175,80));color:rgb(var(--color-white,255,255,255));opacity:1;cursor:default}
       @media (pointer:coarse){#${ID} .ala-mi-box{height:42px}#${ID} .ala-mi-step{flex-basis:40px}#${ID} input{font-size:16px}#${ID} .ala-mi-save{height:40px}}
-      @media (prefers-reduced-motion:reduce){#${ID} .ala-mi-aired,#${ID} .ala-mi-done{transition:none}}`
+      @media (prefers-reduced-motion:reduce){#${ID} .ala-mi-aired,#${ID} .ala-mi-done,#${ID} .ala-mi-save{transition:none}}`
     );
 
     const maxOf = (info: any, type: string): number | null => {
@@ -118,7 +122,7 @@ defineFeature(
       info: any,
       scoreInput: HTMLInputElement,
       progressInput: HTMLInputElement
-    ): Promise<boolean | null> {
+    ): Promise<any | false | null> {
       if (saving) return null;
       const fmt = await scoreFormat();
       const max = maxOf(info, media.type);
@@ -137,17 +141,19 @@ defineFeature(
       progressInput.value = String(progress);
       const prev = info.mediaListEntry || {};
       const finishNow = max !== null && progress >= max && (prev.status !== 'COMPLETED' || !prev.completedAt?.year);
+      const isStarting = (!prev.status || prev.status === 'PLANNING') && progress > 0;
+      const status = finishNow ? 'COMPLETED' : isStarting ? 'CURRENT' : undefined;
       saving = true;
       try {
         const entry = await MediaData.save(media.id, media.type, {
           score,
           progress,
-          status: finishNow ? 'COMPLETED' : undefined,
+          status,
           completedAt: finishNow ? today() : undefined
         });
         if (!entry) throw new Error('AniList did not return the updated entry');
-        await render(true);
-        return true;
+        info.mediaListEntry = entry;
+        return entry;
       } catch (e) {
         console.warn('[AL-Additions] Media list save failed:', e);
         return false;
@@ -236,8 +242,25 @@ defineFeature(
         const doneFill = box.querySelector<HTMLElement>('.ala-mi-done')!;
         const airedFill = box.querySelector<HTMLElement>('.ala-mi-aired')!;
         const limit = (): number | null => (max !== null ? max : released);
-        const startScore = scoreInput.value.trim();
-        const startProgress = progressInput.value;
+        let startScore = scoreInput.value.trim();
+        let startProgress = progressInput.value;
+        let savedTimer: ReturnType<typeof setTimeout> | 0 = 0;
+        let failedTimer: ReturnType<typeof setTimeout> | 0 = 0;
+
+        function clearSavedState(): void {
+          if (savedTimer) {
+            clearTimeout(savedTimer);
+            savedTimer = 0;
+          }
+          if (failedTimer) {
+            clearTimeout(failedTimer);
+            failedTimer = 0;
+          }
+          saveBtn.classList.remove('is-saved', 'is-saving');
+          if (saveBtn.textContent === 'Saved' || saveBtn.textContent === 'Saving...' || saveBtn.textContent === 'Failed') {
+            saveBtn.textContent = 'Save';
+          }
+        }
 
         function paint(): void {
           const typed = Number(progressInput.value);
@@ -251,24 +274,59 @@ defineFeature(
             doneFill.style.width = Math.min(100, (watched / total) * 100) + '%';
             airedFill.style.width = released != null ? Math.min(100, (released / total) * 100) + '%' : '0%';
           }
-          saveBtn.disabled =
-            saving || (scoreInput.value.trim() === startScore && progressInput.value === startProgress);
+          const isDirty = scoreInput.value.trim() !== startScore || progressInput.value !== startProgress;
+          if (savedTimer && isDirty) {
+            clearSavedState();
+          }
+          saveBtn.disabled = saving || Boolean(savedTimer) || !isDirty;
         }
 
         saveBtn.addEventListener('click', async () => {
           if (saving || saveBtn.disabled) return;
+          clearSavedState();
+          saveBtn.textContent = 'Saving...';
+          saveBtn.classList.add('is-saving');
           saveBtn.disabled = true;
-          let ok: boolean | null = null;
+
+          let res: any | false | null = null;
           try {
-            ok = await save(route, info, scoreInput, progressInput);
+            res = await save(route, info, scoreInput, progressInput);
           } finally {
-            paint();
+            saveBtn.classList.remove('is-saving');
           }
-          if (ok === false) {
+
+          if (!box.isConnected) return;
+
+          if (res && res !== false) {
+            scoreInput.value = formatScore(res.score, fmt);
+            const nextProg = Number(res.progress);
+            progressInput.value = Number.isFinite(nextProg) ? String(nextProg) : progressInput.value;
+            startScore = scoreInput.value.trim();
+            startProgress = progressInput.value;
+            saveBtn.classList.add('is-saved');
+            saveBtn.textContent = 'Saved';
+            saveBtn.disabled = true;
+            savedTimer = setTimeout(() => {
+              savedTimer = 0;
+              if (!box.isConnected) return;
+              saveBtn.classList.remove('is-saved');
+              saveBtn.textContent = 'Save';
+              paint();
+            }, 1800);
+            paint();
+          } else if (res === false) {
             saveBtn.textContent = 'Failed';
-            setTimeout(() => {
-              if (saveBtn.isConnected) saveBtn.textContent = 'Save';
+            saveBtn.disabled = false;
+            failedTimer = setTimeout(() => {
+              failedTimer = 0;
+              if (box.isConnected && saveBtn.textContent === 'Failed') {
+                saveBtn.textContent = 'Save';
+                paint();
+              }
             }, 2000);
+          } else {
+            saveBtn.textContent = 'Save';
+            paint();
           }
         });
 
@@ -277,6 +335,19 @@ defineFeature(
             if (e.key === 'Enter') saveBtn.click();
           });
           input.addEventListener('input', paint);
+          input.addEventListener('focus', () => {
+            if (input.value) {
+              input.select();
+            } else if (input.placeholder) {
+              input.dataset.placeholder = input.placeholder;
+              input.placeholder = '';
+            }
+          });
+          input.addEventListener('blur', () => {
+            if (!input.value && input.dataset.placeholder) {
+              input.placeholder = input.dataset.placeholder;
+            }
+          });
         }
         box.querySelector('.ala-mi-minus')?.addEventListener('click', () => {
           changeProgress(-1, progressInput, limit());
