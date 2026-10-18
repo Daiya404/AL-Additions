@@ -2,19 +2,13 @@ import { GM_registerMenuCommand } from 'vite-plugin-monkey/dist/client';
 import { defineFeature } from '../../core/registry';
 import { clearMalAuth, clearAniListAuth, log } from '../../api/mal';
 import { store, safe } from '../../utils/helpers';
+import { SENSITIVE_KEYS } from '../../settings/backup';
 import { TYPES } from './types';
 import { stores, clearCache } from './state';
 import { initSyncPanel, renderPanel } from './panel';
 
 const ALL_KEYS = [
-  'al_token',
-  'al_username',
-  'al_user_id',
-  'al_score_format',
-  'mal_code_verifier',
-  'mal_token',
-  'mal_refresh_token',
-  'mal_expires_at',
+  ...SENSITIVE_KEYS,
   'sync_lock_heartbeat',
   'sync_onboarded',
   'sync_retry_at',

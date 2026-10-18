@@ -17,6 +17,10 @@
   - Airing Dots: added rejection handling in update batches to prevent unhandled promise rejections.
   - Manga Matching: scaled substring matching score by length ratio and raised minimum threshold to 70 to eliminate false positive MangaUpdates matches.
   - Settings: enforced numeric bounds clamping and integer rounding on number inputs, hardened JSON setting validation, and prevented stale rate-limit countdown timers.
+  - Short URLs: only strip the slug when it is the last path segment, so sub-pages such as `/characters` keep working.
+  - Tier Labels: badges refresh when AniList re-renders a score or changes its score attribute, and page scans are throttled.
+  - Settings Backup: exporting credentials now requires a password.
+  - Internal: bounded memo cache, deduplicated sync constants, and consistent auth errors.
 
 ## 0.7.2
 

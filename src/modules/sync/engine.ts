@@ -10,7 +10,7 @@ import {
   clearAniListAuth
 } from '../../api/mal';
 import { hooks } from '../../api/mal';
-import { store, tryOr } from '../../utils/helpers';
+import { store, tryOr, authError } from '../../utils/helpers';
 import { strictTitle } from '../../utils/matching';
 import { Settings } from '../../settings/settings';
 import {
@@ -20,7 +20,8 @@ import {
   SyncJob,
   SyncTarget,
   SyncCounters,
-  FlaggedError
+  FlaggedError,
+  typeLabel
 } from './types';
 import {
   progress,
@@ -44,7 +45,6 @@ const FULL_COMPARE_MS = 7 * 86400e3;
 const BREAKER_MAX_TRIPS = 3;
 const RETRY_AFTER_FAILURE_MS = 10 * 60e3;
 export const LIST_PATH_RE = /^\/user\/[^/]+\/(anime|manga)list/;
-const typeLabel = (t: string): string => (t === 'ANIME' ? 'Anime' : 'Manga');
 
 const ENTRY_FIELDS =
   'status score(format: POINT_100) progress progressVolumes repeat notes updatedAt startedAt { year month day } completedAt { year month day }';
@@ -326,7 +326,7 @@ export async function runSync(types: SyncMediaType[] = [...TYPES], opts: { full?
   let allOk = false;
   try {
     const viewer = await AniList.viewer();
-    if (!viewer) throw { auth: 'AniList', message: 'AniList is not connected.' };
+    if (!viewer) throw authError('AniList', 'AniList is not connected.');
     const me = await malWhoAmI();
     const account = `${viewer.id}:${me.id}`;
     const prev = store.get<string | null>('sync_account', null);

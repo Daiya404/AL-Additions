@@ -79,6 +79,7 @@
 			t = setTimeout(() => fn(...a), ms);
 		};
 	}
+	var MEMO_MAX_ENTRIES = 1e3;
 	function memo(fn, { keepNull = true, ttl = 0 } = {}) {
 		const m = new Map();
 		return (key, ...args) => {
@@ -96,6 +97,11 @@
 				if (m.get(k) === entry) m.delete(k);
 				throw e;
 			});
+			if (m.size >= MEMO_MAX_ENTRIES) {
+				const now = Date.now();
+				for (const [key, v] of m) if (ttl && now - v.at >= ttl) m.delete(key);
+				while (m.size >= MEMO_MAX_ENTRIES) m.delete(m.keys().next().value);
+			}
 			m.set(k, entry);
 			return entry.p;
 		};
@@ -1099,7 +1105,7 @@
 		return 0;
 	}
 	var TYPES = ["ANIME", "MANGA"];
-	var ID_MISS_TTL_MS$1 = 6048e5;
+	var typeLabel = (t) => t === "ANIME" ? "Anime" : "Manga";
 	var SETTLED_TTL_MS = 3888e6;
 	var LOCK_STALE_MS = 45e3;
 	var LOCK_HEARTBEAT_MS = 1e4;
@@ -1144,7 +1150,7 @@
 	var pruneIds = (d) => {
 		for (const k of Object.keys(d)) {
 			const r = d[k];
-			if (!r || typeof r !== "object" || !(r.m > 0) && !(Date.now() - r.t < ID_MISS_TTL_MS$1)) delete d[k];
+			if (!r || typeof r !== "object" || !(r.m > 0) && !(Date.now() - r.t < 6048e5)) delete d[k];
 		}
 	};
 	var pruneSettled = (d) => {
@@ -1346,8 +1352,6 @@
 		if ("comments" in patch) parts.push("notes");
 		return parts.join("; ") || "MAL-normalised fields";
 	}
-	var ID_MISS_TTL_MS = 6048e5;
-	var typeLabel$1 = (t) => t === "ANIME" ? "Anime" : "Manga";
 	function buildTitleIndex(mal) {
 		const idx = new Map();
 		for (const [id, st] of Object.entries(mal)) {
@@ -1369,7 +1373,7 @@
 	}
 	function cachedId(type, entry) {
 		const c = stores[type].ids.data[entry.mediaId];
-		const fresh = !!c && Date.now() - c.t < ID_MISS_TTL_MS;
+		const fresh = !!c && Date.now() - c.t < 6048e5;
 		if (entry.idMal) return fresh && c.bad === entry.idMal ? 0 : entry.idMal;
 		if (c && c.m > 0) return c.m;
 		return fresh ? 0 : void 0;
@@ -1445,7 +1449,7 @@
 				if (e.auth || e.cancelled) throw e;
 				c.transient++;
 				markDone();
-				log(`${typeLabel$1(type)}: could not look up "${entry.title.slice(0, 45)}" on MAL: ${e.message}. Will retry on a later sync.`, "warn");
+				log(`${typeLabel(type)}: could not look up "${entry.title.slice(0, 45)}" on MAL: ${e.message}. Will retry on a later sync.`, "warn");
 				return;
 			}
 			rememberId(type, entry.mediaId, id);
@@ -1460,7 +1464,7 @@
 				markDone();
 			}
 		}, 3);
-		if (unmatched.length) log(`${typeLabel$1(type)}: no confident MAL match for ${unmatched.length} title(s). Skipped: ${unmatched.slice(0, 5).map((t) => `"${t.slice(0, 30)}"`).join(", ")}${unmatched.length > 5 ? `, plus ${unmatched.length - 5} more` : ""}. Use Full Resync after adding/fixing MAL entries.`, "warn");
+		if (unmatched.length) log(`${typeLabel(type)}: no confident MAL match for ${unmatched.length} title(s). Skipped: ${unmatched.slice(0, 5).map((t) => `"${t.slice(0, 30)}"`).join(", ")}${unmatched.length > 5 ? `, plus ${unmatched.length - 5} more` : ""}. Use Full Resync after adding/fixing MAL entries.`, "warn");
 		return targets;
 	}
 	function dedupeTargets(type, targets, c) {
@@ -1476,7 +1480,7 @@
 			if (better > 0) best.set(t.malId, t);
 			c.conflicts++;
 			markDone();
-			log(`${typeLabel$1(type)}: "${loser.entry.title.slice(0, 40)}" and another AniList entry resolve to MAL ID ${loser.malId}; only one can be synced, so the preferred entry wins.`, "warn");
+			log(`${typeLabel(type)}: "${loser.entry.title.slice(0, 40)}" and another AniList entry resolve to MAL ID ${loser.malId}; only one can be synced, so the preferred entry wins.`, "warn");
 		}
 		return [...best.values()].sort((a, b) => b.entry.updatedAt - a.entry.updatedAt);
 	}
@@ -1485,7 +1489,6 @@
 	var BREAKER_MAX_TRIPS = 3;
 	var RETRY_AFTER_FAILURE_MS = 6e5;
 	var LIST_PATH_RE = /^\/user\/[^/]+\/(anime|manga)list/;
-	var typeLabel = (t) => t === "ANIME" ? "Anime" : "Manga";
 	var ENTRY_FIELDS = "status score(format: POINT_100) progress progressVolumes repeat notes updatedAt startedAt { year month day } completedAt { year month day }";
 	var MEDIA_FIELDS = "id idMal startDate { year } synonyms title { userPreferred english romaji native }";
 	var toEntry = (row, media) => {
@@ -1749,10 +1752,7 @@
 		let allOk = false;
 		try {
 			const viewer = await AniList.viewer();
-			if (!viewer) throw {
-				auth: "AniList",
-				message: "AniList is not connected."
-			};
+			if (!viewer) throw authError("AniList", "AniList is not connected.");
 			const me = await malWhoAmI();
 			const account = `${viewer.id}:${me.id}`;
 			const prev = store.get("sync_account", null);
@@ -1903,6 +1903,7 @@
 		return await new Response(stream).text();
 	}
 	async function createBackup(includeSecrets, password, overrides) {
+		if (includeSecrets && !(password && password.trim().length > 0)) throw new Error("A password is required to export credentials.");
 		const data = {};
 		for (const r of Object.values(ROWS)) {
 			const rawVal = overrides && r.key in overrides ? overrides[r.key] : store.get(PREFIX + r.key, r.def);
@@ -2016,10 +2017,7 @@
 			if (!payload.data || typeof payload.data !== "object" || Array.isArray(payload.data)) throw new Error("Backup file is missing settings data.");
 			data = payload.data;
 		}
-		switch (payload.version) {
-			case 1: return applyVersion1Settings(data);
-			default: throw new Error("Unsupported backup version: " + payload.version);
-		}
+		return applyVersion1Settings(data);
 	}
 	async function readFileAsBytes(file) {
 		if (typeof file.arrayBuffer === "function") return new Uint8Array(await file.arrayBuffer());
@@ -2396,7 +2394,7 @@
           <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
             <span class="ala-text">
               <span class="ala-title">Export with Credentials</span>
-              <span class="ala-help">Include AniList and MyAnimeList tokens. Encrypting with a password is strongly recommended.</span>
+              <span class="ala-help">Include AniList and MyAnimeList tokens. A password is required.</span>
             </span>
             <button type="button" class="ala-btn ala-btn--danger" id="ala-btn-export-secrets">Export with Secrets</button>
           </div>
@@ -2799,8 +2797,12 @@
 		});
 		panel.querySelector("#ala-btn-export-secrets")?.addEventListener("click", async () => {
 			if (!confirm("⚠️ Warning: This export includes your AniList and MyAnimeList authentication credentials.\n\nAnyone with access to this file will have full access to your connected accounts.\n\nDo you want to continue?")) return;
-			const pwd = prompt("Set a password to encrypt your credentials (strongly recommended).\n\nLeave blank to export unencrypted:", "");
+			const pwd = prompt("Set a password to encrypt your credentials.\n\nA password is required when exporting credentials:", "");
 			if (pwd === null) return;
+			if (!pwd.trim()) {
+				setStatus("A password is required to export credentials.", true);
+				return;
+			}
 			try {
 				setStatus("Generating backup…");
 				downloadBackupFile(await createBackup(true, pwd, getPanelOverrides()));
@@ -2983,7 +2985,7 @@
 		help: "Remove the title slug from AniList anime, manga, staff, and character URLs."
 	}, () => {
 		const SLUG_HREF = /^(?:https:\/\/anilist\.co)?\/(?:manga|anime|staff|character)\/\d{1,10}\/./;
-		const strip = (s) => s.replace(/(\/\d{1,10}\/)[^?#]*/, "$1");
+		const strip = (s) => s.replace(/^((?:https:\/\/anilist\.co)?\/(?:manga|anime|staff|character)\/\d{1,10}\/)[^/?#]+\/?(?=[?#]|$)/, "$1");
 		function fixLocation() {
 			if (!/anilist\.co\/(manga|anime|staff|character)\//.test(location.href) || !/\/\d{1,10}\/./.test(location.href)) return;
 			const cur = location.pathname + location.search + location.hash;
@@ -5322,8 +5324,14 @@
 			}
 		}
 		function processScoreElement(el, tiers, colorScore, isPercentage = false, isBlockView = false) {
-			if (el.dataset.tierModified) return;
-			const rawText = (el.getAttribute("score") || el.textContent || "").replace("%", "").trim();
+			if (el.dataset.tierModified) {
+				const attrNow = el.getAttribute("score");
+				const changed = attrNow !== null && attrNow !== el.dataset.tierSource;
+				if (el.querySelector(".ala-tier-container") && !changed) return;
+				delete el.dataset.tierModified;
+			}
+			const attr = el.getAttribute("score");
+			const rawText = (attr || el.textContent || "").replace("%", "").trim();
 			if (!rawText || rawText === "-" || rawText === "0") return;
 			const num = parseFloat(rawText);
 			if (isNaN(num) || num <= 0) return;
@@ -5332,6 +5340,7 @@
 			const tier = getTier(normalizedRating, tiers);
 			if (!tier) return;
 			el.dataset.tierModified = "true";
+			el.dataset.tierSource = attr ?? "";
 			const container = document.createElement("div");
 			container.className = `ala-tier-container ${isBlockView ? "ala-tier-container--block" : ""}`;
 			const scoreSpan = document.createElement("span");
@@ -5350,7 +5359,11 @@
 		function processTop100Elements(tiers, colorScore) {
 			document.querySelectorAll(".row.score").forEach((row) => {
 				const percentageEl = row.querySelector(".percentage");
-				if (!percentageEl || percentageEl.classList.contains("popularity") || percentageEl.dataset.tierModified) return;
+				if (!percentageEl || percentageEl.classList.contains("popularity")) return;
+				if (percentageEl.dataset.tierModified) {
+					if (percentageEl.querySelector(".ala-tier-container")) return;
+					delete percentageEl.dataset.tierModified;
+				}
 				const textNode = Array.from(percentageEl.childNodes).find((n) => n.nodeType === Node.TEXT_NODE && (n.textContent || "").trim() !== "");
 				if (!textNode) return;
 				const ratingText = (textNode.textContent || "").trim().replace("%", "");
@@ -5389,7 +5402,7 @@
 			if (showAverage) document.querySelectorAll(".data-set").forEach((dataSet) => {
 				const label = dataSet.querySelector(".type");
 				const value = dataSet.querySelector(".value");
-				if (label && value && !value.dataset.tierModified && ((label.textContent || "").includes("Average Score") || (label.textContent || "").includes("Mean Score"))) processScoreElement(value, tiers, colorScore, true, false);
+				if (label && value && ((label.textContent || "").includes("Average Score") || (label.textContent || "").includes("Mean Score"))) processScoreElement(value, tiers, colorScore, true, false);
 			});
 			processTop100Elements(tiers, colorScore);
 		}
@@ -5401,8 +5414,14 @@
 				});
 				applyTierLabels();
 			});
+			let scanQueued = false;
 			Core.onBodyMutation(() => {
-				applyTierLabels();
+				if (scanQueued) return;
+				scanQueued = true;
+				setTimeout(() => {
+					scanQueued = false;
+					applyTierLabels();
+				}, 100);
 			});
 		});
 	});
@@ -5736,14 +5755,7 @@
 		}, 2e3);
 	}
 	var ALL_KEYS = [
-		"al_token",
-		"al_username",
-		"al_user_id",
-		"al_score_format",
-		"mal_code_verifier",
-		"mal_token",
-		"mal_refresh_token",
-		"mal_expires_at",
+		...SENSITIVE_KEYS,
 		"sync_lock_heartbeat",
 		"sync_onboarded",
 		"sync_retry_at",

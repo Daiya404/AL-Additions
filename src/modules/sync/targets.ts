@@ -1,11 +1,8 @@
 import { strictTitle } from '../../utils/matching';
 import { searchMalId, log } from '../../api/mal';
-import { stores, markDone } from './state';
+import { stores, markDone, ID_MISS_TTL_MS } from './state';
 import { STATUS_MAP } from './reconcile';
-import { SyncMediaType, AniListSyncEntry, SyncTarget, SyncCounters } from './types';
-
-const ID_MISS_TTL_MS = 7 * 86400e3;
-const typeLabel = (t: string): string => (t === 'ANIME' ? 'Anime' : 'Manga');
+import { SyncMediaType, AniListSyncEntry, SyncTarget, SyncCounters, typeLabel } from './types';
 
 export function buildTitleIndex(mal: Record<number, any>): Map<string, number> {
   const idx = new Map<string, number>();
