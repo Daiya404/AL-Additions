@@ -16,6 +16,7 @@ import './modules/airingDots';
 import './modules/anisongs';
 import './modules/fastLoad';
 import './modules/tierLabels';
+import './modules/compareView';
 import './modules/sync';
 
 defineModule('settings', null, initSettingsPage);
