@@ -392,16 +392,36 @@ export async function fullResync(): Promise<void> {
 
 export function maybeAutoSync(): void {
   if (!Settings.get('syncEnabled') || syncStatus.syncing || Date.now() < syncStatus.autoSyncRetryAfter || navigator.onLine === false) return;
-  if (!store.get('al_token') || !store.get('mal_token') || !store.get('sync_onboarded', false)) return;
-  const runs = TYPES.map((t) => Number(store.get(`last_run_${t}`, 0)) || 0);
-  const last = Math.min(...runs);
-  if (!(last > 0)) return;
-  const hours = Settings.get('syncIntervalHours');
+  if (!store.get('al_token') || !store.get('mal_token')) return;
+
   const retryAt = Number(store.get('sync_retry_at', 0)) || 0;
-  const due = retryAt ? Date.now() >= retryAt : Date.now() - last * 1000 >= hours * 3600e3;
-  if (due) {
-    log(retryAt ? 'Auto-sync: retrying after an earlier failure…' : `Auto-sync: ${hours}h interval reached…`);
+  if (retryAt > 0 && Date.now() < retryAt) return;
+
+  const dueTypes: SyncMediaType[] = [];
+  for (const t of TYPES) {
+    const isAnime = t === 'ANIME';
+    const enabled = Settings.get(isAnime ? 'syncAutoAnime' : 'syncAutoManga');
+    if (!enabled) continue;
+
+    const hours = Math.max(1, Number(Settings.get(isAnime ? 'syncIntervalAnime' : 'syncIntervalManga')) || 6);
+    const last = Number(store.get(`last_run_${t}`, 0)) || 0;
+    const isDue = retryAt > 0
+      ? (!last || Date.now() - last * 1000 >= RETRY_AFTER_FAILURE_MS)
+      : (!last || Date.now() - last * 1000 >= hours * 3600e3);
+
+    if (isDue) dueTypes.push(t);
+  }
+
+  if (dueTypes.length > 0) {
+    const labels = dueTypes.map(typeLabel).join(' & ');
+    log(
+      retryAt > 0
+        ? `Auto-sync (${labels}): retrying after an earlier failure…`
+        : `Auto-sync (${labels}): interval reached or initial sync…`
+    );
     syncStatus.autoSyncRetryAfter = Date.now() + 5 * 60e3;
-    runSync([...TYPES]);
+    runSync(dueTypes);
+  } else if (retryAt > 0 && Date.now() >= retryAt) {
+    store.del('sync_retry_at');
   }
 }

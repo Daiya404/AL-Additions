@@ -17,6 +17,7 @@ defineFeature(
     id: 'behindDots',
     key: 'behindDotsEnabled',
     section: 'AniList Enhancements',
+    def: false,
     legacy: ['behindDotsEnabled', 'airingProgressIndicatorEnabled'],
     title: 'Airing Progress Indicator',
     help: 'Show an orange indicator when your watched episode count is behind the number of aired episodes.'

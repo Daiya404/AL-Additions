@@ -285,10 +285,14 @@
 		},
 		number: {
 			normalize: (v, r) => {
+				if (v == null || String(v).trim() === "") return r?.def;
 				const n = Math.round(Number(v));
-				return Number.isFinite(n) && n > 0 ? Math.max(r?.min ?? 1, Math.min(r?.max ?? 100, n)) : r?.def;
+				if (!Number.isFinite(n)) return r?.def;
+				const min = r?.min ?? 0;
+				const max = r?.max ?? 100;
+				return Math.max(min, Math.min(max, n));
 			},
-			html: (r, v) => `<input type="number" data-key="${r.key}" min="${r.min ?? 1}" max="${r.max ?? 100}" step="1" inputmode="numeric" value="${esc(v)}">`,
+			html: (r, v) => `<input type="number" data-key="${r.key}" min="${r.min ?? 0}" max="${r.max ?? 100}" step="1" inputmode="numeric" value="${esc(v)}">`,
 			...textIO
 		},
 		select: {
@@ -306,13 +310,44 @@
 			write: (el, v) => {
 				el.value = v.join(", ");
 			}
+		},
+		json: {
+			normalize: (v, r) => {
+				if (v == null) return r?.def;
+				let val = v;
+				if (typeof v === "string") try {
+					val = JSON.parse(v);
+				} catch (_) {
+					return r?.def;
+				}
+				if (r?.validate) {
+					const check = r.validate(val);
+					if (check === false) return r.def;
+					if (check && typeof check === "object") {
+						if (check.valid === false) return r.def;
+						if (check.tiers) return check.tiers;
+					}
+				}
+				return val;
+			},
+			html: (r, v) => `<input type="hidden" data-key="${r.key}" value="${esc(JSON.stringify(v))}"><button type="button" class="ala-btn ala-btn--secondary ala-btn--edit-json" id="ala-btn-edit-${r.key}">Customize</button>`,
+			read: (el) => {
+				try {
+					return JSON.parse(el.value);
+				} catch (_) {
+					return ROWS[el.dataset.key]?.def;
+				}
+			},
+			write: (el, v) => {
+				el.value = JSON.stringify(v);
+			}
 		}
 	};
 	function register(f) {
 		const toggle = {
 			key: f.key,
 			type: "toggle",
-			def: f.def !== false,
+			def: f.def === true,
 			legacy: f.legacy || [],
 			title: f.title,
 			help: f.help
@@ -347,16 +382,21 @@
 	function migrate() {
 		safe(() => {
 			for (const r of Object.values(ROWS)) {
-				if (store.get(PREFIX + r.key, void 0) !== void 0) continue;
+				if (store.get("ala_setting_" + r.key, void 0) !== void 0) continue;
 				for (const name of r.legacy) {
-					const raw = localStorage.getItem("ALAdditions:" + name);
-					if (raw == null) continue;
-					let v = raw;
-					try {
-						v = JSON.parse(raw);
-					} catch (_) {}
-					store.set(PREFIX + r.key, v);
-					break;
+					let v = store.get(PREFIX + name, void 0);
+					if (v === void 0) {
+						const raw = localStorage.getItem("ALAdditions:" + name);
+						if (raw != null) try {
+							v = JSON.parse(raw);
+						} catch (_) {
+							v = raw;
+						}
+					}
+					if (v !== void 0) {
+						store.set(PREFIX + r.key, v);
+						break;
+					}
 				}
 			}
 		}, "settings migration");
@@ -371,8 +411,8 @@
 		{
 			name: "Daiya",
 			url: "https://github.com/Daiya404",
-			note: "Combining, fixing and maintaining this script. Everything not credited below, such as the Keyframe Staff List button and the List Score & Progress Editor, is original work.",
-			works: [["AL-Additions on GitHub", "https://github.com/Daiya404/AL-Additions"]]
+			note: "Combining, fixing and maintaining this script. Everything not credited below, such as the Keyframe Staff List button, the List Score & Progress Editor, and AniList Fast Load, is original work.",
+			works: [["AL-Additions on GitHub", "https://github.com/Daiya404/AL-Additions"], ["AniList Fast Load on GitHub", "https://github.com/Daiya404/AL-Fast-Load"]]
 		},
 		{
 			name: "Plennhar",
@@ -417,21 +457,18 @@
 			works: [["MatiX221/AL-Additions", "https://github.com/MatiX221/AL-Additions"]]
 		},
 		{
+			name: "ercarp",
+			url: "https://greasyfork.org/en/users/1434372-ercarp",
+			note: "AniList Tier Labels.",
+			works: [["AniList Tier Labels", "https://greasyfork.org/en/scripts/526694-anilist-tier-labels"]]
+		},
+		{
 			name: "Claude & ChatGPT",
 			note: "AI assistance throughout the consolidation and fixes."
 		}
 	];
 	var creditLink = (url, text, cls = "") => `<a${cls ? ` class="${cls}"` : ""} href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>`;
 	var creditsHtml = () => CREDITS.map((c) => `<div class="ala-credit"><b>${c.url ? creditLink(c.url, c.name) : esc(c.name)}</b> — ${esc(c.note)}${c.works ? `<ul>${c.works.map(([label, url]) => `<li>${creditLink(url, label)}</li>`).join("")}</ul>` : ""}</div>`).join("");
-	var FAST_LOAD_URL = "https://greasyfork.org/en/scripts/598442-anilist-fast-load";
-	function fastLoadInstalled() {
-		try {
-			const w = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
-			return !!(w.__ANILIST_FAST_LOAD__ || w.__ANILIST_FAST_LOAD_V4__);
-		} catch (_) {
-			return false;
-		}
-	}
 	var ICONS = {
 		download: "<path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/><polyline points=\"7 10 12 15 17 10\"/><line x1=\"12\" y1=\"15\" x2=\"12\" y2=\"3\"/>",
 		check: "<polyline points=\"20 6 9 17 4 12\"/>",
@@ -440,7 +477,8 @@
 		list: "<line x1=\"8\" y1=\"6\" x2=\"21\" y2=\"6\"/><line x1=\"8\" y1=\"12\" x2=\"21\" y2=\"12\"/><line x1=\"8\" y1=\"18\" x2=\"21\" y2=\"18\"/><line x1=\"3\" y1=\"6\" x2=\"3.01\" y2=\"6\"/><line x1=\"3\" y1=\"12\" x2=\"3.01\" y2=\"12\"/><line x1=\"3\" y1=\"18\" x2=\"3.01\" y2=\"18\"/>",
 		sliders: "<line x1=\"4\" y1=\"21\" x2=\"4\" y2=\"14\"/><line x1=\"4\" y1=\"10\" x2=\"4\" y2=\"3\"/><line x1=\"12\" y1=\"21\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"3\"/><line x1=\"20\" y1=\"21\" x2=\"20\" y2=\"16\"/><line x1=\"20\" y1=\"12\" x2=\"20\" y2=\"3\"/><line x1=\"1\" y1=\"14\" x2=\"7\" y2=\"14\"/><line x1=\"9\" y1=\"8\" x2=\"15\" y2=\"8\"/><line x1=\"17\" y1=\"16\" x2=\"23\" y2=\"16\"/>",
 		close: "<line x1=\"18\" y1=\"6\" x2=\"6\" y2=\"18\"/><line x1=\"6\" y1=\"6\" x2=\"18\" y2=\"18\"/>",
-		external: "<path d=\"M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6\"/><polyline points=\"15 3 21 3 21 9\"/><line x1=\"10\" y1=\"14\" x2=\"21\" y2=\"3\"/>"
+		external: "<path d=\"M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6\"/><polyline points=\"15 3 21 3 21 9\"/><line x1=\"10\" y1=\"14\" x2=\"21\" y2=\"3\"/>",
+		chevron: "<polyline points=\"6 9 12 15 18 9\"/>"
 	};
 	var icon = (name, size = 18) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${ICONS[name]}</svg>`;
 	function addStyle(id, css) {
@@ -469,248 +507,6 @@
 			return el;
 		}
 		return null;
-	}
-	var SECTIONS = [
-		"Sync",
-		"AniList Enhancements",
-		"External Links & Downloads"
-	];
-	var CSS = `
-  .ala-settings-nav-section{margin-top:26px}
-  .ala-settings-nav-heading{color:rgb(var(--color-text-lighter));margin-bottom:12px}
-  .ala-settings-nav-link{display:block;padding:9px 12px;border-radius:3px;color:rgb(var(--color-text));text-decoration:none;cursor:pointer}
-  .ala-settings-nav-link:hover,.ala-settings-nav-link.is-active{background:rgb(var(--color-foreground))}
-  #ala-settings-mobile-launcher{display:none}
-
-  #ala-settings-backdrop{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:24px 16px;background:rgba(5,12,20,.72);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
-  #ala-settings-panel{box-sizing:border-box;display:flex;flex-direction:column;width:min(680px,100%);max-height:100%;border-radius:8px;background:rgb(var(--color-foreground));color:rgb(var(--color-text));font-size:14px;line-height:1.4;box-shadow:0 18px 60px rgba(0,0,0,.45);overflow:hidden;outline:none}
-  #ala-settings-panel *{box-sizing:border-box}
-  #ala-settings-panel :focus-visible{outline:2px solid rgb(var(--color-blue));outline-offset:2px}
-  #ala-settings-panel h2,#ala-settings-panel h3{margin:0;font-family:inherit}
-
-  .ala-sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:18px 20px 10px}
-  .ala-sheet-head h2{font-size:19px;font-weight:600;line-height:1.3}
-  .ala-sheet-body{flex:1 1 auto;min-height:0;padding:0 20px 8px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
-  .ala-sheet-foot{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 20px;border-top:1px solid rgba(var(--color-text-lighter),.14)}
-  .ala-status{flex:1 1 160px;color:rgb(var(--color-text-lighter));font-size:12px}
-
-  #ala-settings-panel .ala-section-title{margin:18px 2px 8px;color:rgb(var(--color-blue));font-size:13px;font-weight:600}
-  .ala-section{border-radius:6px;background:rgb(var(--color-background));overflow:hidden}
-  .ala-feature+.ala-feature{border-top:1px solid rgba(var(--color-text-lighter),.12)}
-  .ala-row{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:56px;padding:12px 14px;cursor:pointer}
-  .ala-text{display:flex;flex-direction:column;gap:3px;min-width:0}
-  .ala-title{font-size:14px;color:rgb(var(--color-text))}
-  .ala-help{color:rgb(var(--color-text-lighter));font-size:12px;line-height:1.4}
-  .ala-options{margin:0 14px 12px 20px;padding-left:12px;border-left:2px solid rgba(var(--color-blue),.4);transition:opacity .15s}
-  .ala-options .ala-row{min-height:48px;padding:8px 0;cursor:default}
-  .ala-feature.is-off .ala-options{opacity:.45}
-
-  #ala-settings-panel input[type=number],#ala-settings-panel input[type=text],#ala-settings-panel select{width:170px;height:36px;padding:0 10px;border:1px solid rgba(var(--color-text-lighter),.22);border-radius:4px;background:rgb(var(--color-foreground));color:rgb(var(--color-text));font:inherit;font-size:13px}
-  #ala-settings-panel input:disabled,#ala-settings-panel select:disabled{cursor:not-allowed}
-
-  .ala-switch{position:relative;flex:0 0 auto;width:44px;height:26px}
-  .ala-switch input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
-  .ala-slider{position:absolute;inset:0;border-radius:999px;background:rgba(var(--color-text-lighter),.3);transition:background .15s;pointer-events:none}
-  .ala-slider:before{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .15s}
-  .ala-switch input:checked+.ala-slider{background:rgb(var(--color-blue))}
-  .ala-switch input:checked+.ala-slider:before{transform:translateX(18px)}
-  .ala-switch input:focus-visible+.ala-slider{outline:2px solid rgb(var(--color-blue));outline-offset:2px}
-
-  .ala-btn{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:0 18px;border:1px solid rgba(var(--color-text-lighter),.25);border-radius:4px;background:transparent;color:rgb(var(--color-text));font:inherit;font-size:13px;cursor:pointer}
-  .ala-btn--primary{border-color:transparent;background:rgb(var(--color-blue));color:#fff;font-weight:600}
-  .ala-btn:hover{filter:brightness(1.1)}
-  .ala-icon-btn{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:36px;height:36px;border:0;border-radius:50%;background:transparent;color:rgb(var(--color-text-lighter));cursor:pointer}
-  .ala-icon-btn:hover{background:rgba(var(--color-text-lighter),.14);color:rgb(var(--color-text))}
-  .ala-promo{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:18px 0 0;padding:12px 14px;border-radius:6px;background:rgb(var(--color-background))}
-  .ala-promo .ala-btn{flex:0 0 auto;gap:6px;text-decoration:none}
-  .ala-credits{margin:18px 2px 10px;color:rgb(var(--color-text-lighter));font-size:12px}
-  .ala-credits summary{cursor:pointer;padding:4px 0}
-  .ala-credit{margin-top:10px}
-  .ala-credit ul{margin:3px 0 0;padding-left:18px;list-style:disc}
-  .ala-credit a{color:rgb(var(--color-blue));text-decoration:none}
-  .ala-credit a:hover{text-decoration:underline}
-
-  @media (max-width:700px){
-    .ala-settings-nav-section{display:none!important}
-    #ala-settings-backdrop{align-items:flex-end;padding:0}
-    #ala-settings-panel{width:100%;max-height:92vh;max-height:92dvh;border-radius:14px 14px 0 0}
-    .ala-sheet-head{padding:16px 16px 8px}
-    .ala-sheet-body{padding:0 16px 8px}
-    .ala-sheet-foot{padding:12px 16px calc(12px + env(safe-area-inset-bottom))}
-    .ala-sheet-foot .ala-btn{flex:1 1 40%;min-height:44px}
-    .ala-status{flex-basis:100%;order:3}
-    .ala-row{min-height:60px}
-    .ala-options .ala-row{flex-direction:column;align-items:stretch;gap:8px}
-    .ala-promo{flex-direction:column;align-items:stretch;gap:10px}
-    .ala-promo .ala-btn{min-height:44px}
-    #ala-settings-panel input[type=number],#ala-settings-panel input[type=text],#ala-settings-panel select{width:100%;height:44px;font-size:16px}
-    #ala-settings-mobile-launcher{display:inline-flex;align-items:center;gap:8px;position:fixed;left:16px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:99998;min-height:46px;padding:0 18px;border:1px solid rgba(255,255,255,.16);border-radius:999px;background:rgb(var(--color-blue));color:#fff;font:inherit;font-size:14px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.35);cursor:pointer}
-    #ala-settings-mobile-launcher:active{transform:translateY(1px)}
-  }
-  @media (prefers-reduced-motion:reduce){.ala-slider,.ala-slider:before,.ala-options{transition:none}}`;
-	var onSettingsPage = () => /^\/settings(\/|$)/.test(location.pathname);
-	var rowText = (title, help) => `<span class="ala-text"><span class="ala-title">${title}</span><span class="ala-help">${help}</span></span>`;
-	var optionHtml = (r) => `<label class="ala-row">${rowText(r.title, r.help)}${TYPES$1[r.type].html(r, Settings.get(r.key))}</label>`;
-	var featureHtml = (f) => `<div class="ala-feature" data-feature="${f.id}">
-    <label class="ala-row ala-row--main">${rowText(f.title, f.help)}${TYPES$1.toggle.html(f.toggle, Settings.get(f.toggle.key))}</label>
-    ${f.options.length ? `<div class="ala-options">${f.options.map(optionHtml).join("")}</div>` : ""}
-  </div>`;
-	function sectionsHtml() {
-		return [...new Set([...SECTIONS, ...features.map((f) => f.section)])].map((name) => {
-			const items = features.filter((f) => f.section === name);
-			return items.length ? `<h3 class="ala-section-title">${name}</h3><div class="ala-section">${items.map(featureHtml).join("")}</div>` : "";
-		}).join("");
-	}
-	var prevOverflow = null;
-	function closePanel() {
-		const b = document.getElementById("ala-settings-backdrop");
-		if (!b) return;
-		if (b._onKey) document.removeEventListener("keydown", b._onKey);
-		b.remove();
-		document.documentElement.style.overflow = prevOverflow || "";
-		prevOverflow = null;
-	}
-	function showPanel() {
-		if (document.getElementById("ala-settings-backdrop")) return;
-		const backdrop = document.createElement("div");
-		backdrop.id = "ala-settings-backdrop";
-		backdrop.innerHTML = `<div id="ala-settings-panel" role="dialog" aria-modal="true" aria-labelledby="ala-settings-title" tabindex="-1">
-    <header class="ala-sheet-head">
-      <div><h2 id="ala-settings-title">AL Additions</h2><div class="ala-help">Changes apply after the page reloads.</div></div>
-      <button class="ala-icon-btn ala-close" type="button" aria-label="Close settings">${icon("close", 20)}</button>
-    </header>
-    <div class="ala-sheet-body">
-      ${sectionsHtml()}
-      ${fastLoadInstalled() ? "" : `<div class="ala-promo">${rowText("AniList Fast Load", "My other userscript: faster loading, lazy images, request caching and smoother scrolling on AniList. Opens its Greasy Fork page.")}<a class="ala-btn" href="${FAST_LOAD_URL}" target="_blank" rel="noopener noreferrer" aria-label="Get AniList Fast Load on Greasy Fork (opens in a new tab)">Get it ${icon("external", 16)}</a></div>`}
-      <details class="ala-credits"><summary>Credits</summary>${creditsHtml()}</details>
-    </div>
-    <footer class="ala-sheet-foot">
-      <button class="ala-btn ala-btn--primary ala-save" type="button">Save and reload</button>
-      <button class="ala-btn ala-reset" type="button">Reset to defaults</button>
-      <span class="ala-status" role="status"></span>
-    </footer>
-  </div>`;
-		const panel = backdrop.firstElementChild;
-		const status = panel.querySelector(".ala-status");
-		const controls = () => panel.querySelectorAll("[data-key]");
-		const syncFeature = (card) => {
-			const toggle = card.querySelector(".ala-row--main [data-key]");
-			const on = toggle ? toggle.checked : false;
-			card.classList.toggle("is-off", !on);
-			card.querySelectorAll(".ala-options [data-key]").forEach((el) => {
-				el.disabled = !on;
-			});
-		};
-		panel.querySelectorAll(".ala-feature").forEach(syncFeature);
-		panel.addEventListener("change", (e) => {
-			const target = e.target;
-			const card = target?.closest(".ala-feature");
-			if (card && target?.closest(".ala-row--main")) syncFeature(card);
-		});
-		panel.querySelector(".ala-save")?.addEventListener("click", () => {
-			controls().forEach((el) => {
-				const r = ROWS[el.dataset.key];
-				if (r) Settings.set(r.key, TYPES$1[r.type].read(el));
-			});
-			status.textContent = "Saved. Reloading…";
-			setTimeout(() => location.reload(), 350);
-		});
-		panel.querySelector(".ala-reset")?.addEventListener("click", () => {
-			controls().forEach((el) => {
-				const r = ROWS[el.dataset.key];
-				if (r) TYPES$1[r.type].write(el, r.def);
-			});
-			panel.querySelectorAll(".ala-feature").forEach(syncFeature);
-			status.textContent = "Defaults restored. Press Save to apply them.";
-		});
-		panel.querySelector(".ala-close")?.addEventListener("click", closePanel);
-		backdrop.addEventListener("click", (e) => {
-			if (e.target === backdrop) closePanel();
-		});
-		backdrop._onKey = (e) => {
-			if (e.key === "Escape") closePanel();
-		};
-		document.addEventListener("keydown", backdrop._onKey);
-		prevOverflow = document.documentElement.style.overflow;
-		document.documentElement.style.overflow = "hidden";
-		document.body.appendChild(backdrop);
-		panel.focus();
-	}
-	function ensureLauncher() {
-		if (document.getElementById("ala-settings-mobile-launcher")) return;
-		const b = document.createElement("button");
-		b.id = "ala-settings-mobile-launcher";
-		b.type = "button";
-		b.innerHTML = `${icon("sliders", 18)}<span>AL Additions</span>`;
-		b.setAttribute("aria-label", "Open AL Additions settings");
-		b.addEventListener("click", (e) => {
-			e.preventDefault();
-			e.stopPropagation();
-			showPanel();
-		});
-		document.body.appendChild(b);
-	}
-	function installSidebar() {
-		if (document.getElementById("ala-settings-nav-section")) return;
-		if (!findExactText("Profile")) return;
-		const dev = findExactText("Developer");
-		if (!dev) return;
-		let nav = dev.parentElement;
-		while (nav && nav !== document.body && nav.children.length <= 1) nav = nav.parentElement;
-		if (!nav || nav === document.body || !nav.parentElement) return;
-		const section = document.createElement("div");
-		section.id = "ala-settings-nav-section";
-		section.className = "ala-settings-nav-section";
-		section.innerHTML = "<div class=\"ala-settings-nav-heading\">AL Additions</div><a href=\"#\" class=\"ala-settings-nav-link\">Settings</a>";
-		section.querySelector("a")?.addEventListener("click", (e) => {
-			e.preventDefault();
-			e.stopPropagation();
-			e.currentTarget.classList.add("is-active");
-			showPanel();
-		});
-		nav.parentElement.insertBefore(section, nav.nextSibling);
-	}
-	function initSettingsPage() {
-		addStyle("ala-settings-style", CSS);
-		const attempt = debounce(() => {
-			if (!onSettingsPage()) return;
-			installSidebar();
-			ensureLauncher();
-		}, 100);
-		Core.ready(attempt);
-		Core.onBodyMutation(() => {
-			if (onSettingsPage() && !(document.getElementById("ala-settings-nav-section") && document.getElementById("ala-settings-mobile-launcher"))) attempt();
-		});
-		Core.onNavigate(() => {
-			if (onSettingsPage()) return attempt();
-			closePanel();
-			document.getElementById("ala-settings-mobile-launcher")?.remove();
-		});
-	}
-	var modules = [];
-	var defineModule = (name, setting, init, hosts = ["anilist.co"], early = false) => {
-		modules.push({
-			name,
-			setting,
-			init,
-			hosts,
-			early
-		});
-	};
-	var defineFeature = (meta, init) => {
-		Settings.register(meta);
-		defineModule(meta.id, meta.alwaysRun ? null : meta.key, init, meta.hosts, meta.early);
-	};
-	function startModules(early) {
-		for (const m of modules) {
-			if (m.early !== early || !m.hosts.includes(HOST)) continue;
-			if (m.setting && !Settings.get(m.setting)) continue;
-			try {
-				Promise.resolve(m.init()).catch((e) => console.error("[AL-Additions]", m.name, e));
-			} catch (e) {
-				console.error("[AL-Additions]", m.name, e);
-			}
-		}
 	}
 	var RateLimiter = class {
 		rate;
@@ -1302,1285 +1098,6 @@
 		}
 		return 0;
 	}
-	defineFeature({
-		id: "tagPercent",
-		key: "tagFilterEnabled",
-		section: "AniList Enhancements",
-		early: true,
-		legacy: ["tagFilterEnabled", "browseTagRankFilterEnabled"],
-		title: "Browse Tag Rank Filter",
-		help: "Automatically apply a minimum tag-rank percentage when you search with a tag or genre.",
-		options: [{
-			key: "tagPercentage",
-			type: "number",
-			def: 50,
-			min: 1,
-			max: 100,
-			legacy: ["tagPercentage", "minimumTagRankPercentage"],
-			title: "Minimum Tag Rank",
-			help: "The minimum percentage a selected tag must meet. For example, 50 means the tag must be present on at least half of the relevant titles."
-		}]
-	}, () => {
-		const PARAM = "minimumTagRank";
-		const VALUE = String(Settings.get("tagPercentage"));
-		const isTarget = () => /^\/search\/(anime|manga)\/?$/.test(location.pathname);
-		const hasSelection = (url) => [...url.searchParams].some(([k, v]) => k !== PARAM && /genre|tag/i.test(k) && v.trim() !== "");
-		let fixing = false;
-		function apply(initial) {
-			if (fixing || !isTarget()) return;
-			const u = new URL(location.href);
-			if (!hasSelection(u) || u.searchParams.get(PARAM) === VALUE) return;
-			u.searchParams.set(PARAM, VALUE);
-			fixing = true;
-			try {
-				if (initial) location.replace(u.toString());
-				else {
-					history.replaceState(history.state, document.title, u.toString());
-					window.dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
-				}
-			} finally {
-				fixing = false;
-			}
-		}
-		apply(true);
-		Core.onNavigate(() => apply(false));
-	});
-	defineFeature({
-		id: "removeTitle",
-		key: "linkShortenerEnabled",
-		section: "AniList Enhancements",
-		legacy: [
-			"linkShortenerEnabled",
-			"shortAniListUrlsEnabled",
-			"shortAniListUrls"
-		],
-		title: "Short AniList URLs",
-		help: "Remove the title slug from AniList anime, manga, staff, and character URLs."
-	}, () => {
-		const SLUG_HREF = /^(?:https:\/\/anilist\.co)?\/(?:manga|anime|staff|character)\/\d{1,10}\/./;
-		const strip = (s) => s.replace(/(\/\d{1,10}\/)[^?#]*/, "$1");
-		function fixLocation() {
-			if (!/anilist\.co\/(manga|anime|staff|character)\//.test(location.href) || !/\/\d{1,10}\/./.test(location.href)) return;
-			const cur = location.pathname + location.search + location.hash;
-			const next = strip(cur.replace(/^https:\/\/anilist\.co/, ""));
-			if (cur !== next) Core.silently(() => history.replaceState(history.state, "", next));
-		}
-		function fixLinks(nodes) {
-			for (const node of Array.from(nodes)) {
-				if (node.nodeType !== 1) continue;
-				const el = node;
-				const links = el.matches("a[href]") ? [el] : el.querySelectorAll("a[href]");
-				for (const a of links) {
-					const href = a.getAttribute("href");
-					if (href && SLUG_HREF.test(href)) a.setAttribute("href", strip(href));
-				}
-			}
-		}
-		fixLocation();
-		Core.onNavigate(fixLocation);
-		Core.onBodyMutation((muts) => {
-			for (const m of muts) if (m.addedNodes.length) fixLinks(m.addedNodes);
-		});
-		Core.ready(() => fixLinks([document.body]));
-	});
-	defineFeature({
-		id: "banner",
-		key: "bannerEnabled",
-		section: "External Links & Downloads",
-		legacy: [
-			"bannerEnabled",
-			"bannerDownloadEnabled",
-			"bannerDownloaderEnabled"
-		],
-		title: "Anime/Manga Banner Downloader",
-		help: "Add a button for downloading the AniList banner image.",
-		options: [{
-			key: "bannerProfiles",
-			type: "toggle",
-			def: false,
-			title: "User Profile Banners",
-			help: "Also show the download button on user profile banners (it is always shown on anime and manga pages)."
-		}]
-	}, () => {
-		addStyle("ala-banner-style", `
-      .banner{position:relative}
-      .ala-banner-dl{position:absolute;right:12px;bottom:12px;z-index:5;display:inline-flex;align-items:center;justify-content:center;height:34px;min-width:34px;padding:0 8px;border:0;border-radius:17px;background:transparent;color:rgba(255,255,255,.8);font-family:inherit;font-size:12px;font-weight:600;line-height:1;cursor:pointer;overflow:hidden;-webkit-tap-highlight-color:transparent;transition:background .15s,color .15s}
-      .ala-banner-dl[hidden]{display:none}
-      .ala-banner-ico{display:inline-flex;filter:drop-shadow(0 1px 3px rgba(0,0,0,.7))}
-      .ala-banner-lbl{max-width:0;overflow:hidden;white-space:nowrap;transition:max-width .2s ease,margin-left .2s ease}
-      .ala-banner-dl:hover,.ala-banner-dl:focus-visible{background:rgb(var(--color-blue));color:#fff}
-      .ala-banner-dl:hover .ala-banner-ico,.ala-banner-dl:focus-visible .ala-banner-ico,.ala-banner-dl.is-done .ala-banner-ico{filter:none}
-      .ala-banner-dl:focus-visible{outline:2px solid #fff;outline-offset:2px}
-      .ala-banner-dl.is-done,.ala-banner-dl.is-done:hover{background:rgb(var(--color-green));color:#fff}
-      .ala-banner-dl.is-done .ala-banner-lbl{max-width:130px;margin-left:7px}
-      @media (hover:hover){.ala-banner-dl:hover .ala-banner-lbl,.ala-banner-dl:focus-visible .ala-banner-lbl{max-width:130px;margin-left:7px}}
-      @media (pointer:coarse){.ala-banner-dl{right:8px;bottom:8px;height:40px;min-width:40px;border-radius:20px}}
-      @media (prefers-reduced-motion:reduce){.ala-banner-lbl{transition:none}}`);
-		const bannerUrl = (banner) => (banner.style.backgroundImage || getComputedStyle(banner).backgroundImage).match(/url\((['"]?)(.*?)\1\)/)?.[2] || null;
-		const bannerAllowed = () => !!mediaRoute() || /^\/user\//.test(location.pathname) && Settings.get("bannerProfiles");
-		function download(onSaved) {
-			const banner = document.querySelector(".banner");
-			const url = banner && bannerAllowed() && bannerUrl(banner);
-			if (!url) return;
-			const ext = (url.match(/\.(jpg|jpeg|png|webp)(?:\?|$)/i)?.[1] || "jpg").toLowerCase();
-			const name = `anilist-banner-${mediaRoute()?.id || location.pathname.split("/")[2] || "anilist"}.${ext}`;
-			const fallback = () => {
-				openTab(url);
-				onSaved?.();
-			};
-			if (typeof _GM_download === "function") try {
-				_GM_download({
-					url,
-					name,
-					saveAs: false,
-					onload: () => onSaved?.(),
-					onerror: fallback
-				});
-				return;
-			} catch (_) {}
-			fallback();
-		}
-		function createButton() {
-			const btn = document.createElement("button");
-			btn.type = "button";
-			btn.className = "ala-banner-dl";
-			btn.title = "Download banner image";
-			btn.setAttribute("aria-label", "Download banner image");
-			btn.innerHTML = `<span class="ala-banner-ico">${icon("download", 18)}</span><span class="ala-banner-lbl">Download banner</span>`;
-			const ico = btn.firstElementChild;
-			const lbl = btn.lastElementChild;
-			btn.addEventListener("click", (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				download(() => {
-					btn.classList.add("is-done");
-					ico.innerHTML = icon("check", 18);
-					lbl.textContent = "Saved";
-					setTimeout(() => {
-						btn.classList.remove("is-done");
-						ico.innerHTML = icon("download", 18);
-						lbl.textContent = "Download banner";
-					}, 1600);
-				});
-			});
-			return btn;
-		}
-		function scan() {
-			const banner = document.querySelector(".banner");
-			if (!banner) return;
-			let btn = banner.querySelector(".ala-banner-dl");
-			const show = bannerAllowed() && !!bannerUrl(banner);
-			if (!btn && !show) return;
-			if (!btn) {
-				btn = createButton();
-				banner.appendChild(btn);
-			}
-			btn.hidden = !show;
-		}
-		const scanSoon = debounce(scan, 150);
-		Core.ready(scan);
-		Core.onNavigate(() => setTimeout(scan, 300));
-		Core.onBodyMutation(scanSoon);
-	});
-	defineFeature({
-		id: "nyaa",
-		key: "nyaaEnabled",
-		section: "External Links & Downloads",
-		legacy: [
-			"nyaaEnabled",
-			"malNyaaLinksEnabled",
-			"malNyaaEnabled"
-		],
-		title: "MyAnimeList & Nyaa Links",
-		help: "Show a MyAnimeList link, with Nyaa search available by Ctrl/Cmd-click on desktop or long-press on mobile.",
-		options: [{
-			key: "nyaaProviders",
-			type: "list",
-			def: ["SubsPlease", "ToonsHub"],
-			legacy: ["nyaaProviders", "nyaaSearchGroups"],
-			title: "Nyaa Search Providers",
-			help: "Comma-separated provider names to include in Nyaa searches. Defaults to SubsPlease and ToonsHub."
-		}]
-	}, () => {
-		const ID = "ala-find-on-nyaa";
-		const TITLE_SEL = ".page-content .header .content > h1";
-		const ICON = icon("external", 17);
-		addStyle("ala-nyaa-style", `#${ID}{margin-left:10px;display:inline-flex;align-items:center;vertical-align:middle;color:rgb(var(--color-text-lighter));opacity:.8;transition:opacity .15s,transform .15s}#${ID}:hover{opacity:1;color:rgb(var(--color-blue));transform:scale(1.1)}`);
-		const nyaaUrl = (title) => {
-			const q = title.trim().replace(/[^a-zA-Z0-9]+/g, "+").replace(/^\++|\++$/g, "");
-			const frag = Settings.get("nyaaProviders").map(encodeURIComponent).join("&text=");
-			return `https://nyaa.si/?f=0&c=1_2&s=seeders&o=desc&q=${encodeURI(q)}#:~:text=${frag}`;
-		};
-		function attach(h1, route) {
-			const a = document.createElement("a");
-			a.id = ID;
-			a.href = "#";
-			a.title = "Open on MAL (Ctrl/Cmd+click or long-press: search Nyaa)";
-			a.setAttribute("aria-label", "Open on MAL; long-press to search Nyaa");
-			a.innerHTML = ICON;
-			const titleText = () => [...h1.childNodes].filter((n) => n !== a).map((n) => n.textContent).join("");
-			const searchNyaa = () => openTab(nyaaUrl(titleText()));
-			MediaData.get(route.id, route.type);
-			let timer = null;
-			let longPressed = false;
-			let sx = 0;
-			let sy = 0;
-			const cancel = () => {
-				if (timer) clearTimeout(timer);
-				timer = null;
-			};
-			a.addEventListener("touchstart", (e) => {
-				if (e.touches.length !== 1) return;
-				sx = e.touches[0].clientX;
-				sy = e.touches[0].clientY;
-				longPressed = false;
-				cancel();
-				timer = setTimeout(() => {
-					timer = null;
-					longPressed = true;
-					searchNyaa();
-					setTimeout(() => {
-						longPressed = false;
-					}, 800);
-				}, 550);
-			}, { passive: true });
-			a.addEventListener("touchmove", (e) => {
-				if (timer === null || !e.touches.length) return;
-				if (Math.abs(e.touches[0].clientX - sx) > 12 || Math.abs(e.touches[0].clientY - sy) > 12) cancel();
-			}, { passive: true });
-			a.addEventListener("touchend", cancel, { passive: true });
-			a.addEventListener("touchcancel", cancel, { passive: true });
-			a.addEventListener("contextmenu", (e) => {
-				if (longPressed) e.preventDefault();
-			});
-			a.addEventListener("click", async (e) => {
-				e.preventDefault();
-				if (longPressed) {
-					longPressed = false;
-					e.stopPropagation();
-					return;
-				}
-				const w = window.open("about:blank", "_blank");
-				let target = nyaaUrl(titleText());
-				if (!e.ctrlKey && !e.metaKey) {
-					const media = await MediaData.get(route.id, route.type);
-					if (media?.idMal) target = `https://myanimelist.net/${route.kind}/${media.idMal}`;
-				}
-				if (w) {
-					w.opener = null;
-					w.location.href = target;
-				} else openTab(target);
-			});
-			h1.appendChild(a);
-		}
-		let token = 0;
-		let placedKey = null;
-		let placing = false;
-		async function place() {
-			const route = mediaRoute();
-			const key = route && `${route.type}:${route.id}`;
-			if (key && key === placedKey && document.getElementById(ID)) return;
-			document.getElementById(ID)?.remove();
-			placedKey = null;
-			if (!route) return;
-			const mine = ++token;
-			placing = true;
-			try {
-				const h1 = await Core.waitForSelector(TITLE_SEL, 8e3);
-				if (h1 && mine === token && mediaRoute()?.id === route.id && !document.getElementById(ID)) {
-					attach(h1, route);
-					placedKey = key;
-				}
-			} finally {
-				if (mine === token) placing = false;
-			}
-		}
-		const repair = debounce(() => {
-			if (placedKey && !placing && !document.getElementById(ID)) place();
-		}, 400);
-		place();
-		Core.onNavigate(place);
-		Core.onBodyMutation(repair);
-	});
-	defineFeature({
-		id: "keyframe",
-		key: "keyframeEnabled",
-		section: "External Links & Downloads",
-		legacy: ["keyframeEnabled"],
-		title: "Keyframe Staff List Links",
-		help: "Add a button on staff and studio pages that opens the same person or studio on Keyframe Staff List."
-	}, () => {
-		const ID = "ala-keyframe-link";
-		const BASE = "https://keyframe-staff-list.com";
-		const LABEL = "Keyframe Staff List";
-		const SLOT = ".filters";
-		const PATHS = {
-			staff: "person",
-			studio: "studio"
-		};
-		const route = () => {
-			const m = location.pathname.match(/^\/(staff|studio)\/(\d+)(?:\/|$)/);
-			return m ? {
-				kind: m[1],
-				id: m[2]
-			} : null;
-		};
-		addStyle("ala-keyframe-style", `
-      #${ID}{flex:0 0 auto;margin-right:12px;text-decoration:none;color:inherit;cursor:pointer;white-space:nowrap}
-      #${ID}.ala-kf-plain{display:inline-flex;align-items:center;gap:7px;min-height:30px;padding:0 12px;border-radius:4px;background:rgb(var(--color-foreground));font-size:1.2rem;font-weight:500;line-height:1;transition:background .15s,color .15s}
-      #${ID}.ala-kf-plain:hover{background:rgb(var(--color-blue));color:#fff}
-      #${ID} .icon{flex:0 0 auto}`);
-		const copyScope = (from, to) => {
-			for (const at of Array.from(from.attributes)) if (at.name.startsWith("data-v-")) to.setAttribute(at.name, at.value);
-		};
-		function skin(a) {
-			if (!a || a.dataset.kfSkin) return;
-			const ref = a.parentElement?.querySelector(".mini-select");
-			if (!ref) return;
-			a.classList.remove("ala-kf-plain");
-			a.classList.add("mini-select");
-			copyScope(ref, a);
-			const refIcon = ref.querySelector("svg");
-			const refLabel = ref.querySelector(".label");
-			const iconEl = a.querySelector("svg");
-			const labelEl = a.querySelector("span");
-			if (iconEl) {
-				iconEl.classList.add("icon");
-				if (refIcon) copyScope(refIcon, iconEl);
-			}
-			if (labelEl) {
-				labelEl.classList.add("label");
-				if (refLabel) copyScope(refLabel, labelEl);
-			}
-			a.dataset.kfSkin = "1";
-		}
-		function build(r) {
-			const a = document.createElement("a");
-			a.id = ID;
-			a.className = "ala-kf-plain";
-			a.href = `${BASE}/${PATHS[r.kind]}/${r.id}`;
-			a.target = "_blank";
-			a.rel = "noopener noreferrer";
-			a.title = `Open on ${LABEL}`;
-			a.setAttribute("aria-label", `Open on ${LABEL}`);
-			a.innerHTML = `${icon("external", 14)}<span>${LABEL}</span>`;
-			a.addEventListener("click", (e) => e.stopPropagation());
-			return a;
-		}
-		let token = 0;
-		let placedKey = null;
-		let placing = false;
-		async function place() {
-			const r = route();
-			const key = r && `${r.kind}:${r.id}`;
-			if (key && key === placedKey && document.getElementById(ID)) return;
-			document.getElementById(ID)?.remove();
-			placedKey = null;
-			if (!r) return;
-			const mine = ++token;
-			placing = true;
-			try {
-				const row = await Core.waitForSelector(SLOT, 8e3);
-				const now = route();
-				if (row && mine === token && now && now.kind === r.kind && now.id === r.id && !document.getElementById(ID)) {
-					const a = build(r);
-					row.insertBefore(a, row.firstChild);
-					skin(a);
-					placedKey = key;
-				}
-			} finally {
-				if (mine === token) placing = false;
-			}
-		}
-		const repair = debounce(() => {
-			if (!route() || placing) return;
-			const a = document.getElementById(ID);
-			if (!a) {
-				placedKey = null;
-				place();
-			} else skin(a);
-		}, 400);
-		place();
-		Core.onNavigate(place);
-		Core.onBodyMutation(repair);
-	});
-	function parseLatest(value) {
-		if (value == null) return null;
-		const s = String(value).trim();
-		if (!s || /^(n\/a|unknown|none)$/i.test(s)) return null;
-		const nums = [...s.matchAll(/(?:^|[^\d])(?:v\d+[ ._-]*)?c?\s*(\d+(?:\.\d+)?)/gi)].map((m) => Number(m[1])).filter(Number.isFinite);
-		if (nums.length) return Math.max(...nums);
-		return Number(s.replace(/,/g, "").match(/\d+(?:\.\d+)?/)?.[0]) || null;
-	}
-	async function mangaUpdates(title) {
-		const search = await gm.json("https://api.mangaupdates.com/v1/series/search", {
-			method: "POST",
-			anonymous: true,
-			headers: {
-				"Content-Type": "application/json",
-				Accept: "application/json"
-			},
-			data: JSON.stringify({
-				search: title,
-				stype: "title",
-				perpage: 8
-			})
-		});
-		const best = bestMatch(Array.isArray(search?.results) ? search.results : [], title, (r) => r?.hit_title || r?.record?.title);
-		if (!best) return null;
-		const rec = best.record || {};
-		let latest = parseLatest(rec.latest_chapter);
-		const id = rec.series_id || rec.id || rec.seriesId || String(rec.url || "").match(/\/series\/(\d+)/)?.[1];
-		if (latest == null && id) latest = await tryOr(async () => {
-			const d = await gm.json(`https://api.mangaupdates.com/v1/series/${encodeURIComponent(id)}`, {
-				anonymous: true,
-				headers: { Accept: "application/json" }
-			});
-			return parseLatest(d?.latest_chapter ?? d?.record?.latest_chapter);
-		});
-		if (latest == null && rec.url) latest = await tryOr(async () => {
-			const m = (await gm.text(rec.url, { anonymous: true })).match(/Latest\s+Chapter[\s\S]{0,500}?\b(?:c\s*)?(\d+(?:\.\d+)?)/i);
-			return m ? Number(m[1]) : null;
-		});
-		return latest == null ? null : Math.floor(latest);
-	}
-	async function novelUpdates(title) {
-		const html = await gm.text(`https://www.novelupdates.com/?s=${encodeURIComponent(title)}&post_type=series`, { anonymous: true });
-		const doc = new DOMParser().parseFromString(html, "text/html");
-		const seen = new Set();
-		const cands = [];
-		for (const a of doc.querySelectorAll("a[href*=\"/series/\"]")) {
-			const href = new URL(a.getAttribute("href") || "", "https://www.novelupdates.com/").href;
-			const text = clean(a.textContent);
-			if (text && !seen.has(href)) {
-				seen.add(href);
-				cands.push({
-					href,
-					text
-				});
-			}
-		}
-		const best = bestMatch(cands, title, (c) => c.text);
-		if (!best) return null;
-		const body = new DOMParser().parseFromString(await gm.text(best.href, { anonymous: true }), "text/html").body?.textContent || "";
-		let latest = null;
-		const at = body.search(/Latest\s+Release/i);
-		if (at >= 0) {
-			const hits = [...body.slice(at, at + 5e3).matchAll(/(?:^|\s)(?:v\d+[ ._-]*)?c\s*(\d+(?:\.\d+)?)/gi)].slice(0, 30).map((m) => Number(m[1])).filter(Number.isFinite);
-			if (hits.length) latest = Math.max(...hits);
-		}
-		if (latest == null) {
-			const m = body.slice(0, 12e3).match(/(?:Status in COO|Chapters)[\s\S]{0,500}?\b(\d+(?:\.\d+)?)\s+Chapters?/i);
-			if (m) latest = Number(m[1]);
-		}
-		return latest != null && Number.isFinite(latest) ? Math.floor(latest) : null;
-	}
-	var lookup = memo((kind, title) => kind === "NU" ? novelUpdates(title) : mangaUpdates(title), { ttl: 18e5 });
-	async function externalReleased(info) {
-		const kind = info?.format === "NOVEL" ? "NU" : "MU";
-		const titles = [...new Set([
-			info?.title?.userPreferred,
-			info?.title?.romaji,
-			info?.title?.english
-		].filter(Boolean))];
-		for (const t of titles) {
-			const n = await tryOr(() => lookup(`${kind}:${normTitle(t)}`, kind, t));
-			if (n != null) return n;
-		}
-		return null;
-	}
-	defineFeature({
-		id: "mediaInfo",
-		key: "mediaInfoEnabled",
-		section: "AniList Enhancements",
-		legacy: ["mediaInfoEnabled", "mediaListEditorEnabled"],
-		title: "List Score & Progress Editor",
-		help: "Show your score and episode/chapter progress controls on anime and manga pages."
-	}, () => {
-		const ID = "ala-media-info";
-		addStyle("ala-media-info-style", `
-      #${ID}{box-sizing:border-box;width:100%;max-width:100%;margin:0 0 12px;padding:14px 15px 15px;border-radius:3px;background:rgb(var(--color-foreground));color:rgb(var(--color-text));font-size:1.3rem;line-height:1.4;overflow:hidden}
-      #${ID} *{box-sizing:border-box}
-      #${ID} :focus-visible{outline:2px solid rgb(var(--color-blue));outline-offset:2px}
-      #${ID} .ala-mi-fields{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:12px}
-      #${ID} .ala-mi-field{display:flex;flex-direction:column;gap:6px;min-width:0}
-      #${ID} .ala-mi-label{color:rgb(var(--color-text-lighter));font-size:1.2rem}
-      #${ID} .ala-mi-box{display:flex;align-items:stretch;height:38px;border-radius:3px;background:rgb(var(--color-background));box-shadow:inset 0 0 0 1px transparent;overflow:hidden;transition:box-shadow .15s}
-      #${ID} .ala-mi-box:hover{box-shadow:inset 0 0 0 1px rgba(var(--color-blue),.4)}
-      #${ID} .ala-mi-box:focus-within{box-shadow:inset 0 0 0 1px rgb(var(--color-blue))}
-      #${ID} input{flex:1 1 auto;width:100%;min-width:0;height:100%;margin:0;padding:0 4px;border:0;outline:none;background:transparent;color:rgb(var(--color-text));font:inherit;font-size:1.5rem;text-align:center;-moz-appearance:textfield}
-      #${ID} input::placeholder{color:rgb(var(--color-text-lighter))}
-      #${ID} input::-webkit-outer-spin-button,#${ID} input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
-      #${ID} .ala-mi-step{flex:0 0 34px;display:flex;align-items:center;justify-content:center;padding:0;border:0;background:transparent;color:rgb(var(--color-text-lighter));font:inherit;font-size:1.8rem;line-height:1;cursor:pointer;transition:color .15s}
-      #${ID} .ala-mi-step:hover{color:rgb(var(--color-blue))}
-      #${ID} .ala-mi-step:active{color:rgb(var(--color-text))}
-      #${ID} .ala-mi-sub{min-height:16px;overflow:hidden;color:rgb(var(--color-text-lighter));font-size:1.15rem;white-space:nowrap;text-overflow:ellipsis}
-      #${ID} .ala-mi-sub b{color:rgb(var(--color-text));font-weight:inherit}
-      #${ID} .ala-mi-bar{position:relative;height:3px;margin:13px 0 14px;border-radius:2px;background:rgb(var(--color-background));overflow:hidden}
-      #${ID} .ala-mi-bar[hidden]{display:none}
-      #${ID} .ala-mi-aired,#${ID} .ala-mi-done{position:absolute;top:0;bottom:0;left:0;width:0;border-radius:2px;transition:width .2s ease}
-      #${ID} .ala-mi-aired{background:rgba(var(--color-blue),.3)}
-      #${ID} .ala-mi-done{background:rgb(var(--color-blue))}
-      #${ID} .ala-mi-save{display:block;width:100%;height:36px;padding:0;border:0;border-radius:4px;background:rgb(var(--color-blue));color:rgb(var(--color-white,255,255,255));font:inherit;font-size:1.4rem;cursor:pointer;transition:filter .15s,opacity .15s}
-      #${ID} .ala-mi-save:hover:not(:disabled){filter:brightness(1.1)}
-      #${ID} .ala-mi-save:disabled{opacity:.45;cursor:default}
-      @media (pointer:coarse){#${ID} .ala-mi-box{height:42px}#${ID} .ala-mi-step{flex-basis:40px}#${ID} input{font-size:16px}#${ID} .ala-mi-save{height:40px}}
-      @media (prefers-reduced-motion:reduce){#${ID} .ala-mi-aired,#${ID} .ala-mi-done{transition:none}}`);
-		const maxOf = (info, type) => {
-			const n = Math.floor(Number(type === "ANIME" ? info?.episodes : info?.chapters));
-			return n > 0 ? n : null;
-		};
-		function airedEpisodes(info) {
-			const next = Number(info?.nextAiringEpisode?.episode);
-			if (Number.isFinite(next) && next > 0) return Math.max(0, Math.floor(next) - 1);
-			if (info?.status === "NOT_YET_RELEASED") return 0;
-			return info?.status === "FINISHED" ? maxOf(info, "ANIME") : null;
-		}
-		function findSpot() {
-			const el = document.querySelector(".sidebar > .data");
-			return el?.parentElement && el.parentElement !== document.body ? {
-				parent: el.parentElement,
-				before: el
-			} : null;
-		}
-		const scoreStep = (f) => f === "POINT_10_DECIMAL" ? "0.1" : "1";
-		const scoreMax = (f) => ({
-			POINT_100: 100,
-			POINT_5: 5,
-			POINT_3: 3
-		})[f || ""] || 10;
-		const formatScore = (raw, f) => {
-			const n = Number(raw);
-			return !Number.isFinite(n) || n <= 0 ? "" : f === "POINT_10_DECIMAL" ? n.toFixed(1) : String(n);
-		};
-		const today = () => {
-			const d = new Date();
-			return {
-				year: d.getFullYear(),
-				month: d.getMonth() + 1,
-				day: d.getDate()
-			};
-		};
-		const scoreFormat = async () => (await tryOr(() => AniList.viewer()))?.scoreFormat || null;
-		let shown = null;
-		let gen = 0;
-		let rendering = false;
-		let rerender = false;
-		let saving = false;
-		let routeAt = Date.now();
-		let timer = 0;
-		let retry = {
-			key: null,
-			at: 0,
-			count: 0
-		};
-		const MAX_FAILURES = 3;
-		const panel = () => document.getElementById(ID);
-		const schedule = (ms = 300) => {
-			clearTimeout(timer);
-			timer = setTimeout(() => render(), ms);
-		};
-		function renderConnect(key) {
-			const spot = findSpot();
-			if (!spot) return void schedule(800);
-			const box = document.createElement("div");
-			box.id = ID;
-			box.dataset.mode = "connect";
-			box.innerHTML = `<div style="margin-bottom:10px;color:rgb(var(--color-text-lighter))">Connect AniList to edit your score and progress here.</div><button class="ala-mi-save" type="button">Connect AniList</button>`;
-			box.querySelector("button").addEventListener("click", alConnect);
-			panel()?.remove();
-			spot.parent.insertBefore(box, spot.before);
-			shown = key;
-		}
-		function changeProgress(delta, input, limit) {
-			const next = Number(input.value) + delta;
-			if (!Number.isInteger(next) || next < 0 || limit !== null && next > limit) return;
-			input.value = String(next);
-		}
-		async function save(media, info, scoreInput, progressInput) {
-			if (saving) return null;
-			const fmt = await scoreFormat();
-			const max = maxOf(info, media.type);
-			const scoreText = scoreInput.value.trim();
-			const score = scoreText === "" ? 0 : Number(scoreText);
-			let progress = Number(progressInput.value);
-			if (!Number.isFinite(score) || score < 0 || score > scoreMax(fmt)) {
-				scoreInput.focus();
-				return null;
-			}
-			if (!Number.isInteger(progress) || progress < 0) {
-				progressInput.focus();
-				return null;
-			}
-			if (max !== null) progress = Math.min(progress, max);
-			progressInput.value = String(progress);
-			const prev = info.mediaListEntry || {};
-			const finishNow = max !== null && progress >= max && (prev.status !== "COMPLETED" || !prev.completedAt?.year);
-			saving = true;
-			try {
-				if (!await MediaData.save(media.id, media.type, {
-					score,
-					progress,
-					status: finishNow ? "COMPLETED" : void 0,
-					completedAt: finishNow ? today() : void 0
-				})) throw new Error("AniList did not return the updated entry");
-				await render(true);
-				return true;
-			} catch (e) {
-				console.warn("[AL-Additions] Media list save failed:", e);
-				return false;
-			} finally {
-				saving = false;
-			}
-		}
-		async function render(force = false) {
-			const route = mediaRoute();
-			if (!route) {
-				shown = null;
-				panel()?.remove();
-				return;
-			}
-			const key = `${route.type}:${route.id}`;
-			if (rendering) {
-				if (force) rerender = true;
-				return;
-			}
-			if (saving && !force) return;
-			if (!force && shown === key && panel()) return;
-			if (!force && retry.key === key && (retry.count >= MAX_FAILURES || Date.now() < retry.at)) return;
-			if (!findSpot()) {
-				if (Date.now() - routeAt < 15e3) schedule(800);
-				return;
-			}
-			if (!store.get("al_token", null)) return renderConnect(key);
-			const g = gen;
-			const stale = () => g !== gen || mediaRoute()?.id !== route.id;
-			rendering = true;
-			try {
-				const info = await MediaData.get(route.id, route.type);
-				if (stale()) return;
-				if (!info) {
-					retry = {
-						key,
-						at: Date.now() + 15e3,
-						count: retry.key === key ? retry.count + 1 : 1
-					};
-					if (retry.count < MAX_FAILURES) schedule(15500);
-					return;
-				}
-				const fmt = await scoreFormat();
-				if (stale()) return;
-				const spot = findSpot();
-				if (!spot) {
-					schedule(800);
-					return;
-				}
-				const entry = info.mediaListEntry || {
-					score: 0,
-					progress: 0
-				};
-				const max = maxOf(info, route.type);
-				const anime = route.type === "ANIME";
-				const progress = Number.isFinite(Number(entry.progress)) ? Number(entry.progress) : 0;
-				const label = anime ? "Episode" : "Chapter";
-				const word = anime ? "aired" : "released";
-				const scoreTop = scoreMax(fmt);
-				let released = anime ? airedEpisodes(info) : null;
-				let lookupPending = !anime;
-				const box = document.createElement("div");
-				box.id = ID;
-				box.innerHTML = `
-          <div class="ala-mi-fields">
-            <div class="ala-mi-field">
-              <span class="ala-mi-label">Score</span>
-              <div class="ala-mi-box"><input class="ala-mi-score-input" type="number" min="0" max="${scoreTop}" step="${scoreStep(fmt)}" value="${formatScore(entry.score, fmt)}" placeholder="—" inputmode="decimal" aria-label="Score"></div>
-              <span class="ala-mi-sub">out of ${scoreTop}</span>
-            </div>
-            <div class="ala-mi-field">
-              <span class="ala-mi-label">${label}</span>
-              <div class="ala-mi-box">
-                <button class="ala-mi-step ala-mi-minus" type="button" aria-label="Decrease">−</button>
-                <input class="ala-mi-progress-input" type="number" min="0"${max !== null ? ` max="${max}"` : ""} step="1" value="${progress}" inputmode="numeric" aria-label="${label} progress">
-                <button class="ala-mi-step ala-mi-plus" type="button" aria-label="Increase">+</button>
-              </div>
-              <span class="ala-mi-sub ala-mi-prog-sub"></span>
-            </div>
-          </div>
-          <div class="ala-mi-bar"><div class="ala-mi-aired"></div><div class="ala-mi-done"></div></div>
-          <button class="ala-mi-save" type="button" disabled>Save</button>`;
-				const scoreInput = box.querySelector(".ala-mi-score-input");
-				const progressInput = box.querySelector(".ala-mi-progress-input");
-				const saveBtn = box.querySelector(".ala-mi-save");
-				const sub = box.querySelector(".ala-mi-prog-sub");
-				const bar = box.querySelector(".ala-mi-bar");
-				const doneFill = box.querySelector(".ala-mi-done");
-				const airedFill = box.querySelector(".ala-mi-aired");
-				const limit = () => max !== null ? max : released;
-				const startScore = scoreInput.value.trim();
-				const startProgress = progressInput.value;
-				function paint() {
-					const typed = Number(progressInput.value);
-					const watched = Number.isFinite(typed) && typed > 0 ? typed : 0;
-					sub.innerHTML = `of <b>${max !== null ? max : "—"}</b>` + (released != null ? ` · <b>${released}</b> ${word}` : lookupPending ? " · …" : "");
-					const total = limit();
-					bar.hidden = !(total && total > 0);
-					if (total && total > 0) {
-						doneFill.style.width = Math.min(100, watched / total * 100) + "%";
-						airedFill.style.width = released != null ? Math.min(100, released / total * 100) + "%" : "0%";
-					}
-					saveBtn.disabled = saving || scoreInput.value.trim() === startScore && progressInput.value === startProgress;
-				}
-				saveBtn.addEventListener("click", async () => {
-					if (saving || saveBtn.disabled) return;
-					saveBtn.disabled = true;
-					let ok = null;
-					try {
-						ok = await save(route, info, scoreInput, progressInput);
-					} finally {
-						paint();
-					}
-					if (ok === false) {
-						saveBtn.textContent = "Failed";
-						setTimeout(() => {
-							if (saveBtn.isConnected) saveBtn.textContent = "Save";
-						}, 2e3);
-					}
-				});
-				for (const input of [scoreInput, progressInput]) {
-					input.addEventListener("keydown", (e) => {
-						if (e.key === "Enter") saveBtn.click();
-					});
-					input.addEventListener("input", paint);
-				}
-				box.querySelector(".ala-mi-minus")?.addEventListener("click", () => {
-					changeProgress(-1, progressInput, limit());
-					paint();
-				});
-				box.querySelector(".ala-mi-plus")?.addEventListener("click", () => {
-					changeProgress(1, progressInput, limit());
-					paint();
-				});
-				panel()?.remove();
-				spot.parent.insertBefore(box, spot.before);
-				shown = key;
-				paint();
-				if (!anime) externalReleased(info).then((n) => {
-					if (stale() || !box.isConnected) return;
-					released = n;
-					lookupPending = false;
-					paint();
-				});
-			} finally {
-				rendering = false;
-				if (rerender) {
-					rerender = false;
-					safe(() => render(true), "media info refresh");
-				}
-			}
-		}
-		window.addEventListener("load", () => schedule(500), { once: true });
-		Core.ready(() => schedule(document.readyState === "complete" ? 500 : 1200));
-		Core.onNavigate(() => {
-			const r = mediaRoute();
-			if (r && shown === `${r.type}:${r.id}` && panel()) return;
-			gen++;
-			shown = null;
-			routeAt = Date.now();
-			retry = {
-				key: null,
-				at: 0,
-				count: 0
-			};
-			panel()?.remove();
-			schedule(1200);
-		});
-		Core.onBodyMutation(() => {
-			const r = mediaRoute();
-			if (!r || panel() || rendering || saving) return;
-			if (retry.key === `${r.type}:${r.id}` && retry.count >= MAX_FAILURES) return;
-			schedule(500);
-		});
-		window.addEventListener("focus", () => {
-			if (panel()?.dataset.mode === "connect" && store.get("al_token", null)) render(true);
-		});
-	});
-	defineFeature({
-		id: "behindDots",
-		key: "behindDotsEnabled",
-		section: "AniList Enhancements",
-		legacy: ["behindDotsEnabled", "airingProgressIndicatorEnabled"],
-		title: "Airing Progress Indicator",
-		help: "Show an orange indicator when your watched episode count is behind the number of aired episodes."
-	}, () => {
-		const CLASS = "daiya-behind-dot";
-		const ORANGE = "rgb(255, 152, 0)";
-		const NO_AIRING_TTL = 216e5;
-		const AIRING_GRACE = 3e4;
-		const ERROR_RETRY = 3e5;
-		const PRUNE_AGE = 2592e6;
-		const BATCH = 25;
-		const CONCURRENCY = 4;
-		const OPTIMISTIC_TTL = 2500;
-		const QUERY = "query ($ids: [Int]) { Page(page: 1, perPage: 25) { media(id_in: $ids, type: ANIME) { id status nextAiringEpisode { episode airingAt timeUntilAiring } } } }";
-		addStyle("daiya-behind-dot-css", `
-      .${CLASS}{background:${ORANGE}!important;background-color:${ORANGE}!important;box-shadow:0 0 5px rgba(255,152,0,.85)!important;opacity:1!important}
-      .${CLASS}::before,.${CLASS}::after{background:${ORANGE}!important;background-color:${ORANGE}!important}`);
-		const cacheStore = persistent("daiya-anilist-airing-cache-v5", (d) => {
-			for (const id of Object.keys(d)) if (!(Date.now() - Number(d[id]?.updated) < PRUNE_AGE)) delete d[id];
-		});
-		const cache = cacheStore.data;
-		const pending = new Set();
-		const active = new Set();
-		const timers = new Map();
-		const optimistic = new Map();
-		let running = 0;
-		const onListPage = () => location.pathname.includes("/animelist");
-		const idOf = (entry) => entry.querySelector("a[href*=\"/anime/\"]")?.getAttribute("href")?.match(/\/anime\/(\d+)(?:[/?#]|$)/i)?.[1] || null;
-		const needsFetch = (id) => {
-			const d = cache[id];
-			return !d || !Number.isFinite(d.nextCheck) || Date.now() >= d.nextCheck;
-		};
-		const sectionIsWatching = (wrap) => clean(wrap?.querySelector(".section-name")?.textContent) === "Watching";
-		function watchingEntries() {
-			const out = [];
-			for (const wrap of document.querySelectorAll(".list-wrap")) if (sectionIsWatching(wrap)) out.push(...Array.from(wrap.querySelectorAll(".list-entries .entry")));
-			return out;
-		}
-		function progressOf(entry) {
-			const m = entry.querySelector(".progress")?.textContent?.match(/^\s*(\d+)/) || entry.textContent?.match(/(?:^|\s)(\d+)\s*\/\s*(?:\d+|\?)(?:\s|$)/);
-			return m ? Number(m[1]) : null;
-		}
-		function releasingDot(entry) {
-			const fast = entry.querySelector(".release-status.RELEASING");
-			if (fast) return fast;
-			for (const el of entry.querySelectorAll(".release-status, [class*='release-status']")) {
-				if (/\bRELEASING\b/i.test(typeof el.className === "string" ? el.className : "")) return el;
-				if (/^releasing$/i.test((el.getAttribute("aria-label") || el.getAttribute("title") || "").trim())) return el;
-			}
-			return null;
-		}
-		function updateEntry(entry) {
-			if (!entry || !entry.isConnected) return null;
-			const dot = releasingDot(entry);
-			if (!dot || !sectionIsWatching(entry.closest(".list-wrap"))) return null;
-			const id = idOf(entry);
-			if (!id) return null;
-			const watched = progressOf(entry);
-			if (!Number.isFinite(watched)) {
-				dot.classList.remove(CLASS);
-				return id;
-			}
-			const opt = optimistic.get(id);
-			if (opt) {
-				if (Date.now() >= opt.expiresAt || watched !== null && watched >= opt.target) optimistic.delete(id);
-				else {
-					dot.classList.remove(CLASS);
-					return id;
-				}
-			}
-			const data = cache[id];
-			const behind = !!data && Number.isFinite(data.aired) && watched !== null && watched < data.aired;
-			if (dot.classList.contains(CLASS) !== behind) dot.classList.toggle(CLASS, behind);
-			return id;
-		}
-		function scanAll() {
-			if (!onListPage()) return;
-			const stale = new Set();
-			for (const entry of watchingEntries()) {
-				const id = updateEntry(entry);
-				if (id && needsFetch(id)) stale.add(id);
-			}
-			queueIDs(stale);
-		}
-		function repaint(ids) {
-			for (const entry of watchingEntries()) {
-				const id = idOf(entry);
-				if (id && ids.has(id)) updateEntry(entry);
-			}
-		}
-		function makeEntry(media) {
-			const next = media.nextAiringEpisode;
-			const now = Date.now();
-			const base = {
-				status: media.status || null,
-				updated: now
-			};
-			if (!next || !Number.isFinite(Number(next.episode))) return {
-				...base,
-				aired: null,
-				nextEpisode: null,
-				nextCheck: now + NO_AIRING_TTL
-			};
-			const timeUntil = Number(next.timeUntilAiring);
-			const airingAt = Number(next.airingAt);
-			const nextCheck = Number.isFinite(timeUntil) ? now + Math.max(0, timeUntil) * 1e3 + AIRING_GRACE : Number.isFinite(airingAt) ? airingAt * 1e3 + AIRING_GRACE : now + NO_AIRING_TTL;
-			return {
-				...base,
-				aired: Math.max(0, Math.floor(Number(next.episode)) - 1),
-				nextEpisode: Number(next.episode),
-				nextCheck
-			};
-		}
-		function scheduleRefresh(id, at) {
-			const existing = timers.get(id);
-			if (existing) clearTimeout(existing);
-			timers.delete(id);
-			if (!Number.isFinite(at)) return;
-			const t = setTimeout(() => {
-				timers.delete(id);
-				queueIDs([id]);
-				repaint(new Set([id]));
-			}, Math.min(Math.max(0, at - Date.now()), 2147483647));
-			timers.set(id, t);
-		}
-		async function updateBatch(ids) {
-			const returned = new Set();
-			try {
-				const data = await AniList.query(QUERY, { ids: ids.map(Number) });
-				for (const m of data?.Page?.media || []) {
-					const id = String(m.id);
-					returned.add(id);
-					cache[id] = makeEntry(m);
-					scheduleRefresh(id, cache[id].nextCheck);
-				}
-			} catch (_) {}
-			const retryAt = Date.now() + ERROR_RETRY;
-			for (const id of ids) {
-				if (returned.has(id)) continue;
-				const ex = cache[id];
-				if (ex && Number.isFinite(ex.aired)) ex.nextCheck = retryAt;
-				else cache[id] = {
-					aired: null,
-					nextEpisode: null,
-					status: null,
-					nextCheck: retryAt,
-					updated: Date.now()
-				};
-				scheduleRefresh(id, retryAt);
-			}
-			cacheStore.save();
-			if (returned.size) repaint(returned);
-		}
-		function queueIDs(ids) {
-			for (const raw of ids) {
-				const id = String(raw);
-				if (!active.has(id)) pending.add(id);
-			}
-			while (running < CONCURRENCY && pending.size) {
-				const batch = [];
-				for (const id of pending) {
-					pending.delete(id);
-					active.add(id);
-					batch.push(id);
-					if (batch.length >= BATCH) break;
-				}
-				running++;
-				updateBatch(batch).catch((e) => console.error("[AL-Additions] airing batch", e)).finally(() => {
-					batch.forEach((id) => active.delete(id));
-					running--;
-					queueIDs([]);
-				});
-			}
-		}
-		const dirty = new Set();
-		let fullScan = false;
-		let raf = 0;
-		function flush() {
-			raf = 0;
-			if (!onListPage()) {
-				dirty.clear();
-				fullScan = false;
-				return;
-			}
-			if (fullScan) {
-				fullScan = false;
-				dirty.clear();
-				scanAll();
-				return;
-			}
-			const stale = new Set();
-			for (const entry of dirty) {
-				const id = updateEntry(entry);
-				if (id && needsFetch(id)) stale.add(id);
-			}
-			dirty.clear();
-			queueIDs(stale);
-		}
-		const mark = () => {
-			if (!raf) raf = requestAnimationFrame(flush);
-		};
-		const refresh = debounce(scanAll, 100);
-		Core.onBodyMutation((muts) => {
-			if (!onListPage()) return;
-			for (const m of muts) {
-				const own = (m.target.nodeType === 1 ? m.target : m.target.parentElement)?.closest?.(".entry");
-				if (own) {
-					dirty.add(own);
-					mark();
-				}
-				for (const n of Array.from(m.addedNodes)) {
-					if (n.nodeType !== 1) continue;
-					const el = n;
-					if (el.matches(".entry")) dirty.add(el);
-					else {
-						el.querySelectorAll(".entry").forEach((e) => dirty.add(e));
-						if (el.matches(".list-wrap, .section-name") || el.querySelector(".section-name")) fullScan = true;
-					}
-					mark();
-				}
-			}
-		});
-		Core.onNavigate(() => {
-			if (onListPage()) {
-				fullScan = true;
-				mark();
-				refresh();
-			}
-		});
-		const isIncrease = (el) => {
-			for (let n = el, i = 0; i < 4 && n; i++, n = n.parentElement) {
-				const label = `${n.getAttribute?.("aria-label") || ""} ${n.getAttribute?.("title") || ""}`.trim().toLowerCase();
-				if (/increase|increment|add episode|add chapter|next episode|next chapter/.test(label)) return true;
-				const text = (n.textContent || "").trim();
-				if (text === "+" || text === "+1") return true;
-			}
-			return false;
-		};
-		document.addEventListener("pointerdown", (e) => {
-			if (!(e.target instanceof Element) || !isIncrease(e.target)) return;
-			const entry = e.target.closest(".entry");
-			const dot = entry && releasingDot(entry);
-			if (!dot || !dot.classList.contains(CLASS)) return;
-			const id = idOf(entry);
-			const data = id && cache[id];
-			const watched = progressOf(entry);
-			if (data && Number.isFinite(data.aired) && Number.isFinite(watched) && watched !== null && watched + 1 >= data.aired) {
-				optimistic.set(id, {
-					target: watched + 1,
-					expiresAt: Date.now() + OPTIMISTIC_TTL
-				});
-				dot.classList.remove(CLASS);
-			}
-		}, true);
-		for (const type of [
-			"click",
-			"input",
-			"change"
-		]) document.addEventListener(type, (e) => {
-			if (e.target instanceof Element && e.target.closest(".entry")) refresh();
-		}, true);
-		window.addEventListener("focus", refresh);
-		document.addEventListener("visibilitychange", () => {
-			if (!document.hidden) refresh();
-		});
-		setInterval(scanAll, 6e4);
-		Core.ready(() => {
-			if (onListPage()) {
-				scanAll();
-				setTimeout(scanAll, 500);
-				setTimeout(scanAll, 1500);
-			}
-		});
-	});
-	defineFeature({
-		id: "aniSongs",
-		key: "aniSongsEnabled",
-		section: "AniList Enhancements",
-		legacy: [
-			"aniSongsEnabled",
-			"animeThemeSongsEnabled",
-			"anisongsEnabled"
-		],
-		title: "Anime Opening & Ending Songs",
-		help: "Show OP/ED theme songs on anime pages."
-	}, () => {
-		const API = "https://api.animethemes.moe/anime";
-		const ROOT = "daiya-anisongs";
-		const TTL = 6048e5;
-		const EMPTY_TTL = 432e5;
-		addStyle("daiya-anisongs-style", `
-      #${ROOT}{width:100%;margin-top:30px}
-      #${ROOT} .daiya-anisongs-columns{display:flex;gap:30px;width:100%}
-      #${ROOT} .daiya-anisongs-group{flex:1 1 0;min-width:0}
-      #${ROOT} h2{margin-top:0}
-      #${ROOT} .daiya-anisong-entry{background:rgb(var(--color-foreground));border-radius:3px;padding:8px 10px;font-size:1.3rem;margin-bottom:10px;color:rgb(var(--color-text))}
-      #${ROOT} .daiya-anisong-entry.has-video{cursor:pointer}
-      #${ROOT} .daiya-anisong-entry.has-video:hover{color:rgb(var(--color-blue));transition:color .15s}
-      #${ROOT} video{display:block;width:100%;max-width:39em;margin-top:10px;cursor:auto}
-      #${ROOT} .daiya-anisongs-empty{text-align:center;opacity:.7;padding:10px}
-      @media (max-width:700px){#${ROOT} .daiya-anisongs-columns{flex-direction:column;gap:10px}}`);
-		const cacheStore = persistent("daiya_anisongs_cache_v6", (d) => {
-			for (const id of Object.keys(d)) if (!(Number(d[id]?.expires) > Date.now())) delete d[id];
-		});
-		const cache = cacheStore.data;
-		const str = (v) => typeof v === "string" ? v.trim() : "";
-		function pickVideo(entries) {
-			let fallback = null;
-			for (const entry of Array.isArray(entries) ? entries : []) for (const video of Array.isArray(entry?.videos) ? entry.videos : []) {
-				const link = str(video?.link);
-				if (!/^https?:\/\//i.test(link)) continue;
-				if (str(video?.source).toUpperCase() === "WEB") return link;
-				fallback = fallback || link;
-			}
-			return fallback;
-		}
-		function parseTheme(theme) {
-			const title = str(theme?.song?.title);
-			if (!title) return null;
-			const seq = Number(theme?.sequence);
-			const sequence = Number.isFinite(seq) && seq >= 1 ? Math.floor(seq) : 1;
-			const artists = (Array.isArray(theme?.song?.artists) ? theme.song.artists : []).map((a) => str(a?.name)).filter(Boolean);
-			const eps = (Array.isArray(theme?.animethemeentries) ? theme.animethemeentries : []).map((e) => str(e?.episodes)).filter(Boolean).join(", ");
-			const group = str(theme?.group);
-			return {
-				sequence,
-				name: `${sequence}. "${title}"` + (artists.length ? ` by ${artists.join(", ")}` : "") + (eps ? ` (${eps.includes("-") ? "eps" : "ep"} ${eps})` : "") + (group && group.toLowerCase().includes("dubbed") ? ` (${group})` : ""),
-				url: pickVideo(theme?.animethemeentries)
-			};
-		}
-		function groupThemes(anime) {
-			const out = {
-				OP: [],
-				ED: []
-			};
-			for (const theme of Array.isArray(anime?.animethemes) ? anime.animethemes : []) {
-				const parsed = parseTheme(theme);
-				const type = str(theme?.type).toUpperCase();
-				if (parsed && out[type]) out[type].push(parsed);
-			}
-			const sort = (a, b) => a.sequence - b.sequence || a.name.localeCompare(b.name);
-			out.OP.sort(sort);
-			out.ED.sort(sort);
-			return out;
-		}
-		const loadThemes = memo(async (id) => {
-			const hit = cache[String(id)];
-			if (hit && hit.expires > Date.now()) return hit.data;
-			const params = new URLSearchParams({
-				"filter[has]": "resources",
-				"filter[site]": "AniList",
-				"filter[external_id]": String(id),
-				include: "animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists"
-			});
-			const result = await gm.json(`${API}?${params}`, { headers: { Accept: "application/json" } });
-			const data = groupThemes(Array.isArray(result?.anime) ? result.anime[0] : null);
-			const empty = !data.OP.length && !data.ED.length;
-			cache[String(id)] = {
-				expires: Date.now() + (empty ? EMPTY_TTL : TTL),
-				data
-			};
-			cacheStore.save();
-			return data;
-		});
-		function songEl(song) {
-			const el = document.createElement("div");
-			el.className = "daiya-anisong-entry";
-			el.textContent = song.name;
-			const url = song.url;
-			if (!url) return el;
-			el.classList.add("has-video");
-			let video = null;
-			el.addEventListener("click", (e) => {
-				if (e.target instanceof HTMLVideoElement) return;
-				if (video) {
-					video.pause();
-					video.remove();
-					video = null;
-					return;
-				}
-				video = document.createElement("video");
-				video.controls = true;
-				video.preload = "none";
-				video.volume = .4;
-				video.src = url;
-				video.addEventListener("click", (ev) => ev.stopPropagation());
-				el.appendChild(video);
-				video.play().catch(() => {});
-			});
-			return el;
-		}
-		function groupEl(title, songs) {
-			const g = document.createElement("div");
-			g.className = "daiya-anisongs-group";
-			const h = document.createElement("h2");
-			h.textContent = title;
-			g.appendChild(h);
-			if (!songs.length) {
-				const empty = document.createElement("div");
-				empty.className = "daiya-anisongs-empty";
-				empty.textContent = "No songs to show (つ﹏<)･ﾟ｡";
-				g.appendChild(empty);
-			} else songs.forEach((s) => g.appendChild(songEl(s)));
-			return g;
-		}
-		function mount(state, overview) {
-			document.getElementById(ROOT)?.remove();
-			const root = document.createElement("section");
-			root.id = ROOT;
-			root.dataset.animeId = state.id;
-			const cols = document.createElement("div");
-			cols.className = "daiya-anisongs-columns";
-			cols.append(groupEl("Openings", state.themes.OP), groupEl("Endings", state.themes.ED));
-			root.appendChild(cols);
-			overview.appendChild(root);
-		}
-		let cur = null;
-		let backoff = {
-			id: null,
-			until: 0
-		};
-		const animeId = () => {
-			const r = mediaRoute();
-			return r && r.kind === "anime" ? String(r.id) : null;
-		};
-		async function sync() {
-			const id = animeId();
-			if (!id) {
-				document.getElementById(ROOT)?.remove();
-				cur = null;
-				return;
-			}
-			if (cur?.id === id) return;
-			if (backoff.id === id && Date.now() < backoff.until) return;
-			document.getElementById(ROOT)?.remove();
-			const mine = {
-				id,
-				themes: null,
-				busy: true
-			};
-			cur = mine;
-			try {
-				const themes = await loadThemes(id, id);
-				if (cur !== mine) return;
-				if (!themes.OP.length && !themes.ED.length) return;
-				mine.themes = themes;
-				const overview = await Core.waitForSelector(".overview", 1e4);
-				if (cur === mine && overview && animeId() === id) mount(mine, overview);
-			} catch (_) {
-				if (cur === mine) {
-					cur = null;
-					backoff = {
-						id,
-						until: Date.now() + 3e4
-					};
-				}
-			} finally {
-				mine.busy = false;
-			}
-		}
-		function repair() {
-			const id = animeId();
-			if (!id) return;
-			if (cur?.id !== id) return void sync();
-			if (cur.themes && !cur.busy && !document.getElementById(ROOT)) {
-				const overview = document.querySelector(".overview");
-				if (overview) mount(cur, overview);
-			}
-		}
-		Core.ready(sync);
-		Core.onNavigate(sync);
-		Core.onBodyMutation(debounce(repair, 200));
-	});
 	var TYPES = ["ANIME", "MANGA"];
 	var ID_MISS_TTL_MS$1 = 6048e5;
 	var SETTLED_TTL_MS = 3888e6;
@@ -3294,18 +1811,3601 @@
 	}
 	function maybeAutoSync() {
 		if (!Settings.get("syncEnabled") || syncStatus.syncing || Date.now() < syncStatus.autoSyncRetryAfter || navigator.onLine === false) return;
-		if (!store.get("al_token") || !store.get("mal_token") || !store.get("sync_onboarded", false)) return;
-		const runs = TYPES.map((t) => Number(store.get(`last_run_${t}`, 0)) || 0);
-		const last = Math.min(...runs);
-		if (!(last > 0)) return;
-		const hours = Settings.get("syncIntervalHours");
+		if (!store.get("al_token") || !store.get("mal_token")) return;
 		const retryAt = Number(store.get("sync_retry_at", 0)) || 0;
-		if (retryAt ? Date.now() >= retryAt : Date.now() - last * 1e3 >= hours * 36e5) {
-			log(retryAt ? "Auto-sync: retrying after an earlier failure…" : `Auto-sync: ${hours}h interval reached…`);
+		if (retryAt > 0 && Date.now() < retryAt) return;
+		const dueTypes = [];
+		for (const t of TYPES) {
+			const isAnime = t === "ANIME";
+			if (!Settings.get(isAnime ? "syncAutoAnime" : "syncAutoManga")) continue;
+			const hours = Math.max(1, Number(Settings.get(isAnime ? "syncIntervalAnime" : "syncIntervalManga")) || 6);
+			const last = Number(store.get(`last_run_${t}`, 0)) || 0;
+			if (retryAt > 0 ? !last || Date.now() - last * 1e3 >= RETRY_AFTER_FAILURE_MS : !last || Date.now() - last * 1e3 >= hours * 36e5) dueTypes.push(t);
+		}
+		if (dueTypes.length > 0) {
+			const labels = dueTypes.map(typeLabel).join(" & ");
+			log(retryAt > 0 ? `Auto-sync (${labels}): retrying after an earlier failure…` : `Auto-sync (${labels}): interval reached or initial sync…`);
 			syncStatus.autoSyncRetryAfter = Date.now() + 3e5;
-			runSync([...TYPES]);
+			runSync(dueTypes);
+		} else if (retryAt > 0 && Date.now() >= retryAt) store.del("sync_retry_at");
+	}
+	var BACKUP_FILENAME = "al-additions.settings";
+	var SENSITIVE_KEYS = [
+		"al_token",
+		"al_username",
+		"al_user_id",
+		"al_score_format",
+		"mal_code_verifier",
+		"mal_token",
+		"mal_refresh_token",
+		"mal_expires_at"
+	];
+	var PBKDF2_ITERATIONS = 1e5;
+	function uint8ToBase64(bytes) {
+		let binary = "";
+		const len = bytes.byteLength;
+		for (let i = 0; i < len; i += 8192) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+		return btoa(binary);
+	}
+	function base64ToUint8(b64) {
+		const binary = atob(b64.replace(/\s+/g, ""));
+		const bytes = new Uint8Array(binary.length);
+		for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+		return bytes;
+	}
+	async function deriveAesKey(password, salt) {
+		const enc = new TextEncoder();
+		const baseKey = await window.crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
+		return window.crypto.subtle.deriveKey({
+			name: "PBKDF2",
+			salt,
+			iterations: PBKDF2_ITERATIONS,
+			hash: "SHA-256"
+		}, baseKey, {
+			name: "AES-GCM",
+			length: 256
+		}, false, ["encrypt", "decrypt"]);
+	}
+	async function encryptData(plaintext, password) {
+		const salt = window.crypto.getRandomValues(new Uint8Array(16));
+		const iv = window.crypto.getRandomValues(new Uint8Array(12));
+		const key = await deriveAesKey(password, salt);
+		const enc = new TextEncoder();
+		const ciphertextBuffer = await window.crypto.subtle.encrypt({
+			name: "AES-GCM",
+			iv
+		}, key, enc.encode(plaintext));
+		return {
+			salt: uint8ToBase64(salt),
+			iv: uint8ToBase64(iv),
+			ciphertext: uint8ToBase64(new Uint8Array(ciphertextBuffer))
+		};
+	}
+	async function decryptData(cryptoData, password) {
+		const salt = base64ToUint8(cryptoData.salt);
+		const iv = base64ToUint8(cryptoData.iv);
+		const ciphertext = base64ToUint8(cryptoData.ciphertext);
+		const key = await deriveAesKey(password, salt);
+		const decryptedBuffer = await window.crypto.subtle.decrypt({
+			name: "AES-GCM",
+			iv
+		}, key, ciphertext);
+		return new TextDecoder().decode(decryptedBuffer);
+	}
+	async function compressGzip(data) {
+		const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+		const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
+		const buffer = await new Response(stream).arrayBuffer();
+		return new Uint8Array(buffer);
+	}
+	async function decompressGzip(data) {
+		const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("gzip"));
+		return await new Response(stream).text();
+	}
+	async function createBackup(includeSecrets, password, overrides) {
+		const data = {};
+		for (const r of Object.values(ROWS)) {
+			const rawVal = overrides && r.key in overrides ? overrides[r.key] : store.get(PREFIX + r.key, r.def);
+			data[r.key] = rawVal;
+		}
+		if (includeSecrets) for (const key of SENSITIVE_KEYS) {
+			const val = store.get(key, void 0);
+			if (val !== void 0 && val !== null) data[key] = val;
+		}
+		const exportedAt = Date.now();
+		let payload;
+		if (password && password.trim().length > 0) payload = {
+			version: 1,
+			encrypted: true,
+			exportedAt,
+			crypto: await encryptData(JSON.stringify(data), password)
+		};
+		else payload = {
+			version: 1,
+			encrypted: false,
+			exportedAt,
+			data
+		};
+		return compressGzip(JSON.stringify(payload));
+	}
+	function downloadBackupFile(bytes, filename = BACKUP_FILENAME) {
+		const blob = new Blob([bytes], { type: "application/gzip" });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = filename;
+		document.body.appendChild(a);
+		a.click();
+		a.remove();
+		setTimeout(() => URL.revokeObjectURL(url), 1e3);
+	}
+	function applyVersion1Settings(data) {
+		if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Backup data is invalid or empty.");
+		let applied = 0;
+		let secretsApplied = 0;
+		for (const [key, rawValue] of Object.entries(data)) {
+			if (SENSITIVE_KEYS.includes(key)) {
+				if (rawValue !== void 0 && rawValue !== null) {
+					store.set(key, rawValue);
+					secretsApplied++;
+				}
+				continue;
+			}
+			const settingKey = key.startsWith("ala_setting_") ? key.slice(PREFIX.length) : key;
+			const r = ROWS[settingKey];
+			if (r) {
+				const normalized = TYPES$1[r.type].normalize(rawValue, r);
+				store.set(PREFIX + settingKey, normalized);
+				applied++;
+			}
+		}
+		if (applied === 0 && secretsApplied === 0) throw new Error("No recognized settings found in the backup file.");
+		return {
+			applied,
+			secretsApplied
+		};
+	}
+	async function importBackup(fileInput) {
+		let bytes;
+		if (typeof fileInput === "string") bytes = new TextEncoder().encode(fileInput);
+		else bytes = fileInput;
+		if (!bytes || bytes.length === 0) throw new Error("Backup file is empty.");
+		let jsonText;
+		if (bytes.length >= 2 && bytes[0] === 31 && bytes[1] === 139) try {
+			jsonText = await decompressGzip(bytes);
+		} catch {
+			throw new Error("Corrupted or invalid GZIP backup file.");
+		}
+		else try {
+			jsonText = new TextDecoder().decode(bytes);
+		} catch {
+			throw new Error("Failed to decode backup file as UTF-8 text.");
+		}
+		let payload;
+		try {
+			payload = JSON.parse(jsonText);
+		} catch {
+			throw new Error("Invalid backup file: corrupted JSON content.");
+		}
+		if (!payload || typeof payload !== "object") throw new Error("Invalid backup file: root must be an object.");
+		if (typeof payload.version !== "number") throw new Error("Invalid backup file: missing format version.");
+		if (payload.version !== 1) throw new Error(`Unsupported backup version: ${payload.version}. This version of AL Additions only supports version 1.`);
+		if (typeof payload.encrypted !== "boolean") throw new Error("Invalid backup file: missing encryption status.");
+		let data;
+		if (payload.encrypted) {
+			if (!payload.crypto || typeof payload.crypto !== "object" || !payload.crypto.salt || !payload.crypto.iv || !payload.crypto.ciphertext) throw new Error("Encrypted backup is missing cryptographic data.");
+			const password = prompt("Enter password to decrypt your settings backup:");
+			if (password === null) return {
+				applied: 0,
+				secretsApplied: 0,
+				cancelled: true
+			};
+			if (!password) throw new Error("Password cannot be empty.");
+			let decryptedText;
+			try {
+				decryptedText = await decryptData(payload.crypto, password);
+			} catch {
+				throw new Error("Incorrect password or corrupted backup file.");
+			}
+			try {
+				data = JSON.parse(decryptedText);
+			} catch {
+				throw new Error("Decrypted content is not valid JSON.");
+			}
+		} else {
+			if (!payload.data || typeof payload.data !== "object" || Array.isArray(payload.data)) throw new Error("Backup file is missing settings data.");
+			data = payload.data;
+		}
+		switch (payload.version) {
+			case 1: return applyVersion1Settings(data);
+			default: throw new Error("Unsupported backup version: " + payload.version);
 		}
 	}
+	async function readFileAsBytes(file) {
+		if (typeof file.arrayBuffer === "function") return new Uint8Array(await file.arrayBuffer());
+		return new Promise((resolve, reject) => {
+			const reader = new FileReader();
+			reader.onload = () => resolve(new Uint8Array(reader.result));
+			reader.onerror = () => reject(reader.error || new Error("Failed to read file"));
+			reader.readAsArrayBuffer(file);
+		});
+	}
+	var DEFAULT_TIERS = [
+		{
+			min: 95,
+			max: 100,
+			label: "S+",
+			color: "#FFD700",
+			textColor: "#000000"
+		},
+		{
+			min: 85,
+			max: 94.9,
+			label: "S",
+			color: "#ff7f00",
+			textColor: "#FFFFFF"
+		},
+		{
+			min: 75,
+			max: 84.9,
+			label: "A",
+			color: "#aa00ff",
+			textColor: "#FFFFFF"
+		},
+		{
+			min: 65,
+			max: 74.9,
+			label: "B",
+			color: "#007fff",
+			textColor: "#FFFFFF"
+		},
+		{
+			min: 55,
+			max: 64.9,
+			label: "C",
+			color: "#00aa00",
+			textColor: "#FFFFFF"
+		},
+		{
+			min: 41,
+			max: 54.9,
+			label: "D",
+			color: "#aaaaaa",
+			textColor: "#FFFFFF"
+		},
+		{
+			min: 0,
+			max: 40.9,
+			label: "F",
+			color: "#666666",
+			textColor: "#FFFFFF"
+		}
+	];
+	function getTier(rating, tiers) {
+		if (rating <= 0 || !Number.isFinite(rating)) return null;
+		for (const tier of tiers) if (rating >= tier.min && rating <= tier.max) return tier;
+		for (const tier of tiers) if (rating >= tier.min - .05 && rating <= tier.max + .05) return tier;
+		return null;
+	}
+	var NAMED_COLORS = new Set([
+		"black",
+		"white",
+		"gray",
+		"grey",
+		"silver",
+		"red",
+		"maroon",
+		"yellow",
+		"olive",
+		"lime",
+		"green",
+		"aqua",
+		"cyan",
+		"teal",
+		"blue",
+		"navy",
+		"fuchsia",
+		"magenta",
+		"purple",
+		"orange",
+		"gold",
+		"pink",
+		"brown",
+		"transparent"
+	]);
+	function isValidColor(color) {
+		if (typeof color !== "string") return false;
+		const s = color.trim();
+		if (!s) return false;
+		if (/^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(s)) return true;
+		if (/^(rgb|hsl)a?\(\s*[\d.%\s,/+-]+\s*\)$/i.test(s)) return true;
+		if (NAMED_COLORS.has(s.toLowerCase())) return true;
+		if (typeof CSS !== "undefined" && typeof CSS.supports === "function") try {
+			if (CSS.supports("color", s)) return true;
+		} catch (_) {}
+		if (typeof Option !== "undefined") try {
+			const opt = new Option();
+			opt.style.color = s;
+			return !!opt.style.color;
+		} catch (_) {}
+		return false;
+	}
+	function normalizeHexColor(color) {
+		const s = (color || "").trim();
+		const m3 = s.match(/^#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])$/);
+		if (m3) return `#${m3[1]}${m3[1]}${m3[2]}${m3[2]}${m3[3]}${m3[3]}`.toLowerCase();
+		if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase();
+		return s;
+	}
+	function validateTiers(input) {
+		if (!Array.isArray(input)) return {
+			valid: false,
+			error: "Tiers configuration must be an array."
+		};
+		if (input.length === 0) return {
+			valid: false,
+			error: "At least one tier must be defined."
+		};
+		const validated = [];
+		for (let i = 0; i < input.length; i++) {
+			const item = input[i];
+			const idx = i + 1;
+			if (!item || typeof item !== "object") return {
+				valid: false,
+				error: `Tier #${idx} is invalid (must be an object).`
+			};
+			const label = typeof item.label === "string" ? item.label.trim() : "";
+			if (!label) return {
+				valid: false,
+				error: `Tier #${idx} must have a non-empty label.`
+			};
+			if (label.length > 20) return {
+				valid: false,
+				error: `Tier "${label}" label is too long (maximum 20 characters).`
+			};
+			const min = typeof item.min === "number" ? item.min : parseFloat(item.min);
+			if (!Number.isFinite(min)) return {
+				valid: false,
+				error: `Tier "${label}" has an invalid min score (must be a number).`
+			};
+			if (min < 0 || min > 100) return {
+				valid: false,
+				error: `Tier "${label}" min score (${min}) must be between 0 and 100.`
+			};
+			const max = typeof item.max === "number" ? item.max : parseFloat(item.max);
+			if (!Number.isFinite(max)) return {
+				valid: false,
+				error: `Tier "${label}" has an invalid max score (must be a number).`
+			};
+			if (max < 0 || max > 100) return {
+				valid: false,
+				error: `Tier "${label}" max score (${max}) must be between 0 and 100.`
+			};
+			if (min > max) return {
+				valid: false,
+				error: `Tier "${label}" min score (${min}) cannot be greater than max score (${max}).`
+			};
+			const color = typeof item.color === "string" ? item.color.trim() : "";
+			if (!isValidColor(color)) return {
+				valid: false,
+				error: `Tier "${label}" has an invalid badge color: "${item.color}". Must be a valid hex or CSS color.`
+			};
+			const textColor = typeof item.textColor === "string" ? item.textColor.trim() : "";
+			if (!isValidColor(textColor)) return {
+				valid: false,
+				error: `Tier "${label}" has an invalid text color: "${item.textColor}". Must be a valid hex or CSS color.`
+			};
+			validated.push({
+				label,
+				min: Math.round(min * 100) / 100,
+				max: Math.round(max * 100) / 100,
+				color: normalizeHexColor(color),
+				textColor: normalizeHexColor(textColor)
+			});
+		}
+		return {
+			valid: true,
+			tiers: validated
+		};
+	}
+	var SECTIONS = [
+		"Sync",
+		"AniList Enhancements",
+		"External Links & Downloads"
+	];
+	var CSS$1 = `
+  .ala-settings-nav-section{margin-top:26px}
+  .ala-settings-nav-heading{color:rgb(var(--color-text-lighter));margin-bottom:12px}
+  .ala-settings-nav-link{display:block;padding:9px 12px;border-radius:3px;color:rgb(var(--color-text));text-decoration:none;cursor:pointer}
+  .ala-settings-nav-link:hover,.ala-settings-nav-link.is-active{background:rgb(var(--color-foreground))}
+  #ala-settings-mobile-launcher{display:none}
+
+  #ala-settings-backdrop{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:24px 16px;background:rgba(5,12,20,.72);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+  #ala-settings-panel{box-sizing:border-box;display:flex;flex-direction:column;width:min(680px,100%);height:100%;max-height:100%;border-radius:8px;background:rgb(var(--color-foreground));color:rgb(var(--color-text));font-size:14px;line-height:1.4;box-shadow:0 18px 60px rgba(0,0,0,.45);overflow:hidden;outline:none;transform:translateZ(0)}
+  #ala-settings-panel *{box-sizing:border-box}
+  #ala-settings-panel :focus-visible{outline:2px solid rgb(var(--color-blue));outline-offset:2px}
+  #ala-settings-panel h2,#ala-settings-panel h3{margin:0;font-family:inherit}
+
+  .ala-sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:18px 20px 10px}
+  .ala-sheet-head h2{font-size:19px;font-weight:600;line-height:1.3}
+  .ala-sheet-body{flex:1 1 auto;min-height:0;padding:0 20px 8px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-gutter:stable}
+  .ala-sheet-foot{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 20px;border-top:1px solid rgba(var(--color-text-lighter),.14)}
+  .ala-status{flex:1 1 160px;color:rgb(var(--color-text-lighter));font-size:12px;transition:color .15s}
+  .ala-status.is-error{color:rgb(var(--color-red,224,85,85));font-weight:600}
+
+  #ala-settings-panel .ala-section-title{margin:18px 2px 8px;color:rgb(var(--color-blue));font-size:13px;font-weight:600}
+  .ala-section{border-radius:6px;background:rgb(var(--color-background));overflow:hidden}
+  .ala-section-dropdown{margin-top:14px;border-radius:6px;background:rgb(var(--color-background));overflow:hidden;contain:paint}
+  .ala-section-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;min-height:48px;cursor:pointer;user-select:none;list-style:none;transition:background .15s}
+  .ala-section-summary::-webkit-details-marker{display:none}
+  .ala-section-summary:hover{background:rgba(var(--color-text-lighter),.06)}
+  .ala-section-summary:focus-visible{outline:2px solid rgb(var(--color-blue));outline-offset:-2px}
+  .ala-section-summary .ala-section-title{margin:0!important;color:rgb(var(--color-blue));font-size:13px;font-weight:600}
+  .ala-chevron{display:inline-flex;align-items:center;justify-content:center;color:rgb(var(--color-text-lighter));transition:transform .22s cubic-bezier(0.4,0,0.2,1);will-change:transform}
+  .ala-section-dropdown.is-expanded .ala-chevron{transform:rotate(180deg)}
+  .ala-section-collapsible .ala-collapsible-inner{border-top:1px solid rgba(var(--color-text-lighter),.12)}
+
+  .ala-collapsible{display:grid;grid-template-rows:0fr;transition:grid-template-rows .22s cubic-bezier(0.4,0,0.2,1),visibility 0s .22s;visibility:hidden;overflow:hidden}
+  .ala-collapsible.is-open{grid-template-rows:1fr;transition:grid-template-rows .22s cubic-bezier(0.4,0,0.2,1),visibility 0s 0s;visibility:visible}
+  .ala-collapsible-inner{min-height:0;overflow:hidden}
+
+  .ala-feature+.ala-feature{border-top:1px solid rgba(var(--color-text-lighter),.12)}
+  .ala-row{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:56px;padding:12px 14px;cursor:pointer}
+  .ala-text{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .ala-title{font-size:14px;color:rgb(var(--color-text))}
+  .ala-help{color:rgb(var(--color-text-lighter));font-size:12px;line-height:1.4}
+  .ala-options-collapsible{margin:0;padding:0}
+  .ala-options{margin:0 14px 12px 20px;padding-left:12px;border-left:2px solid rgba(var(--color-blue),.4)}
+  .ala-options .ala-row{min-height:48px;padding:8px 0;cursor:default}
+  .ala-options .ala-row:has(.ala-switch){cursor:pointer}
+  .ala-child-option{margin-left:8px}
+  .ala-child-option .ala-collapsible-inner{border-left:2px solid rgba(var(--color-blue),.25);padding-left:10px}
+  .ala-child-option .ala-row{min-height:44px;padding:6px 0}
+
+  #ala-settings-panel input[type=number],#ala-settings-panel input[type=text],#ala-settings-panel select{width:170px;height:36px;padding:0 10px;border:1px solid rgba(var(--color-text-lighter),.22);border-radius:4px;background:rgb(var(--color-foreground));color:rgb(var(--color-text));font:inherit;font-size:13px}
+  #ala-settings-panel input:disabled,#ala-settings-panel select:disabled{cursor:not-allowed}
+
+  .ala-switch{position:relative;flex:0 0 auto;width:44px;height:26px}
+  .ala-switch input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+  .ala-slider{position:absolute;inset:0;border-radius:999px;background:rgba(var(--color-text-lighter),.3);transition:background .15s;pointer-events:none}
+  .ala-slider:before{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .15s}
+  .ala-switch input:checked+.ala-slider{background:rgb(var(--color-blue))}
+  .ala-switch input:checked+.ala-slider:before{transform:translateX(18px)}
+  .ala-switch input:focus-visible+.ala-slider{outline:2px solid rgb(var(--color-blue));outline-offset:2px}
+
+  .ala-btn{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:0 18px;border:1px solid rgba(var(--color-text-lighter),.25);border-radius:4px;background:transparent;color:rgb(var(--color-text));font:inherit;font-size:13px;cursor:pointer}
+  .ala-btn--primary{border-color:transparent;background:rgb(var(--color-blue));color:#fff;font-weight:600}
+  .ala-btn--danger{border-color:rgba(var(--color-red,224,85,85),.35);color:rgb(var(--color-red,224,85,85))}
+  .ala-btn--danger:hover{border-color:transparent;background:rgb(var(--color-red,224,85,85));color:#fff}
+  .ala-btn:hover{filter:brightness(1.1)}
+  .ala-icon-btn{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:36px;height:36px;border:0;border-radius:50%;background:transparent;color:rgb(var(--color-text-lighter));cursor:pointer}
+  .ala-icon-btn:hover{background:rgba(var(--color-text-lighter),.14);color:rgb(var(--color-text))}
+  .ala-account-row{cursor:default}
+  .ala-account-row .ala-btn{flex:0 0 auto;min-width:145px}
+  .ala-credits-content{padding:12px 14px;color:rgb(var(--color-text-lighter));font-size:12px}
+  .ala-credit{margin-top:10px}
+  .ala-credit:first-child{margin-top:0}
+  .ala-credit ul{margin:3px 0 0;padding-left:18px;list-style:disc}
+  .ala-credit a{color:rgb(var(--color-blue));text-decoration:none}
+  .ala-credit a:hover{text-decoration:underline}
+
+  #ala-tier-editor-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.65);backdrop-filter:blur(3px);z-index:100001;display:flex;align-items:center;justify-content:center;padding:16px}
+  .ala-tier-editor-sheet{width:100%;max-width:640px;max-height:90vh;display:flex;flex-direction:column;background:rgb(var(--color-foreground));color:rgb(var(--color-text));border-radius:12px;box-shadow:0 14px 40px rgba(0,0,0,.5);overflow:hidden}
+  .ala-tier-desc{font-size:13px;color:rgb(var(--color-text-lighter));margin:0 0 14px;line-height:1.4}
+  .ala-tier-table-wrap{overflow-x:auto;max-height:48vh;overflow-y:auto;border:1px solid rgba(var(--color-text-lighter),.15);border-radius:8px;padding:4px}
+  .ala-tier-table{width:100%;border-collapse:collapse;font-size:13px}
+  .ala-tier-table th{text-align:left;padding:8px 6px;color:rgb(var(--color-text-lighter));font-weight:600;border-bottom:1px solid rgba(var(--color-text-lighter),.15)}
+  .ala-tier-table td{padding:6px;vertical-align:middle;border-bottom:1px solid rgba(var(--color-text-lighter),.08)}
+  .ala-tier-table input[type=text],.ala-tier-table input[type=number]{height:34px;padding:0 8px;border-radius:6px;border:1px solid rgba(var(--color-text-lighter),.2);background:rgb(var(--color-background));color:rgb(var(--color-text));font:inherit;font-size:13px;box-sizing:border-box}
+  .ala-tier-table input[type=color]{width:36px;height:34px;padding:1px;border-radius:6px;border:1px solid rgba(var(--color-text-lighter),.2);background:transparent;cursor:pointer}
+  .ala-tier-del-btn{padding:0 8px;height:32px;min-width:32px;display:inline-flex;align-items:center;justify-content:center}
+  .ala-tier-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .ala-tier-json-area{width:100%;height:100px;font-family:monospace;font-size:12px;border-radius:6px;border:1px solid rgba(var(--color-text-lighter),.2);background:rgb(var(--color-background));color:rgb(var(--color-text));padding:8px;box-sizing:border-box;resize:vertical}
+  .ala-tier-status{margin-left:auto;font-size:13px;color:rgb(var(--color-green,76,175,80))}
+  .ala-tier-status.is-error{color:rgb(var(--color-red,224,85,85))}
+
+  @media (max-width:700px){
+    .ala-settings-nav-section{display:none!important}
+    #ala-settings-backdrop{align-items:flex-end;padding:0}
+    #ala-settings-panel{width:100%;height:92vh;height:92dvh;max-height:92vh;max-height:92dvh;border-radius:14px 14px 0 0}
+    #ala-tier-editor-backdrop{align-items:flex-end;padding:0}
+    .ala-tier-editor-sheet{width:100%;max-height:92vh;max-height:92dvh;border-radius:14px 14px 0 0}
+    .ala-tier-table-wrap{max-height:45vh}
+    .ala-tier-table th,.ala-tier-table td{padding:4px}
+    .ala-sheet-head{padding:16px 16px 8px}
+    .ala-sheet-body{padding:0 16px 8px}
+    .ala-sheet-foot{padding:12px 16px calc(12px + env(safe-area-inset-bottom))}
+    .ala-sheet-foot .ala-btn{flex:1 1 40%;min-height:44px}
+    .ala-status{flex-basis:100%;order:3}
+    .ala-row{min-height:60px}
+    .ala-options .ala-row{flex-direction:column;align-items:stretch;gap:8px}
+    .ala-options .ala-row:has(.ala-switch){flex-direction:row;align-items:center;justify-content:space-between}
+    .ala-account-row{flex-direction:column;align-items:stretch;gap:10px}
+    .ala-account-row .ala-btn{width:100%;min-height:42px}
+    #ala-settings-panel input[type=number],#ala-settings-panel input[type=text],#ala-settings-panel select{width:100%;height:44px;font-size:16px}
+    #ala-settings-mobile-launcher{display:inline-flex;align-items:center;gap:8px;position:fixed;left:16px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:99998;min-height:46px;padding:0 18px;border:1px solid rgba(255,255,255,.16);border-radius:999px;background:rgb(var(--color-blue));color:#fff;font:inherit;font-size:14px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.35);cursor:pointer}
+    #ala-settings-mobile-launcher:active{transform:translateY(1px)}
+  }
+  @media (prefers-reduced-motion:reduce){.ala-slider,.ala-slider:before,.ala-collapsible,.ala-chevron{transition:none!important}}`;
+	var onSettingsPage = () => /^\/settings(\/|$)/.test(location.pathname);
+	var rowText = (title, help) => `<span class="ala-text"><span class="ala-title">${title}</span><span class="ala-help">${help}</span></span>`;
+	var optionHtml = (r) => {
+		const tag = r.type === "json" ? "div" : "label";
+		const rowHtml = `<${tag} class="ala-row">${rowText(r.title, r.help)}${TYPES$1[r.type].html(r, Settings.get(r.key))}</${tag}>`;
+		if (r.childOf) return `<div class="ala-collapsible ala-child-option ${!!Settings.get(r.childOf) ? "is-open" : ""}" data-child-for="${r.childOf}">
+      <div class="ala-collapsible-inner">
+        ${rowHtml}
+      </div>
+    </div>`;
+		return rowHtml;
+	};
+	var featureHtml = (f) => {
+		const isFeatureOn = !!Settings.get(f.toggle.key);
+		return `<div class="ala-feature ${isFeatureOn ? "" : "is-off"}" data-feature="${f.id}">
+    <label class="ala-row ala-row--main">${rowText(f.title, f.help)}${TYPES$1.toggle.html(f.toggle, isFeatureOn)}</label>
+    ${f.options.length ? `
+      <div class="ala-collapsible ala-options-collapsible ${isFeatureOn ? "is-open" : ""}">
+        <div class="ala-collapsible-inner">
+          <div class="ala-options">${f.options.map(optionHtml).join("")}</div>
+        </div>
+      </div>` : ""}
+  </div>`;
+	};
+	function accountsHtml() {
+		const alConnected = !!store.get("al_token", null);
+		const alUser = store.get("al_username", null);
+		const malConnected = !!store.get("mal_token", null);
+		return `<h3 class="ala-section-title">Connected Accounts</h3>
+  <div class="ala-section">
+    <div class="ala-row ala-account-row">
+      <span class="ala-text">
+        <span class="ala-title">AniList</span>
+        <span class="ala-help" id="ala-status-al">${alConnected ? alUser ? `Connected as <b>${esc(alUser)}</b>` : "Connected" : "Not connected"}</span>
+      </span>
+      <button type="button" class="ala-btn ${alConnected ? "ala-btn--danger" : "ala-btn--primary"}" id="ala-btn-al">
+        ${alConnected ? "Disconnect" : "Connect to AniList"}
+      </button>
+    </div>
+    <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
+      <span class="ala-text">
+        <span class="ala-title">MyAnimeList</span>
+        <span class="ala-help" id="ala-status-mal">${malConnected ? "Connected" : "Not connected"}</span>
+      </span>
+      <button type="button" class="ala-btn ${malConnected ? "ala-btn--danger" : "ala-btn--primary"}" id="ala-btn-mal">
+        ${malConnected ? "Disconnect" : "Connect to MAL"}
+      </button>
+    </div>
+  </div>`;
+	}
+	function backupRestoreHtml() {
+		return `<details class="ala-section-dropdown" data-section="backup" open>
+    <summary class="ala-section-summary">
+      <span class="ala-section-title">Backup &amp; Restore</span>
+      <span class="ala-chevron">${icon("chevron", 14)}</span>
+    </summary>
+    <div class="ala-collapsible ala-section-collapsible">
+      <div class="ala-collapsible-inner">
+        <div class="ala-section">
+          <div class="ala-row ala-account-row">
+            <span class="ala-text">
+              <span class="ala-title">Export Settings</span>
+              <span class="ala-help">Download all settings as a backup file. Excludes account credentials.</span>
+            </span>
+            <button type="button" class="ala-btn" id="ala-btn-export">Export</button>
+          </div>
+          <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
+            <span class="ala-text">
+              <span class="ala-title">Export with Credentials</span>
+              <span class="ala-help">Include AniList and MyAnimeList tokens. Encrypting with a password is strongly recommended.</span>
+            </span>
+            <button type="button" class="ala-btn ala-btn--danger" id="ala-btn-export-secrets">Export with Secrets</button>
+          </div>
+          <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
+            <span class="ala-text">
+              <span class="ala-title">Import Settings</span>
+              <span class="ala-help">Restore settings from an <code>al-additions.settings</code> file. Existing values not in the backup are kept.</span>
+            </span>
+            <button type="button" class="ala-btn ala-btn--primary" id="ala-btn-import">Import File</button>
+            <input type="file" id="ala-import-file" accept=".settings,.json,text/*" style="display:none">
+          </div>
+        </div>
+      </div>
+    </div>
+  </details>`;
+	}
+	function sectionsHtml() {
+		return [...new Set([...SECTIONS, ...features.map((f) => f.section)])].map((name) => {
+			const items = features.filter((f) => f.section === name);
+			return items.length ? `<details class="ala-section-dropdown" data-section="${esc(name)}" open>
+            <summary class="ala-section-summary">
+              <span class="ala-section-title">${esc(name)}</span>
+              <span class="ala-chevron">${icon("chevron", 14)}</span>
+            </summary>
+            <div class="ala-collapsible ala-section-collapsible">
+              <div class="ala-collapsible-inner">
+                <div class="ala-section">${items.map(featureHtml).join("")}</div>
+              </div>
+            </div>
+          </details>` : "";
+		}).join("");
+	}
+	function creditsDropdownHtml() {
+		return `<details class="ala-section-dropdown ala-credits-dropdown" data-section="credits" open>
+    <summary class="ala-section-summary">
+      <span class="ala-section-title">Credits</span>
+      <span class="ala-chevron">${icon("chevron", 14)}</span>
+    </summary>
+    <div class="ala-collapsible ala-section-collapsible">
+      <div class="ala-collapsible-inner">
+        <div class="ala-credits-content">${creditsHtml()}</div>
+      </div>
+    </div>
+  </details>`;
+	}
+	function initDropdownAnimations(panel) {
+		panel.querySelectorAll("details.ala-section-dropdown").forEach((details) => {
+			const summary = details.querySelector(":scope > summary");
+			const collapsible = details.querySelector(":scope > .ala-collapsible");
+			if (!summary || !collapsible) return;
+			summary.addEventListener("click", (e) => {
+				e.preventDefault();
+				const isExpanded = details.classList.toggle("is-expanded");
+				collapsible.classList.toggle("is-open", isExpanded);
+			});
+		});
+	}
+	var prevOverflow = null;
+	function openTierEditor(inputEl) {
+		let tiers;
+		try {
+			const check = validateTiers(JSON.parse(inputEl.value));
+			tiers = check.valid && check.tiers ? check.tiers : JSON.parse(JSON.stringify(DEFAULT_TIERS));
+		} catch {
+			tiers = JSON.parse(JSON.stringify(DEFAULT_TIERS));
+		}
+		const existing = document.getElementById("ala-tier-editor-backdrop");
+		if (existing) existing.remove();
+		const backdrop = document.createElement("div");
+		backdrop.id = "ala-tier-editor-backdrop";
+		backdrop.innerHTML = `
+    <div class="ala-sheet ala-tier-editor-sheet" role="dialog" aria-modal="true" aria-labelledby="ala-tier-modal-title">
+      <header class="ala-sheet-head">
+        <h2 id="ala-tier-modal-title">Customize Tier Labels</h2>
+        <button class="ala-icon-btn ala-tier-close" type="button" aria-label="Close">✕</button>
+      </header>
+      <div class="ala-sheet-body">
+        <p class="ala-tier-desc">Configure tier badges, score thresholds (0–100 scale), and colors. Tiers match in order from top to bottom.</p>
+        <div class="ala-tier-table-wrap">
+          <table class="ala-tier-table">
+            <thead>
+              <tr>
+                <th style="width:75px">Label</th>
+                <th style="width:70px">Min</th>
+                <th style="width:70px">Max</th>
+                <th style="width:48px">Badge</th>
+                <th style="width:48px">Text</th>
+                <th style="width:75px">Preview</th>
+                <th style="width:36px"></th>
+              </tr>
+            </thead>
+            <tbody id="ala-tier-tbody"></tbody>
+          </table>
+        </div>
+        <div class="ala-tier-actions">
+          <button type="button" class="ala-btn" id="ala-tier-btn-add">+ Add Tier</button>
+          <button type="button" class="ala-btn" id="ala-tier-btn-reset">Reset Defaults</button>
+          <button type="button" class="ala-btn" id="ala-tier-btn-toggle-json">Import / Export JSON</button>
+        </div>
+        <div id="ala-tier-json-wrap" style="display:none;margin-top:12px">
+          <textarea id="ala-tier-json-area" class="ala-tier-json-area" rows="6" spellcheck="false"></textarea>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <button type="button" class="ala-btn" id="ala-tier-btn-apply-json">Apply JSON</button>
+          </div>
+        </div>
+      </div>
+      <footer class="ala-sheet-foot">
+        <button class="ala-btn ala-btn--primary" id="ala-tier-btn-save" type="button">Apply Tiers</button>
+        <button class="ala-btn" id="ala-tier-btn-cancel" type="button">Cancel</button>
+        <span class="ala-tier-status" id="ala-tier-status" role="status"></span>
+      </footer>
+    </div>
+  `;
+		document.body.appendChild(backdrop);
+		const tbody = backdrop.querySelector("#ala-tier-tbody");
+		const status = backdrop.querySelector("#ala-tier-status");
+		const setModalStatus = (msg, isError = false) => {
+			status.textContent = msg;
+			status.className = `ala-tier-status ${isError ? "is-error" : ""}`;
+		};
+		const createRowHtml = (t, idx) => {
+			const badgeColor = normalizeHexColor(t.color) || "#000000";
+			const textColor = normalizeHexColor(t.textColor) || "#ffffff";
+			return `
+    <tr data-idx="${idx}">
+      <td><input type="text" class="ala-t-label" value="${esc(t.label)}" maxlength="20" placeholder="Label" style="width:100%"></td>
+      <td><input type="number" class="ala-t-min" min="0" max="100" step="0.1" value="${t.min}" style="width:100%"></td>
+      <td><input type="number" class="ala-t-max" min="0" max="100" step="0.1" value="${t.max}" style="width:100%"></td>
+      <td><input type="color" class="ala-t-color" value="${esc(badgeColor)}" title="Badge Background Color"></td>
+      <td><input type="color" class="ala-t-text-color" value="${esc(textColor)}" title="Badge Text Color"></td>
+      <td><span class="ala-tier-badge ala-tier-badge--list ala-t-preview" style="background-color:${esc(badgeColor)};color:${esc(textColor)}">${esc(t.label)}</span></td>
+      <td><button type="button" class="ala-icon-btn ala-tier-del-btn" title="Delete Tier">✕</button></td>
+    </tr>
+  `;
+		};
+		const renderTable = (list) => {
+			tbody.innerHTML = list.map((t, i) => createRowHtml(t, i)).join("");
+		};
+		const getRowsData = () => {
+			const rows = tbody.querySelectorAll("tr");
+			const result = [];
+			rows.forEach((tr) => {
+				const label = (tr.querySelector(".ala-t-label")?.value || "").trim();
+				const min = parseFloat(tr.querySelector(".ala-t-min")?.value || "0");
+				const max = parseFloat(tr.querySelector(".ala-t-max")?.value || "100");
+				const color = tr.querySelector(".ala-t-color")?.value || "#000000";
+				const textColor = tr.querySelector(".ala-t-text-color")?.value || "#ffffff";
+				result.push({
+					label: label || "Tier",
+					min: isNaN(min) ? 0 : min,
+					max: isNaN(max) ? 100 : max,
+					color,
+					textColor
+				});
+			});
+			return result;
+		};
+		const updatePreview = (tr) => {
+			const label = tr.querySelector(".ala-t-label")?.value || "";
+			const color = tr.querySelector(".ala-t-color")?.value || "#000000";
+			const textColor = tr.querySelector(".ala-t-text-color")?.value || "#ffffff";
+			const preview = tr.querySelector(".ala-t-preview");
+			if (preview) {
+				preview.textContent = label;
+				preview.style.backgroundColor = color;
+				preview.style.color = textColor;
+			}
+		};
+		tbody.addEventListener("input", (e) => {
+			const tr = e.target.closest("tr");
+			if (tr) updatePreview(tr);
+		});
+		tbody.addEventListener("click", (e) => {
+			const btn = e.target.closest(".ala-tier-del-btn");
+			if (btn) {
+				const tr = btn.closest("tr");
+				if (tr) {
+					tr.remove();
+					setModalStatus("Tier removed.");
+				}
+			}
+		});
+		backdrop.querySelector("#ala-tier-btn-add")?.addEventListener("click", () => {
+			const current = getRowsData();
+			current.push({
+				min: 0,
+				max: 0,
+				label: "New",
+				color: "#3db4f2",
+				textColor: "#ffffff"
+			});
+			renderTable(current);
+			setModalStatus("Added new tier.");
+		});
+		backdrop.querySelector("#ala-tier-btn-reset")?.addEventListener("click", () => {
+			renderTable(JSON.parse(JSON.stringify(DEFAULT_TIERS)));
+			setModalStatus("Reset to default tiers.");
+		});
+		const jsonWrap = backdrop.querySelector("#ala-tier-json-wrap");
+		const jsonArea = backdrop.querySelector("#ala-tier-json-area");
+		backdrop.querySelector("#ala-tier-btn-toggle-json")?.addEventListener("click", () => {
+			if (jsonWrap.style.display === "none") {
+				jsonArea.value = JSON.stringify(getRowsData(), null, 2);
+				jsonWrap.style.display = "block";
+			} else jsonWrap.style.display = "none";
+		});
+		backdrop.querySelector("#ala-tier-btn-apply-json")?.addEventListener("click", () => {
+			try {
+				const check = validateTiers(JSON.parse(jsonArea.value));
+				if (!check.valid || !check.tiers) {
+					setModalStatus(check.error || "Invalid tier JSON.", true);
+					return;
+				}
+				renderTable(check.tiers);
+				jsonWrap.style.display = "none";
+				setModalStatus("JSON applied successfully.");
+			} catch (e) {
+				setModalStatus("Invalid JSON syntax: " + (e.message || e), true);
+			}
+		});
+		const closeModal = () => {
+			document.removeEventListener("keydown", onKey, true);
+			backdrop.remove();
+		};
+		const onKey = (e) => {
+			if (e.key === "Escape") {
+				e.stopPropagation();
+				closeModal();
+			}
+		};
+		document.addEventListener("keydown", onKey, true);
+		backdrop.querySelector(".ala-tier-close")?.addEventListener("click", closeModal);
+		backdrop.querySelector("#ala-tier-btn-cancel")?.addEventListener("click", closeModal);
+		backdrop.addEventListener("click", (e) => {
+			if (e.target === backdrop) closeModal();
+		});
+		backdrop.querySelector("#ala-tier-btn-save")?.addEventListener("click", () => {
+			const check = validateTiers(getRowsData());
+			if (!check.valid || !check.tiers) {
+				setModalStatus(check.error || "Invalid tier configuration.", true);
+				return;
+			}
+			inputEl.value = JSON.stringify(check.tiers);
+			Settings.set("tierLabels", check.tiers);
+			closeModal();
+			const panelStatus = document.querySelector("#ala-settings-panel .ala-status");
+			if (panelStatus) panelStatus.textContent = "Custom tiers applied. Press \"Save and reload\" to activate.";
+		});
+		renderTable(tiers);
+	}
+	function closePanel() {
+		const b = document.getElementById("ala-settings-backdrop");
+		if (!b) return;
+		if (b._onKey) document.removeEventListener("keydown", b._onKey);
+		if (b._onFocus) window.removeEventListener("focus", b._onFocus);
+		b.remove();
+		document.documentElement.style.overflow = prevOverflow || "";
+		prevOverflow = null;
+	}
+	function showPanel() {
+		if (document.getElementById("ala-settings-backdrop")) return;
+		const backdrop = document.createElement("div");
+		backdrop.id = "ala-settings-backdrop";
+		backdrop.innerHTML = `<div id="ala-settings-panel" role="dialog" aria-modal="true" aria-labelledby="ala-settings-title" tabindex="-1">
+    <header class="ala-sheet-head">
+      <div><h2 id="ala-settings-title">AL Additions</h2><div class="ala-help">Changes apply after the page reloads.</div></div>
+      <button class="ala-icon-btn ala-close" type="button" aria-label="Close settings">${icon("close", 20)}</button>
+    </header>
+    <div class="ala-sheet-body">
+      ${accountsHtml()}
+      ${sectionsHtml()}
+      ${backupRestoreHtml()}
+      ${creditsDropdownHtml()}
+    </div>
+    <footer class="ala-sheet-foot">
+      <button class="ala-btn ala-btn--primary ala-save" type="button">Save and reload</button>
+      <button class="ala-btn ala-reset" type="button">Reset to defaults</button>
+      <span class="ala-status" role="status"></span>
+    </footer>
+  </div>`;
+		const panel = backdrop.firstElementChild;
+		const status = panel.querySelector(".ala-status");
+		const setStatus = (msg, isError = false) => {
+			status.textContent = msg;
+			status.classList.toggle("is-error", isError);
+		};
+		const controls = () => panel.querySelectorAll("[data-key]");
+		const syncFeature = (card) => {
+			const toggle = card.querySelector(".ala-row--main [data-key]");
+			const on = toggle ? toggle.checked : false;
+			card.classList.toggle("is-off", !on);
+			const optionsCollapsible = card.querySelector(":scope > .ala-options-collapsible");
+			if (optionsCollapsible) optionsCollapsible.classList.toggle("is-open", on);
+			card.querySelectorAll(".ala-child-option").forEach((childWrap) => {
+				const parentKey = childWrap.dataset.childFor;
+				const parentInput = parentKey ? card.querySelector(`[data-key="${parentKey}"]`) : null;
+				const childOpen = on && !!parentInput?.checked;
+				childWrap.classList.toggle("is-open", childOpen);
+				childWrap.querySelectorAll("[data-key]").forEach((el) => {
+					el.disabled = !childOpen;
+				});
+			});
+			card.querySelectorAll(".ala-options [data-key]").forEach((el) => {
+				if (el.closest(".ala-child-option")) return;
+				el.disabled = !on;
+			});
+		};
+		panel.querySelectorAll(".ala-feature").forEach(syncFeature);
+		initDropdownAnimations(panel);
+		panel.addEventListener("change", (e) => {
+			const card = e.target?.closest(".ala-feature");
+			if (card) syncFeature(card);
+		});
+		panel.querySelector(".ala-save")?.addEventListener("click", () => {
+			controls().forEach((el) => {
+				const r = ROWS[el.dataset.key];
+				if (r) Settings.set(r.key, TYPES$1[r.type].read(el));
+			});
+			setStatus("Saved. Reloading…");
+			setTimeout(() => location.reload(), 350);
+		});
+		panel.querySelector(".ala-reset")?.addEventListener("click", () => {
+			controls().forEach((el) => {
+				const r = ROWS[el.dataset.key];
+				if (r) TYPES$1[r.type].write(el, r.def);
+			});
+			panel.querySelectorAll(".ala-feature").forEach(syncFeature);
+			setStatus("Defaults restored. Press Save to apply them.");
+		});
+		panel.querySelector(".ala-close")?.addEventListener("click", closePanel);
+		backdrop.addEventListener("click", (e) => {
+			if (e.target === backdrop) closePanel();
+		});
+		backdrop._onKey = (e) => {
+			if (e.key === "Escape") closePanel();
+		};
+		document.addEventListener("keydown", backdrop._onKey);
+		const updateAccountUI = () => {
+			const alBtn = panel.querySelector("#ala-btn-al");
+			const alStatus = panel.querySelector("#ala-status-al");
+			const malBtn = panel.querySelector("#ala-btn-mal");
+			const malStatus = panel.querySelector("#ala-status-mal");
+			const alConnected = !!store.get("al_token", null);
+			const alUser = store.get("al_username", null);
+			const malConnected = !!store.get("mal_token", null);
+			if (alBtn && alStatus) {
+				alBtn.textContent = alConnected ? "Disconnect" : "Connect to AniList";
+				alBtn.className = `ala-btn ${alConnected ? "ala-btn--danger" : "ala-btn--primary"}`;
+				alStatus.innerHTML = alConnected ? alUser ? `Connected as <b>${esc(alUser)}</b>` : "Connected" : "Not connected";
+			}
+			if (malBtn && malStatus) {
+				malBtn.textContent = malConnected ? "Disconnect" : "Connect to MAL";
+				malBtn.className = `ala-btn ${malConnected ? "ala-btn--danger" : "ala-btn--primary"}`;
+				malStatus.textContent = malConnected ? "Connected" : "Not connected";
+			}
+		};
+		if (store.get("al_token", null) && !store.get("al_username", null)) tryOr(() => AniList.viewer()).then(() => updateAccountUI());
+		panel.querySelector("#ala-btn-al")?.addEventListener("click", () => {
+			if (!!store.get("al_token", null)) {
+				if (confirm("Disconnect AniList? You will need to reconnect to use the List Score Editor or Sync.")) {
+					clearAniListAuth();
+					updateAccountUI();
+					setStatus("AniList disconnected.");
+				}
+			} else {
+				alConnect();
+				setStatus("Opened AniList authorization tab…");
+			}
+		});
+		panel.querySelector("#ala-btn-mal")?.addEventListener("click", () => {
+			if (!!store.get("mal_token", null)) {
+				if (confirm("Disconnect MyAnimeList? You will need to reconnect to use AniList → MAL Sync.")) {
+					clearMalAuth();
+					updateAccountUI();
+					setStatus("MyAnimeList disconnected.");
+				}
+			} else {
+				malConnect();
+				setStatus("Opened MyAnimeList authorization tab…");
+			}
+		});
+		const getPanelOverrides = () => {
+			const overrides = {};
+			controls().forEach((el) => {
+				const r = ROWS[el.dataset.key];
+				if (r) overrides[r.key] = TYPES$1[r.type].read(el);
+			});
+			return overrides;
+		};
+		panel.querySelector("#ala-btn-export")?.addEventListener("click", async () => {
+			const pwd = prompt("Optional: Set a password to encrypt your backup file.\n\nLeave blank for an unencrypted backup:", "");
+			if (pwd === null) return;
+			try {
+				setStatus("Generating backup…");
+				downloadBackupFile(await createBackup(false, pwd, getPanelOverrides()));
+				setStatus("Settings exported successfully.");
+			} catch (e) {
+				setStatus("Export failed: " + (e.message || e), true);
+			}
+		});
+		panel.querySelector("#ala-btn-export-secrets")?.addEventListener("click", async () => {
+			if (!confirm("⚠️ Warning: This export includes your AniList and MyAnimeList authentication credentials.\n\nAnyone with access to this file will have full access to your connected accounts.\n\nDo you want to continue?")) return;
+			const pwd = prompt("Set a password to encrypt your credentials (strongly recommended).\n\nLeave blank to export unencrypted:", "");
+			if (pwd === null) return;
+			try {
+				setStatus("Generating backup…");
+				downloadBackupFile(await createBackup(true, pwd, getPanelOverrides()));
+				setStatus("Settings and credentials exported successfully.");
+			} catch (e) {
+				setStatus("Export failed: " + (e.message || e), true);
+			}
+		});
+		const fileInput = panel.querySelector("#ala-import-file");
+		panel.querySelector("#ala-btn-import")?.addEventListener("click", () => {
+			fileInput?.click();
+		});
+		fileInput?.addEventListener("change", async () => {
+			const file = fileInput.files?.[0];
+			if (!file) return;
+			try {
+				setStatus("Reading backup file…");
+				const result = await importBackup(await readFileAsBytes(file));
+				if (result.cancelled) {
+					setStatus("Import cancelled.");
+					fileInput.value = "";
+					return;
+				}
+				const parts = [`${result.applied} setting(s)`];
+				if (result.secretsApplied) parts.push(`${result.secretsApplied} credential(s)`);
+				setStatus(`Imported ${parts.join(" and ")}. Reloading…`);
+				setTimeout(() => location.reload(), 600);
+			} catch (e) {
+				setStatus("Import failed: " + (e.message || e), true);
+				fileInput.value = "";
+			}
+		});
+		panel.querySelector("#ala-btn-edit-tierLabels")?.addEventListener("click", (e) => {
+			e.preventDefault();
+			const inputEl = panel.querySelector("input[data-key=\"tierLabels\"]");
+			if (inputEl) openTierEditor(inputEl);
+		});
+		const onFocus = () => {
+			updateAccountUI();
+			maybeAutoSync();
+		};
+		backdrop._onFocus = onFocus;
+		window.addEventListener("focus", onFocus);
+		prevOverflow = document.documentElement.style.overflow;
+		document.documentElement.style.overflow = "hidden";
+		document.body.appendChild(backdrop);
+		panel.focus();
+	}
+	function ensureLauncher() {
+		if (document.getElementById("ala-settings-mobile-launcher")) return;
+		const b = document.createElement("button");
+		b.id = "ala-settings-mobile-launcher";
+		b.type = "button";
+		b.innerHTML = `${icon("sliders", 18)}<span>AL Additions</span>`;
+		b.setAttribute("aria-label", "Open AL Additions settings");
+		b.addEventListener("click", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			showPanel();
+		});
+		document.body.appendChild(b);
+	}
+	function installSidebar() {
+		if (document.getElementById("ala-settings-nav-section")) return;
+		if (!findExactText("Profile")) return;
+		const dev = findExactText("Developer");
+		if (!dev) return;
+		let nav = dev.parentElement;
+		while (nav && nav !== document.body && nav.children.length <= 1) nav = nav.parentElement;
+		if (!nav || nav === document.body || !nav.parentElement) return;
+		const section = document.createElement("div");
+		section.id = "ala-settings-nav-section";
+		section.className = "ala-settings-nav-section";
+		section.innerHTML = "<div class=\"ala-settings-nav-heading\">AL Additions</div><a href=\"#\" class=\"ala-settings-nav-link\">Settings</a>";
+		section.querySelector("a")?.addEventListener("click", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			e.currentTarget.classList.add("is-active");
+			showPanel();
+		});
+		nav.parentElement.insertBefore(section, nav.nextSibling);
+	}
+	function initSettingsPage() {
+		addStyle("ala-settings-style", CSS$1);
+		const attempt = debounce(() => {
+			if (!onSettingsPage()) return;
+			installSidebar();
+			ensureLauncher();
+		}, 100);
+		Core.ready(attempt);
+		Core.onBodyMutation(() => {
+			if (onSettingsPage() && !(document.getElementById("ala-settings-nav-section") && document.getElementById("ala-settings-mobile-launcher"))) attempt();
+		});
+		Core.onNavigate(() => {
+			if (onSettingsPage()) return attempt();
+			closePanel();
+			document.getElementById("ala-settings-mobile-launcher")?.remove();
+		});
+	}
+	var modules = [];
+	var defineModule = (name, setting, init, hosts = ["anilist.co"], early = false) => {
+		modules.push({
+			name,
+			setting,
+			init,
+			hosts,
+			early
+		});
+	};
+	var defineFeature = (meta, init) => {
+		Settings.register(meta);
+		defineModule(meta.id, meta.alwaysRun ? null : meta.key, init, meta.hosts, meta.early);
+	};
+	function startModules(early) {
+		for (const m of modules) {
+			if (m.early !== early || !m.hosts.includes(HOST)) continue;
+			if (m.setting && !Settings.get(m.setting)) continue;
+			try {
+				Promise.resolve(m.init()).catch((e) => console.error("[AL-Additions]", m.name, e));
+			} catch (e) {
+				console.error("[AL-Additions]", m.name, e);
+			}
+		}
+	}
+	defineFeature({
+		id: "tagPercent",
+		key: "tagFilterEnabled",
+		section: "AniList Enhancements",
+		early: true,
+		def: false,
+		legacy: ["tagFilterEnabled", "browseTagRankFilterEnabled"],
+		title: "Browse Tag Rank Filter",
+		help: "Automatically apply a minimum tag-rank percentage when you search with a tag or genre.",
+		options: [{
+			key: "tagPercentage",
+			type: "number",
+			def: 50,
+			min: 1,
+			max: 100,
+			legacy: ["tagPercentage", "minimumTagRankPercentage"],
+			title: "Minimum Tag Rank",
+			help: "The minimum percentage a selected tag must meet. For example, 50 means the tag must be present on at least half of the relevant titles."
+		}]
+	}, () => {
+		const PARAM = "minimumTagRank";
+		const VALUE = String(Settings.get("tagPercentage"));
+		const isTarget = () => /^\/search\/(anime|manga)\/?$/.test(location.pathname);
+		const hasSelection = (url) => [...url.searchParams].some(([k, v]) => k !== PARAM && /genre|tag/i.test(k) && v.trim() !== "");
+		let fixing = false;
+		function apply(initial) {
+			if (fixing || !isTarget()) return;
+			const u = new URL(location.href);
+			if (!hasSelection(u) || u.searchParams.get(PARAM) === VALUE) return;
+			u.searchParams.set(PARAM, VALUE);
+			fixing = true;
+			try {
+				if (initial) location.replace(u.toString());
+				else {
+					history.replaceState(history.state, document.title, u.toString());
+					window.dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
+				}
+			} finally {
+				fixing = false;
+			}
+		}
+		apply(true);
+		Core.onNavigate(() => apply(false));
+	});
+	defineFeature({
+		id: "removeTitle",
+		key: "linkShortenerEnabled",
+		section: "AniList Enhancements",
+		def: false,
+		legacy: [
+			"linkShortenerEnabled",
+			"shortAniListUrlsEnabled",
+			"shortAniListUrls"
+		],
+		title: "Short AniList URLs",
+		help: "Remove the title slug from AniList anime, manga, staff, and character URLs."
+	}, () => {
+		const SLUG_HREF = /^(?:https:\/\/anilist\.co)?\/(?:manga|anime|staff|character)\/\d{1,10}\/./;
+		const strip = (s) => s.replace(/(\/\d{1,10}\/)[^?#]*/, "$1");
+		function fixLocation() {
+			if (!/anilist\.co\/(manga|anime|staff|character)\//.test(location.href) || !/\/\d{1,10}\/./.test(location.href)) return;
+			const cur = location.pathname + location.search + location.hash;
+			const next = strip(cur.replace(/^https:\/\/anilist\.co/, ""));
+			if (cur !== next) Core.silently(() => history.replaceState(history.state, "", next));
+		}
+		function fixLinks(nodes) {
+			for (const node of Array.from(nodes)) {
+				if (node.nodeType !== 1) continue;
+				const el = node;
+				const links = el.matches("a[href]") ? [el] : el.querySelectorAll("a[href]");
+				for (const a of links) {
+					const href = a.getAttribute("href");
+					if (href && SLUG_HREF.test(href)) a.setAttribute("href", strip(href));
+				}
+			}
+		}
+		fixLocation();
+		Core.onNavigate(fixLocation);
+		Core.onBodyMutation((muts) => {
+			for (const m of muts) if (m.addedNodes.length) fixLinks(m.addedNodes);
+		});
+		Core.ready(() => fixLinks([document.body]));
+	});
+	defineFeature({
+		id: "banner",
+		key: "bannerEnabled",
+		section: "External Links & Downloads",
+		def: false,
+		legacy: [
+			"bannerEnabled",
+			"bannerDownloadEnabled",
+			"bannerDownloaderEnabled"
+		],
+		title: "Anime/Manga Banner Downloader",
+		help: "Add a button for downloading the AniList banner image.",
+		options: [{
+			key: "bannerProfiles",
+			type: "toggle",
+			def: false,
+			title: "User Profile Banners",
+			help: "Also show the download button on user profile banners (it is always shown on anime and manga pages)."
+		}]
+	}, () => {
+		addStyle("ala-banner-style", `
+      .banner{position:relative}
+      .ala-banner-dl{position:absolute;right:12px;bottom:12px;z-index:5;display:inline-flex;align-items:center;justify-content:center;height:34px;min-width:34px;padding:0 8px;border:0;border-radius:17px;background:transparent;color:rgba(255,255,255,.8);font-family:inherit;font-size:12px;font-weight:600;line-height:1;cursor:pointer;overflow:hidden;-webkit-tap-highlight-color:transparent;transition:background .15s,color .15s}
+      .ala-banner-dl[hidden]{display:none}
+      .ala-banner-ico{display:inline-flex;filter:drop-shadow(0 1px 3px rgba(0,0,0,.7))}
+      .ala-banner-lbl{max-width:0;overflow:hidden;white-space:nowrap;transition:max-width .2s ease,margin-left .2s ease}
+      .ala-banner-dl:hover,.ala-banner-dl:focus-visible{background:rgb(var(--color-blue));color:#fff}
+      .ala-banner-dl:hover .ala-banner-ico,.ala-banner-dl:focus-visible .ala-banner-ico,.ala-banner-dl.is-done .ala-banner-ico{filter:none}
+      .ala-banner-dl:focus-visible{outline:2px solid #fff;outline-offset:2px}
+      .ala-banner-dl.is-done,.ala-banner-dl.is-done:hover{background:rgb(var(--color-green));color:#fff}
+      .ala-banner-dl.is-done .ala-banner-lbl{max-width:130px;margin-left:7px}
+      @media (hover:hover){.ala-banner-dl:hover .ala-banner-lbl,.ala-banner-dl:focus-visible .ala-banner-lbl{max-width:130px;margin-left:7px}}
+      @media (pointer:coarse){.ala-banner-dl{right:8px;bottom:8px;height:40px;min-width:40px;border-radius:20px}}
+      @media (prefers-reduced-motion:reduce){.ala-banner-lbl{transition:none}}`);
+		const bannerUrl = (banner) => (banner.style.backgroundImage || getComputedStyle(banner).backgroundImage).match(/url\((['"]?)(.*?)\1\)/)?.[2] || null;
+		const bannerAllowed = () => !!mediaRoute() || /^\/user\//.test(location.pathname) && Settings.get("bannerProfiles");
+		function download(onSaved) {
+			const banner = document.querySelector(".banner");
+			const url = banner && bannerAllowed() && bannerUrl(banner);
+			if (!url) return;
+			const ext = (url.match(/\.(jpg|jpeg|png|webp)(?:\?|$)/i)?.[1] || "jpg").toLowerCase();
+			const name = `anilist-banner-${mediaRoute()?.id || location.pathname.split("/")[2] || "anilist"}.${ext}`;
+			const fallback = () => {
+				openTab(url);
+				onSaved?.();
+			};
+			if (typeof _GM_download === "function") try {
+				_GM_download({
+					url,
+					name,
+					saveAs: false,
+					onload: () => onSaved?.(),
+					onerror: fallback
+				});
+				return;
+			} catch (_) {}
+			fallback();
+		}
+		function createButton() {
+			const btn = document.createElement("button");
+			btn.type = "button";
+			btn.className = "ala-banner-dl";
+			btn.title = "Download banner image";
+			btn.setAttribute("aria-label", "Download banner image");
+			btn.innerHTML = `<span class="ala-banner-ico">${icon("download", 18)}</span><span class="ala-banner-lbl">Download banner</span>`;
+			const ico = btn.firstElementChild;
+			const lbl = btn.lastElementChild;
+			btn.addEventListener("click", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				download(() => {
+					btn.classList.add("is-done");
+					ico.innerHTML = icon("check", 18);
+					lbl.textContent = "Saved";
+					setTimeout(() => {
+						btn.classList.remove("is-done");
+						ico.innerHTML = icon("download", 18);
+						lbl.textContent = "Download banner";
+					}, 1600);
+				});
+			});
+			return btn;
+		}
+		function scan() {
+			const banner = document.querySelector(".banner");
+			if (!banner) return;
+			let btn = banner.querySelector(".ala-banner-dl");
+			const show = bannerAllowed() && !!bannerUrl(banner);
+			if (!btn && !show) return;
+			if (!btn) {
+				btn = createButton();
+				banner.appendChild(btn);
+			}
+			btn.hidden = !show;
+		}
+		const scanSoon = debounce(scan, 150);
+		Core.ready(scan);
+		Core.onNavigate(() => setTimeout(scan, 300));
+		Core.onBodyMutation(scanSoon);
+	});
+	defineFeature({
+		id: "nyaa",
+		key: "nyaaEnabled",
+		section: "External Links & Downloads",
+		def: false,
+		legacy: [
+			"nyaaEnabled",
+			"malNyaaLinksEnabled",
+			"malNyaaEnabled"
+		],
+		title: "MyAnimeList & Nyaa Links",
+		help: "Show a MyAnimeList link, with Nyaa search available by Ctrl/Cmd-click on desktop or long-press on mobile.",
+		options: [{
+			key: "nyaaProviders",
+			type: "list",
+			def: ["SubsPlease", "ToonsHub"],
+			legacy: ["nyaaProviders", "nyaaSearchGroups"],
+			title: "Nyaa Search Providers",
+			help: "Comma-separated provider names to include in Nyaa searches. Defaults to SubsPlease and ToonsHub."
+		}]
+	}, () => {
+		const ID = "ala-find-on-nyaa";
+		const TITLE_SEL = ".page-content .header .content > h1";
+		const ICON = icon("external", 17);
+		addStyle("ala-nyaa-style", `#${ID}{margin-left:10px;display:inline-flex;align-items:center;vertical-align:middle;color:rgb(var(--color-text-lighter));opacity:.8;transition:opacity .15s,transform .15s}#${ID}:hover{opacity:1;color:rgb(var(--color-blue));transform:scale(1.1)}`);
+		const nyaaUrl = (title) => {
+			const q = title.trim().replace(/[^a-zA-Z0-9]+/g, "+").replace(/^\++|\++$/g, "");
+			const frag = Settings.get("nyaaProviders").map(encodeURIComponent).join("&text=");
+			return `https://nyaa.si/?f=0&c=1_2&s=seeders&o=desc&q=${encodeURI(q)}#:~:text=${frag}`;
+		};
+		function attach(h1, route) {
+			const a = document.createElement("a");
+			a.id = ID;
+			a.href = "#";
+			a.title = "Open on MAL (Ctrl/Cmd+click or long-press: search Nyaa)";
+			a.setAttribute("aria-label", "Open on MAL; long-press to search Nyaa");
+			a.innerHTML = ICON;
+			const titleText = () => [...h1.childNodes].filter((n) => n !== a).map((n) => n.textContent).join("");
+			const searchNyaa = () => openTab(nyaaUrl(titleText()));
+			MediaData.get(route.id, route.type);
+			let timer = null;
+			let longPressed = false;
+			let sx = 0;
+			let sy = 0;
+			const cancel = () => {
+				if (timer) clearTimeout(timer);
+				timer = null;
+			};
+			a.addEventListener("touchstart", (e) => {
+				if (e.touches.length !== 1) return;
+				sx = e.touches[0].clientX;
+				sy = e.touches[0].clientY;
+				longPressed = false;
+				cancel();
+				timer = setTimeout(() => {
+					timer = null;
+					longPressed = true;
+					searchNyaa();
+					setTimeout(() => {
+						longPressed = false;
+					}, 800);
+				}, 550);
+			}, { passive: true });
+			a.addEventListener("touchmove", (e) => {
+				if (timer === null || !e.touches.length) return;
+				if (Math.abs(e.touches[0].clientX - sx) > 12 || Math.abs(e.touches[0].clientY - sy) > 12) cancel();
+			}, { passive: true });
+			a.addEventListener("touchend", cancel, { passive: true });
+			a.addEventListener("touchcancel", cancel, { passive: true });
+			a.addEventListener("contextmenu", (e) => {
+				if (longPressed) e.preventDefault();
+			});
+			a.addEventListener("click", async (e) => {
+				e.preventDefault();
+				if (longPressed) {
+					longPressed = false;
+					e.stopPropagation();
+					return;
+				}
+				const w = window.open("about:blank", "_blank");
+				let target = nyaaUrl(titleText());
+				if (!e.ctrlKey && !e.metaKey) {
+					const media = await MediaData.get(route.id, route.type);
+					if (media?.idMal) target = `https://myanimelist.net/${route.kind}/${media.idMal}`;
+				}
+				if (w) {
+					w.opener = null;
+					w.location.href = target;
+				} else openTab(target);
+			});
+			h1.appendChild(a);
+		}
+		let token = 0;
+		let placedKey = null;
+		let placing = false;
+		async function place() {
+			const route = mediaRoute();
+			const key = route && `${route.type}:${route.id}`;
+			if (key && key === placedKey && document.getElementById(ID)) return;
+			document.getElementById(ID)?.remove();
+			placedKey = null;
+			if (!route) return;
+			const mine = ++token;
+			placing = true;
+			try {
+				const h1 = await Core.waitForSelector(TITLE_SEL, 8e3);
+				if (h1 && mine === token && mediaRoute()?.id === route.id && !document.getElementById(ID)) {
+					attach(h1, route);
+					placedKey = key;
+				}
+			} finally {
+				if (mine === token) placing = false;
+			}
+		}
+		const repair = debounce(() => {
+			if (placedKey && !placing && !document.getElementById(ID)) place();
+		}, 400);
+		place();
+		Core.onNavigate(place);
+		Core.onBodyMutation(repair);
+	});
+	defineFeature({
+		id: "keyframe",
+		key: "keyframeEnabled",
+		section: "External Links & Downloads",
+		def: false,
+		legacy: ["keyframeEnabled"],
+		title: "Keyframe Staff List Links",
+		help: "Add a button on staff and studio pages that opens the same person or studio on Keyframe Staff List."
+	}, () => {
+		const ID = "ala-keyframe-link";
+		const BASE = "https://keyframe-staff-list.com";
+		const LABEL = "Keyframe Staff List";
+		const SLOT = ".filters";
+		const PATHS = {
+			staff: "person",
+			studio: "studio"
+		};
+		const route = () => {
+			const m = location.pathname.match(/^\/(staff|studio)\/(\d+)(?:\/|$)/);
+			return m ? {
+				kind: m[1],
+				id: m[2]
+			} : null;
+		};
+		addStyle("ala-keyframe-style", `
+      #${ID}{flex:0 0 auto;margin-right:12px;text-decoration:none;color:inherit;cursor:pointer;white-space:nowrap}
+      #${ID}.ala-kf-plain{display:inline-flex;align-items:center;gap:7px;min-height:30px;padding:0 12px;border-radius:4px;background:rgb(var(--color-foreground));font-size:1.2rem;font-weight:500;line-height:1;transition:background .15s,color .15s}
+      #${ID}.ala-kf-plain:hover{background:rgb(var(--color-blue));color:#fff}
+      #${ID} .icon{flex:0 0 auto}`);
+		const copyScope = (from, to) => {
+			for (const at of Array.from(from.attributes)) if (at.name.startsWith("data-v-")) to.setAttribute(at.name, at.value);
+		};
+		function skin(a) {
+			if (!a || a.dataset.kfSkin) return;
+			const ref = a.parentElement?.querySelector(".mini-select");
+			if (!ref) return;
+			a.classList.remove("ala-kf-plain");
+			a.classList.add("mini-select");
+			copyScope(ref, a);
+			const refIcon = ref.querySelector("svg");
+			const refLabel = ref.querySelector(".label");
+			const iconEl = a.querySelector("svg");
+			const labelEl = a.querySelector("span");
+			if (iconEl) {
+				iconEl.classList.add("icon");
+				if (refIcon) copyScope(refIcon, iconEl);
+			}
+			if (labelEl) {
+				labelEl.classList.add("label");
+				if (refLabel) copyScope(refLabel, labelEl);
+			}
+			a.dataset.kfSkin = "1";
+		}
+		function build(r) {
+			const a = document.createElement("a");
+			a.id = ID;
+			a.className = "ala-kf-plain";
+			a.href = `${BASE}/${PATHS[r.kind]}/${r.id}`;
+			a.target = "_blank";
+			a.rel = "noopener noreferrer";
+			a.title = `Open on ${LABEL}`;
+			a.setAttribute("aria-label", `Open on ${LABEL}`);
+			a.innerHTML = `${icon("external", 14)}<span>${LABEL}</span>`;
+			a.addEventListener("click", (e) => e.stopPropagation());
+			return a;
+		}
+		let token = 0;
+		let placedKey = null;
+		let placing = false;
+		async function place() {
+			const r = route();
+			const key = r && `${r.kind}:${r.id}`;
+			if (key && key === placedKey && document.getElementById(ID)) return;
+			document.getElementById(ID)?.remove();
+			placedKey = null;
+			if (!r) return;
+			const mine = ++token;
+			placing = true;
+			try {
+				const row = await Core.waitForSelector(SLOT, 8e3);
+				const now = route();
+				if (row && mine === token && now && now.kind === r.kind && now.id === r.id && !document.getElementById(ID)) {
+					const a = build(r);
+					row.insertBefore(a, row.firstChild);
+					skin(a);
+					placedKey = key;
+				}
+			} finally {
+				if (mine === token) placing = false;
+			}
+		}
+		const repair = debounce(() => {
+			if (!route() || placing) return;
+			const a = document.getElementById(ID);
+			if (!a) {
+				placedKey = null;
+				place();
+			} else skin(a);
+		}, 400);
+		place();
+		Core.onNavigate(place);
+		Core.onBodyMutation(repair);
+	});
+	function parseLatest(value) {
+		if (value == null) return null;
+		const s = String(value).trim();
+		if (!s || /^(n\/a|unknown|none)$/i.test(s)) return null;
+		const nums = [...s.matchAll(/(?:^|[^\d])(?:v\d+[ ._-]*)?c?\s*(\d+(?:\.\d+)?)/gi)].map((m) => Number(m[1])).filter(Number.isFinite);
+		if (nums.length) return Math.max(...nums);
+		return Number(s.replace(/,/g, "").match(/\d+(?:\.\d+)?/)?.[0]) || null;
+	}
+	async function mangaUpdates(title) {
+		const search = await gm.json("https://api.mangaupdates.com/v1/series/search", {
+			method: "POST",
+			anonymous: true,
+			headers: {
+				"Content-Type": "application/json",
+				Accept: "application/json"
+			},
+			data: JSON.stringify({
+				search: title,
+				stype: "title",
+				perpage: 8
+			})
+		});
+		const best = bestMatch(Array.isArray(search?.results) ? search.results : [], title, (r) => r?.hit_title || r?.record?.title);
+		if (!best) return null;
+		const rec = best.record || {};
+		let latest = parseLatest(rec.latest_chapter);
+		const id = rec.series_id || rec.id || rec.seriesId || String(rec.url || "").match(/\/series\/(\d+)/)?.[1];
+		if (latest == null && id) latest = await tryOr(async () => {
+			const d = await gm.json(`https://api.mangaupdates.com/v1/series/${encodeURIComponent(id)}`, {
+				anonymous: true,
+				headers: { Accept: "application/json" }
+			});
+			return parseLatest(d?.latest_chapter ?? d?.record?.latest_chapter);
+		});
+		if (latest == null && rec.url) latest = await tryOr(async () => {
+			const m = (await gm.text(rec.url, { anonymous: true })).match(/Latest\s+Chapter[\s\S]{0,500}?\b(?:c\s*)?(\d+(?:\.\d+)?)/i);
+			return m ? Number(m[1]) : null;
+		});
+		return latest == null ? null : Math.floor(latest);
+	}
+	async function novelUpdates(title) {
+		const html = await gm.text(`https://www.novelupdates.com/?s=${encodeURIComponent(title)}&post_type=series`, { anonymous: true });
+		const doc = new DOMParser().parseFromString(html, "text/html");
+		const seen = new Set();
+		const cands = [];
+		for (const a of doc.querySelectorAll("a[href*=\"/series/\"]")) {
+			const href = new URL(a.getAttribute("href") || "", "https://www.novelupdates.com/").href;
+			const text = clean(a.textContent);
+			if (text && !seen.has(href)) {
+				seen.add(href);
+				cands.push({
+					href,
+					text
+				});
+			}
+		}
+		const best = bestMatch(cands, title, (c) => c.text);
+		if (!best) return null;
+		const body = new DOMParser().parseFromString(await gm.text(best.href, { anonymous: true }), "text/html").body?.textContent || "";
+		let latest = null;
+		const at = body.search(/Latest\s+Release/i);
+		if (at >= 0) {
+			const hits = [...body.slice(at, at + 5e3).matchAll(/(?:^|\s)(?:v\d+[ ._-]*)?c\s*(\d+(?:\.\d+)?)/gi)].slice(0, 30).map((m) => Number(m[1])).filter(Number.isFinite);
+			if (hits.length) latest = Math.max(...hits);
+		}
+		if (latest == null) {
+			const m = body.slice(0, 12e3).match(/(?:Status in COO|Chapters)[\s\S]{0,500}?\b(\d+(?:\.\d+)?)\s+Chapters?/i);
+			if (m) latest = Number(m[1]);
+		}
+		return latest != null && Number.isFinite(latest) ? Math.floor(latest) : null;
+	}
+	var lookup = memo((kind, title) => kind === "NU" ? novelUpdates(title) : mangaUpdates(title), { ttl: 18e5 });
+	async function externalReleased(info) {
+		const kind = info?.format === "NOVEL" ? "NU" : "MU";
+		const titles = [...new Set([
+			info?.title?.userPreferred,
+			info?.title?.romaji,
+			info?.title?.english
+		].filter(Boolean))];
+		for (const t of titles) {
+			const n = await tryOr(() => lookup(`${kind}:${normTitle(t)}`, kind, t));
+			if (n != null) return n;
+		}
+		return null;
+	}
+	defineFeature({
+		id: "mediaInfo",
+		key: "mediaInfoEnabled",
+		section: "AniList Enhancements",
+		def: false,
+		legacy: ["mediaInfoEnabled", "mediaListEditorEnabled"],
+		title: "List Score & Progress Editor",
+		help: "Show your score and episode/chapter progress controls on anime and manga pages."
+	}, () => {
+		const ID = "ala-media-info";
+		addStyle("ala-media-info-style", `
+      #${ID}{box-sizing:border-box;width:100%;max-width:100%;margin:0 0 12px;padding:14px 15px 15px;border-radius:3px;background:rgb(var(--color-foreground));color:rgb(var(--color-text));font-size:1.3rem;line-height:1.4;overflow:hidden}
+      #${ID} *{box-sizing:border-box}
+      #${ID} :focus-visible{outline:2px solid rgb(var(--color-blue));outline-offset:2px}
+      #${ID} .ala-mi-fields{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:12px}
+      #${ID} .ala-mi-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+      #${ID} .ala-mi-label{color:rgb(var(--color-text-lighter));font-size:1.2rem}
+      #${ID} .ala-mi-box{display:flex;align-items:stretch;height:38px;border-radius:3px;background:rgb(var(--color-background));box-shadow:inset 0 0 0 1px transparent;overflow:hidden;transition:box-shadow .15s}
+      #${ID} .ala-mi-box:hover{box-shadow:inset 0 0 0 1px rgba(var(--color-blue),.4)}
+      #${ID} .ala-mi-box:focus-within{box-shadow:inset 0 0 0 1px rgb(var(--color-blue))}
+      #${ID} input{flex:1 1 auto;width:100%;min-width:0;height:100%;margin:0;padding:0 4px;border:0;outline:none;background:transparent;color:rgb(var(--color-text));font:inherit;font-size:1.5rem;text-align:center;-moz-appearance:textfield}
+      #${ID} input::placeholder{color:rgb(var(--color-text-lighter))}
+      #${ID} input:focus::placeholder{color:transparent}
+      #${ID} input::-webkit-outer-spin-button,#${ID} input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+      #${ID} .ala-mi-step{flex:0 0 34px;display:flex;align-items:center;justify-content:center;padding:0;border:0;background:transparent;color:rgb(var(--color-text-lighter));font:inherit;font-size:1.8rem;line-height:1;cursor:pointer;transition:color .15s}
+      #${ID} .ala-mi-step:hover{color:rgb(var(--color-blue))}
+      #${ID} .ala-mi-step:active{color:rgb(var(--color-text))}
+      #${ID} .ala-mi-sub{min-height:16px;overflow:hidden;color:rgb(var(--color-text-lighter));font-size:1.15rem;white-space:nowrap;text-overflow:ellipsis}
+      #${ID} .ala-mi-sub b{color:rgb(var(--color-text));font-weight:inherit}
+      #${ID} .ala-mi-bar{position:relative;height:3px;margin:13px 0 14px;border-radius:2px;background:rgb(var(--color-background));overflow:hidden}
+      #${ID} .ala-mi-bar[hidden]{display:none}
+      #${ID} .ala-mi-aired,#${ID} .ala-mi-done{position:absolute;top:0;bottom:0;left:0;width:0;border-radius:2px;transition:width .2s ease}
+      #${ID} .ala-mi-aired{background:rgba(var(--color-blue),.3)}
+      #${ID} .ala-mi-done{background:rgb(var(--color-blue))}
+      #${ID} .ala-mi-save{display:block;width:100%;height:36px;padding:0;border:0;border-radius:4px;background:rgb(var(--color-blue));color:rgb(var(--color-white,255,255,255));font:inherit;font-size:1.4rem;cursor:pointer;transition:filter .15s,opacity .15s,background .2s,color .2s}
+      #${ID} .ala-mi-save:hover:not(:disabled){filter:brightness(1.1)}
+      #${ID} .ala-mi-save:disabled{opacity:.45;cursor:default}
+      #${ID} .ala-mi-save.is-saving,#${ID} .ala-mi-save.is-saving:disabled{opacity:.7;cursor:wait}
+      #${ID} .ala-mi-save.is-saved,#${ID} .ala-mi-save.is-saved:disabled{background:rgb(var(--color-green,76,175,80));color:rgb(var(--color-white,255,255,255));opacity:1;cursor:default}
+      @media (pointer:coarse){#${ID} .ala-mi-box{height:42px}#${ID} .ala-mi-step{flex-basis:40px}#${ID} input{font-size:16px}#${ID} .ala-mi-save{height:40px}}
+      @media (prefers-reduced-motion:reduce){#${ID} .ala-mi-aired,#${ID} .ala-mi-done,#${ID} .ala-mi-save{transition:none}}`);
+		const maxOf = (info, type) => {
+			const n = Math.floor(Number(type === "ANIME" ? info?.episodes : info?.chapters));
+			return n > 0 ? n : null;
+		};
+		function airedEpisodes(info) {
+			const next = Number(info?.nextAiringEpisode?.episode);
+			if (Number.isFinite(next) && next > 0) return Math.max(0, Math.floor(next) - 1);
+			if (info?.status === "NOT_YET_RELEASED") return 0;
+			return info?.status === "FINISHED" ? maxOf(info, "ANIME") : null;
+		}
+		function findSpot() {
+			const el = document.querySelector(".sidebar > .data");
+			return el?.parentElement && el.parentElement !== document.body ? {
+				parent: el.parentElement,
+				before: el
+			} : null;
+		}
+		const scoreStep = (f) => f === "POINT_10_DECIMAL" ? "0.1" : "1";
+		const scoreMax = (f) => ({
+			POINT_100: 100,
+			POINT_5: 5,
+			POINT_3: 3
+		})[f || ""] || 10;
+		const formatScore = (raw, f) => {
+			const n = Number(raw);
+			return !Number.isFinite(n) || n <= 0 ? "" : f === "POINT_10_DECIMAL" ? n.toFixed(1) : String(n);
+		};
+		const today = () => {
+			const d = new Date();
+			return {
+				year: d.getFullYear(),
+				month: d.getMonth() + 1,
+				day: d.getDate()
+			};
+		};
+		const scoreFormat = async () => (await tryOr(() => AniList.viewer()))?.scoreFormat || null;
+		let shown = null;
+		let gen = 0;
+		let rendering = false;
+		let rerender = false;
+		let saving = false;
+		let routeAt = Date.now();
+		let timer = 0;
+		let retry = {
+			key: null,
+			at: 0,
+			count: 0
+		};
+		const MAX_FAILURES = 3;
+		const panel = () => document.getElementById(ID);
+		const schedule = (ms = 300) => {
+			clearTimeout(timer);
+			timer = setTimeout(() => render(), ms);
+		};
+		function renderConnect(key) {
+			const spot = findSpot();
+			if (!spot) return void schedule(800);
+			const box = document.createElement("div");
+			box.id = ID;
+			box.dataset.mode = "connect";
+			box.innerHTML = `<div style="margin-bottom:10px;color:rgb(var(--color-text-lighter))">Connect AniList to edit your score and progress here.</div><button class="ala-mi-save" type="button">Connect AniList</button>`;
+			box.querySelector("button").addEventListener("click", alConnect);
+			panel()?.remove();
+			spot.parent.insertBefore(box, spot.before);
+			shown = key;
+		}
+		function changeProgress(delta, input, limit) {
+			const next = Number(input.value) + delta;
+			if (!Number.isInteger(next) || next < 0 || limit !== null && next > limit) return;
+			input.value = String(next);
+		}
+		async function save(media, info, scoreInput, progressInput) {
+			if (saving) return null;
+			const fmt = await scoreFormat();
+			const max = maxOf(info, media.type);
+			const scoreText = scoreInput.value.trim();
+			const score = scoreText === "" ? 0 : Number(scoreText);
+			let progress = Number(progressInput.value);
+			if (!Number.isFinite(score) || score < 0 || score > scoreMax(fmt)) {
+				scoreInput.focus();
+				return null;
+			}
+			if (!Number.isInteger(progress) || progress < 0) {
+				progressInput.focus();
+				return null;
+			}
+			if (max !== null) progress = Math.min(progress, max);
+			progressInput.value = String(progress);
+			const prev = info.mediaListEntry || {};
+			const finishNow = max !== null && progress >= max && (prev.status !== "COMPLETED" || !prev.completedAt?.year);
+			const isStarting = (!prev.status || prev.status === "PLANNING") && progress > 0;
+			const status = finishNow ? "COMPLETED" : isStarting ? "CURRENT" : void 0;
+			saving = true;
+			try {
+				const entry = await MediaData.save(media.id, media.type, {
+					score,
+					progress,
+					status,
+					completedAt: finishNow ? today() : void 0
+				});
+				if (!entry) throw new Error("AniList did not return the updated entry");
+				info.mediaListEntry = entry;
+				return entry;
+			} catch (e) {
+				console.warn("[AL-Additions] Media list save failed:", e);
+				return false;
+			} finally {
+				saving = false;
+			}
+		}
+		async function render(force = false) {
+			const route = mediaRoute();
+			if (!route) {
+				shown = null;
+				panel()?.remove();
+				return;
+			}
+			const key = `${route.type}:${route.id}`;
+			if (rendering) {
+				if (force) rerender = true;
+				return;
+			}
+			if (saving && !force) return;
+			if (!force && shown === key && panel()) return;
+			if (!force && retry.key === key && (retry.count >= MAX_FAILURES || Date.now() < retry.at)) return;
+			if (!findSpot()) {
+				if (Date.now() - routeAt < 15e3) schedule(800);
+				return;
+			}
+			if (!store.get("al_token", null)) return renderConnect(key);
+			const g = gen;
+			const stale = () => g !== gen || mediaRoute()?.id !== route.id;
+			rendering = true;
+			try {
+				const info = await MediaData.get(route.id, route.type);
+				if (stale()) return;
+				if (!info) {
+					retry = {
+						key,
+						at: Date.now() + 15e3,
+						count: retry.key === key ? retry.count + 1 : 1
+					};
+					if (retry.count < MAX_FAILURES) schedule(15500);
+					return;
+				}
+				const fmt = await scoreFormat();
+				if (stale()) return;
+				const spot = findSpot();
+				if (!spot) {
+					schedule(800);
+					return;
+				}
+				const entry = info.mediaListEntry || {
+					score: 0,
+					progress: 0
+				};
+				const max = maxOf(info, route.type);
+				const anime = route.type === "ANIME";
+				const progress = Number.isFinite(Number(entry.progress)) ? Number(entry.progress) : 0;
+				const label = anime ? "Episode" : "Chapter";
+				const word = anime ? "aired" : "released";
+				const scoreTop = scoreMax(fmt);
+				let released = anime ? airedEpisodes(info) : null;
+				let lookupPending = !anime;
+				const box = document.createElement("div");
+				box.id = ID;
+				box.innerHTML = `
+          <div class="ala-mi-fields">
+            <div class="ala-mi-field">
+              <span class="ala-mi-label">Score</span>
+              <div class="ala-mi-box"><input class="ala-mi-score-input" type="number" min="0" max="${scoreTop}" step="${scoreStep(fmt)}" value="${formatScore(entry.score, fmt)}" placeholder="—" inputmode="decimal" aria-label="Score"></div>
+              <span class="ala-mi-sub">out of ${scoreTop}</span>
+            </div>
+            <div class="ala-mi-field">
+              <span class="ala-mi-label">${label}</span>
+              <div class="ala-mi-box">
+                <button class="ala-mi-step ala-mi-minus" type="button" aria-label="Decrease">−</button>
+                <input class="ala-mi-progress-input" type="number" min="0"${max !== null ? ` max="${max}"` : ""} step="1" value="${progress}" inputmode="numeric" aria-label="${label} progress">
+                <button class="ala-mi-step ala-mi-plus" type="button" aria-label="Increase">+</button>
+              </div>
+              <span class="ala-mi-sub ala-mi-prog-sub"></span>
+            </div>
+          </div>
+          <div class="ala-mi-bar"><div class="ala-mi-aired"></div><div class="ala-mi-done"></div></div>
+          <button class="ala-mi-save" type="button" disabled>Save</button>`;
+				const scoreInput = box.querySelector(".ala-mi-score-input");
+				const progressInput = box.querySelector(".ala-mi-progress-input");
+				const saveBtn = box.querySelector(".ala-mi-save");
+				const sub = box.querySelector(".ala-mi-prog-sub");
+				const bar = box.querySelector(".ala-mi-bar");
+				const doneFill = box.querySelector(".ala-mi-done");
+				const airedFill = box.querySelector(".ala-mi-aired");
+				const limit = () => max !== null ? max : released;
+				let startScore = scoreInput.value.trim();
+				let startProgress = progressInput.value;
+				let savedTimer = 0;
+				let failedTimer = 0;
+				function clearSavedState() {
+					if (savedTimer) {
+						clearTimeout(savedTimer);
+						savedTimer = 0;
+					}
+					if (failedTimer) {
+						clearTimeout(failedTimer);
+						failedTimer = 0;
+					}
+					saveBtn.classList.remove("is-saved", "is-saving");
+					if (saveBtn.textContent === "Saved" || saveBtn.textContent === "Saving..." || saveBtn.textContent === "Failed") saveBtn.textContent = "Save";
+				}
+				function paint() {
+					const typed = Number(progressInput.value);
+					const watched = Number.isFinite(typed) && typed > 0 ? typed : 0;
+					sub.innerHTML = `of <b>${max !== null ? max : "—"}</b>` + (released != null ? ` · <b>${released}</b> ${word}` : lookupPending ? " · …" : "");
+					const total = limit();
+					bar.hidden = !(total && total > 0);
+					if (total && total > 0) {
+						doneFill.style.width = Math.min(100, watched / total * 100) + "%";
+						airedFill.style.width = released != null ? Math.min(100, released / total * 100) + "%" : "0%";
+					}
+					const isDirty = scoreInput.value.trim() !== startScore || progressInput.value !== startProgress;
+					if (savedTimer && isDirty) clearSavedState();
+					saveBtn.disabled = saving || Boolean(savedTimer) || !isDirty;
+				}
+				saveBtn.addEventListener("click", async () => {
+					if (saving || saveBtn.disabled) return;
+					clearSavedState();
+					saveBtn.textContent = "Saving...";
+					saveBtn.classList.add("is-saving");
+					saveBtn.disabled = true;
+					let res = null;
+					try {
+						res = await save(route, info, scoreInput, progressInput);
+					} finally {
+						saveBtn.classList.remove("is-saving");
+					}
+					if (!box.isConnected) return;
+					if (res && res !== false) {
+						scoreInput.value = formatScore(res.score, fmt);
+						const nextProg = Number(res.progress);
+						progressInput.value = Number.isFinite(nextProg) ? String(nextProg) : progressInput.value;
+						startScore = scoreInput.value.trim();
+						startProgress = progressInput.value;
+						saveBtn.classList.add("is-saved");
+						saveBtn.textContent = "Saved";
+						saveBtn.disabled = true;
+						savedTimer = setTimeout(() => {
+							savedTimer = 0;
+							if (!box.isConnected) return;
+							saveBtn.classList.remove("is-saved");
+							saveBtn.textContent = "Save";
+							paint();
+						}, 1800);
+						paint();
+					} else if (res === false) {
+						saveBtn.textContent = "Failed";
+						saveBtn.disabled = false;
+						failedTimer = setTimeout(() => {
+							failedTimer = 0;
+							if (box.isConnected && saveBtn.textContent === "Failed") {
+								saveBtn.textContent = "Save";
+								paint();
+							}
+						}, 2e3);
+					} else {
+						saveBtn.textContent = "Save";
+						paint();
+					}
+				});
+				for (const input of [scoreInput, progressInput]) {
+					input.addEventListener("keydown", (e) => {
+						if (e.key === "Enter") saveBtn.click();
+					});
+					input.addEventListener("input", paint);
+					input.addEventListener("focus", () => {
+						if (input.value) input.select();
+						else if (input.placeholder) {
+							input.dataset.placeholder = input.placeholder;
+							input.placeholder = "";
+						}
+					});
+					input.addEventListener("blur", () => {
+						if (!input.value && input.dataset.placeholder) input.placeholder = input.dataset.placeholder;
+					});
+				}
+				box.querySelector(".ala-mi-minus")?.addEventListener("click", () => {
+					changeProgress(-1, progressInput, limit());
+					paint();
+				});
+				box.querySelector(".ala-mi-plus")?.addEventListener("click", () => {
+					changeProgress(1, progressInput, limit());
+					paint();
+				});
+				panel()?.remove();
+				spot.parent.insertBefore(box, spot.before);
+				shown = key;
+				paint();
+				if (!anime) externalReleased(info).then((n) => {
+					if (stale() || !box.isConnected) return;
+					released = n;
+					lookupPending = false;
+					paint();
+				});
+			} finally {
+				rendering = false;
+				if (rerender) {
+					rerender = false;
+					safe(() => render(true), "media info refresh");
+				}
+			}
+		}
+		window.addEventListener("load", () => schedule(500), { once: true });
+		Core.ready(() => schedule(document.readyState === "complete" ? 500 : 1200));
+		Core.onNavigate(() => {
+			const r = mediaRoute();
+			if (r && shown === `${r.type}:${r.id}` && panel()) return;
+			gen++;
+			shown = null;
+			routeAt = Date.now();
+			retry = {
+				key: null,
+				at: 0,
+				count: 0
+			};
+			panel()?.remove();
+			schedule(1200);
+		});
+		Core.onBodyMutation(() => {
+			const r = mediaRoute();
+			if (!r || panel() || rendering || saving) return;
+			if (retry.key === `${r.type}:${r.id}` && retry.count >= MAX_FAILURES) return;
+			schedule(500);
+		});
+		window.addEventListener("focus", () => {
+			if (panel()?.dataset.mode === "connect" && store.get("al_token", null)) render(true);
+		});
+	});
+	defineFeature({
+		id: "behindDots",
+		key: "behindDotsEnabled",
+		section: "AniList Enhancements",
+		def: false,
+		legacy: ["behindDotsEnabled", "airingProgressIndicatorEnabled"],
+		title: "Airing Progress Indicator",
+		help: "Show an orange indicator when your watched episode count is behind the number of aired episodes."
+	}, () => {
+		const CLASS = "daiya-behind-dot";
+		const ORANGE = "rgb(255, 152, 0)";
+		const NO_AIRING_TTL = 216e5;
+		const AIRING_GRACE = 3e4;
+		const ERROR_RETRY = 3e5;
+		const PRUNE_AGE = 2592e6;
+		const BATCH = 25;
+		const CONCURRENCY = 4;
+		const OPTIMISTIC_TTL = 2500;
+		const QUERY = "query ($ids: [Int]) { Page(page: 1, perPage: 25) { media(id_in: $ids, type: ANIME) { id status nextAiringEpisode { episode airingAt timeUntilAiring } } } }";
+		addStyle("daiya-behind-dot-css", `
+      .${CLASS}{background:${ORANGE}!important;background-color:${ORANGE}!important;box-shadow:0 0 5px rgba(255,152,0,.85)!important;opacity:1!important}
+      .${CLASS}::before,.${CLASS}::after{background:${ORANGE}!important;background-color:${ORANGE}!important}`);
+		const cacheStore = persistent("daiya-anilist-airing-cache-v5", (d) => {
+			for (const id of Object.keys(d)) if (!(Date.now() - Number(d[id]?.updated) < PRUNE_AGE)) delete d[id];
+		});
+		const cache = cacheStore.data;
+		const pending = new Set();
+		const active = new Set();
+		const timers = new Map();
+		const optimistic = new Map();
+		let running = 0;
+		const onListPage = () => location.pathname.includes("/animelist");
+		const idOf = (entry) => entry.querySelector("a[href*=\"/anime/\"]")?.getAttribute("href")?.match(/\/anime\/(\d+)(?:[/?#]|$)/i)?.[1] || null;
+		const needsFetch = (id) => {
+			const d = cache[id];
+			return !d || !Number.isFinite(d.nextCheck) || Date.now() >= d.nextCheck;
+		};
+		const sectionIsWatching = (wrap) => clean(wrap?.querySelector(".section-name")?.textContent) === "Watching";
+		function watchingEntries() {
+			const out = [];
+			for (const wrap of document.querySelectorAll(".list-wrap")) if (sectionIsWatching(wrap)) out.push(...Array.from(wrap.querySelectorAll(".list-entries .entry")));
+			return out;
+		}
+		function progressOf(entry) {
+			const m = entry.querySelector(".progress")?.textContent?.match(/^\s*(\d+)/) || entry.textContent?.match(/(?:^|\s)(\d+)\s*\/\s*(?:\d+|\?)(?:\s|$)/);
+			return m ? Number(m[1]) : null;
+		}
+		function releasingDot(entry) {
+			const fast = entry.querySelector(".release-status.RELEASING");
+			if (fast) return fast;
+			for (const el of entry.querySelectorAll(".release-status, [class*='release-status']")) {
+				if (/\bRELEASING\b/i.test(typeof el.className === "string" ? el.className : "")) return el;
+				if (/^releasing$/i.test((el.getAttribute("aria-label") || el.getAttribute("title") || "").trim())) return el;
+			}
+			return null;
+		}
+		function updateEntry(entry) {
+			if (!entry || !entry.isConnected) return null;
+			const dot = releasingDot(entry);
+			if (!dot || !sectionIsWatching(entry.closest(".list-wrap"))) return null;
+			const id = idOf(entry);
+			if (!id) return null;
+			const watched = progressOf(entry);
+			if (!Number.isFinite(watched)) {
+				dot.classList.remove(CLASS);
+				return id;
+			}
+			const opt = optimistic.get(id);
+			if (opt) {
+				if (Date.now() >= opt.expiresAt || watched !== null && watched >= opt.target) optimistic.delete(id);
+				else {
+					dot.classList.remove(CLASS);
+					return id;
+				}
+			}
+			const data = cache[id];
+			const behind = !!data && Number.isFinite(data.aired) && watched !== null && watched < data.aired;
+			if (dot.classList.contains(CLASS) !== behind) dot.classList.toggle(CLASS, behind);
+			return id;
+		}
+		function scanAll() {
+			if (!onListPage()) return;
+			const stale = new Set();
+			for (const entry of watchingEntries()) {
+				const id = updateEntry(entry);
+				if (id && needsFetch(id)) stale.add(id);
+			}
+			queueIDs(stale);
+		}
+		function repaint(ids) {
+			for (const entry of watchingEntries()) {
+				const id = idOf(entry);
+				if (id && ids.has(id)) updateEntry(entry);
+			}
+		}
+		function makeEntry(media) {
+			const next = media.nextAiringEpisode;
+			const now = Date.now();
+			const base = {
+				status: media.status || null,
+				updated: now
+			};
+			if (!next || !Number.isFinite(Number(next.episode))) return {
+				...base,
+				aired: null,
+				nextEpisode: null,
+				nextCheck: now + NO_AIRING_TTL
+			};
+			const timeUntil = Number(next.timeUntilAiring);
+			const airingAt = Number(next.airingAt);
+			const nextCheck = Number.isFinite(timeUntil) ? now + Math.max(0, timeUntil) * 1e3 + AIRING_GRACE : Number.isFinite(airingAt) ? airingAt * 1e3 + AIRING_GRACE : now + NO_AIRING_TTL;
+			return {
+				...base,
+				aired: Math.max(0, Math.floor(Number(next.episode)) - 1),
+				nextEpisode: Number(next.episode),
+				nextCheck
+			};
+		}
+		function scheduleRefresh(id, at) {
+			const existing = timers.get(id);
+			if (existing) clearTimeout(existing);
+			timers.delete(id);
+			if (!Number.isFinite(at)) return;
+			const t = setTimeout(() => {
+				timers.delete(id);
+				queueIDs([id]);
+				repaint(new Set([id]));
+			}, Math.min(Math.max(0, at - Date.now()), 2147483647));
+			timers.set(id, t);
+		}
+		async function updateBatch(ids) {
+			const returned = new Set();
+			try {
+				const data = await AniList.query(QUERY, { ids: ids.map(Number) });
+				for (const m of data?.Page?.media || []) {
+					const id = String(m.id);
+					returned.add(id);
+					cache[id] = makeEntry(m);
+					scheduleRefresh(id, cache[id].nextCheck);
+				}
+			} catch (_) {}
+			const retryAt = Date.now() + ERROR_RETRY;
+			for (const id of ids) {
+				if (returned.has(id)) continue;
+				const ex = cache[id];
+				if (ex && Number.isFinite(ex.aired)) ex.nextCheck = retryAt;
+				else cache[id] = {
+					aired: null,
+					nextEpisode: null,
+					status: null,
+					nextCheck: retryAt,
+					updated: Date.now()
+				};
+				scheduleRefresh(id, retryAt);
+			}
+			cacheStore.save();
+			if (returned.size) repaint(returned);
+		}
+		function queueIDs(ids) {
+			for (const raw of ids) {
+				const id = String(raw);
+				if (!active.has(id)) pending.add(id);
+			}
+			while (running < CONCURRENCY && pending.size) {
+				const batch = [];
+				for (const id of pending) {
+					pending.delete(id);
+					active.add(id);
+					batch.push(id);
+					if (batch.length >= BATCH) break;
+				}
+				running++;
+				updateBatch(batch).catch((e) => console.error("[AL-Additions] airing batch", e)).finally(() => {
+					batch.forEach((id) => active.delete(id));
+					running--;
+					queueIDs([]);
+				});
+			}
+		}
+		const dirty = new Set();
+		let fullScan = false;
+		let raf = 0;
+		function flush() {
+			raf = 0;
+			if (!onListPage()) {
+				dirty.clear();
+				fullScan = false;
+				return;
+			}
+			if (fullScan) {
+				fullScan = false;
+				dirty.clear();
+				scanAll();
+				return;
+			}
+			const stale = new Set();
+			for (const entry of dirty) {
+				const id = updateEntry(entry);
+				if (id && needsFetch(id)) stale.add(id);
+			}
+			dirty.clear();
+			queueIDs(stale);
+		}
+		const mark = () => {
+			if (!raf) raf = requestAnimationFrame(flush);
+		};
+		const refresh = debounce(scanAll, 100);
+		Core.onBodyMutation((muts) => {
+			if (!onListPage()) return;
+			for (const m of muts) {
+				const own = (m.target.nodeType === 1 ? m.target : m.target.parentElement)?.closest?.(".entry");
+				if (own) {
+					dirty.add(own);
+					mark();
+				}
+				for (const n of Array.from(m.addedNodes)) {
+					if (n.nodeType !== 1) continue;
+					const el = n;
+					if (el.matches(".entry")) dirty.add(el);
+					else {
+						el.querySelectorAll(".entry").forEach((e) => dirty.add(e));
+						if (el.matches(".list-wrap, .section-name") || el.querySelector(".section-name")) fullScan = true;
+					}
+					mark();
+				}
+			}
+		});
+		Core.onNavigate(() => {
+			if (onListPage()) {
+				fullScan = true;
+				mark();
+				refresh();
+			}
+		});
+		const isIncrease = (el) => {
+			for (let n = el, i = 0; i < 4 && n; i++, n = n.parentElement) {
+				const label = `${n.getAttribute?.("aria-label") || ""} ${n.getAttribute?.("title") || ""}`.trim().toLowerCase();
+				if (/increase|increment|add episode|add chapter|next episode|next chapter/.test(label)) return true;
+				const text = (n.textContent || "").trim();
+				if (text === "+" || text === "+1") return true;
+			}
+			return false;
+		};
+		document.addEventListener("pointerdown", (e) => {
+			if (!(e.target instanceof Element) || !isIncrease(e.target)) return;
+			const entry = e.target.closest(".entry");
+			const dot = entry && releasingDot(entry);
+			if (!dot || !dot.classList.contains(CLASS)) return;
+			const id = idOf(entry);
+			const data = id && cache[id];
+			const watched = progressOf(entry);
+			if (data && Number.isFinite(data.aired) && Number.isFinite(watched) && watched !== null && watched + 1 >= data.aired) {
+				optimistic.set(id, {
+					target: watched + 1,
+					expiresAt: Date.now() + OPTIMISTIC_TTL
+				});
+				dot.classList.remove(CLASS);
+			}
+		}, true);
+		for (const type of [
+			"click",
+			"input",
+			"change"
+		]) document.addEventListener(type, (e) => {
+			if (e.target instanceof Element && e.target.closest(".entry")) refresh();
+		}, true);
+		window.addEventListener("focus", refresh);
+		document.addEventListener("visibilitychange", () => {
+			if (!document.hidden) refresh();
+		});
+		setInterval(scanAll, 6e4);
+		Core.ready(() => {
+			if (onListPage()) {
+				scanAll();
+				setTimeout(scanAll, 500);
+				setTimeout(scanAll, 1500);
+			}
+		});
+	});
+	defineFeature({
+		id: "aniSongs",
+		key: "aniSongsEnabled",
+		section: "AniList Enhancements",
+		def: false,
+		legacy: [
+			"aniSongsEnabled",
+			"animeThemeSongsEnabled",
+			"anisongsEnabled"
+		],
+		title: "Anime Opening & Ending Songs",
+		help: "Show OP/ED theme songs on anime pages."
+	}, () => {
+		const API = "https://api.animethemes.moe/anime";
+		const ROOT = "daiya-anisongs";
+		const TTL = 6048e5;
+		const EMPTY_TTL = 432e5;
+		addStyle("daiya-anisongs-style", `
+      #${ROOT}{width:100%;margin-top:30px}
+      #${ROOT} .daiya-anisongs-columns{display:flex;gap:30px;width:100%}
+      #${ROOT} .daiya-anisongs-group{flex:1 1 0;min-width:0}
+      #${ROOT} h2{margin-top:0}
+      #${ROOT} .daiya-anisong-entry{background:rgb(var(--color-foreground));border-radius:3px;padding:8px 10px;font-size:1.3rem;margin-bottom:10px;color:rgb(var(--color-text))}
+      #${ROOT} .daiya-anisong-entry.has-video{cursor:pointer}
+      #${ROOT} .daiya-anisong-entry.has-video:hover{color:rgb(var(--color-blue));transition:color .15s}
+      #${ROOT} video{display:block;width:100%;max-width:39em;margin-top:10px;cursor:auto}
+      #${ROOT} .daiya-anisongs-empty{text-align:center;opacity:.7;padding:10px}
+      @media (max-width:700px){#${ROOT} .daiya-anisongs-columns{flex-direction:column;gap:10px}}`);
+		const cacheStore = persistent("daiya_anisongs_cache_v6", (d) => {
+			for (const id of Object.keys(d)) if (!(Number(d[id]?.expires) > Date.now())) delete d[id];
+		});
+		const cache = cacheStore.data;
+		const str = (v) => typeof v === "string" ? v.trim() : "";
+		function pickVideo(entries) {
+			let fallback = null;
+			for (const entry of Array.isArray(entries) ? entries : []) for (const video of Array.isArray(entry?.videos) ? entry.videos : []) {
+				const link = str(video?.link);
+				if (!/^https?:\/\//i.test(link)) continue;
+				if (str(video?.source).toUpperCase() === "WEB") return link;
+				fallback = fallback || link;
+			}
+			return fallback;
+		}
+		function parseTheme(theme) {
+			const title = str(theme?.song?.title);
+			if (!title) return null;
+			const seq = Number(theme?.sequence);
+			const sequence = Number.isFinite(seq) && seq >= 1 ? Math.floor(seq) : 1;
+			const artists = (Array.isArray(theme?.song?.artists) ? theme.song.artists : []).map((a) => str(a?.name)).filter(Boolean);
+			const eps = (Array.isArray(theme?.animethemeentries) ? theme.animethemeentries : []).map((e) => str(e?.episodes)).filter(Boolean).join(", ");
+			const group = str(theme?.group);
+			return {
+				sequence,
+				name: `${sequence}. "${title}"` + (artists.length ? ` by ${artists.join(", ")}` : "") + (eps ? ` (${eps.includes("-") ? "eps" : "ep"} ${eps})` : "") + (group && group.toLowerCase().includes("dubbed") ? ` (${group})` : ""),
+				url: pickVideo(theme?.animethemeentries)
+			};
+		}
+		function groupThemes(anime) {
+			const out = {
+				OP: [],
+				ED: []
+			};
+			for (const theme of Array.isArray(anime?.animethemes) ? anime.animethemes : []) {
+				const parsed = parseTheme(theme);
+				const type = str(theme?.type).toUpperCase();
+				if (parsed && out[type]) out[type].push(parsed);
+			}
+			const sort = (a, b) => a.sequence - b.sequence || a.name.localeCompare(b.name);
+			out.OP.sort(sort);
+			out.ED.sort(sort);
+			return out;
+		}
+		const loadThemes = memo(async (id) => {
+			const hit = cache[String(id)];
+			if (hit && hit.expires > Date.now()) return hit.data;
+			const params = new URLSearchParams({
+				"filter[has]": "resources",
+				"filter[site]": "AniList",
+				"filter[external_id]": String(id),
+				include: "animethemes.animethemeentries.videos,animethemes.song,animethemes.song.artists"
+			});
+			const result = await gm.json(`${API}?${params}`, { headers: { Accept: "application/json" } });
+			const data = groupThemes(Array.isArray(result?.anime) ? result.anime[0] : null);
+			const empty = !data.OP.length && !data.ED.length;
+			cache[String(id)] = {
+				expires: Date.now() + (empty ? EMPTY_TTL : TTL),
+				data
+			};
+			cacheStore.save();
+			return data;
+		});
+		function songEl(song) {
+			const el = document.createElement("div");
+			el.className = "daiya-anisong-entry";
+			el.textContent = song.name;
+			const url = song.url;
+			if (!url) return el;
+			el.classList.add("has-video");
+			let video = null;
+			el.addEventListener("click", (e) => {
+				if (e.target instanceof HTMLVideoElement) return;
+				if (video) {
+					video.pause();
+					video.remove();
+					video = null;
+					return;
+				}
+				video = document.createElement("video");
+				video.controls = true;
+				video.preload = "none";
+				video.volume = .4;
+				video.src = url;
+				video.addEventListener("click", (ev) => ev.stopPropagation());
+				el.appendChild(video);
+				video.play().catch(() => {});
+			});
+			return el;
+		}
+		function groupEl(title, songs) {
+			const g = document.createElement("div");
+			g.className = "daiya-anisongs-group";
+			const h = document.createElement("h2");
+			h.textContent = title;
+			g.appendChild(h);
+			if (!songs.length) {
+				const empty = document.createElement("div");
+				empty.className = "daiya-anisongs-empty";
+				empty.textContent = "No songs to show (つ﹏<)･ﾟ｡";
+				g.appendChild(empty);
+			} else songs.forEach((s) => g.appendChild(songEl(s)));
+			return g;
+		}
+		function mount(state, overview) {
+			document.getElementById(ROOT)?.remove();
+			const root = document.createElement("section");
+			root.id = ROOT;
+			root.dataset.animeId = state.id;
+			const cols = document.createElement("div");
+			cols.className = "daiya-anisongs-columns";
+			cols.append(groupEl("Openings", state.themes.OP), groupEl("Endings", state.themes.ED));
+			root.appendChild(cols);
+			overview.appendChild(root);
+		}
+		let cur = null;
+		let backoff = {
+			id: null,
+			until: 0
+		};
+		const animeId = () => {
+			const r = mediaRoute();
+			return r && r.kind === "anime" ? String(r.id) : null;
+		};
+		async function sync() {
+			const id = animeId();
+			if (!id) {
+				document.getElementById(ROOT)?.remove();
+				cur = null;
+				return;
+			}
+			if (cur?.id === id) return;
+			if (backoff.id === id && Date.now() < backoff.until) return;
+			document.getElementById(ROOT)?.remove();
+			const mine = {
+				id,
+				themes: null,
+				busy: true
+			};
+			cur = mine;
+			try {
+				const themes = await loadThemes(id, id);
+				if (cur !== mine) return;
+				if (!themes.OP.length && !themes.ED.length) return;
+				mine.themes = themes;
+				const overview = await Core.waitForSelector(".overview", 1e4);
+				if (cur === mine && overview && animeId() === id) mount(mine, overview);
+			} catch (_) {
+				if (cur === mine) {
+					cur = null;
+					backoff = {
+						id,
+						until: Date.now() + 3e4
+					};
+				}
+			} finally {
+				mine.busy = false;
+			}
+		}
+		function repair() {
+			const id = animeId();
+			if (!id) return;
+			if (cur?.id !== id) return void sync();
+			if (cur.themes && !cur.busy && !document.getElementById(ROOT)) {
+				const overview = document.querySelector(".overview");
+				if (overview) mount(cur, overview);
+			}
+		}
+		Core.ready(sync);
+		Core.onNavigate(sync);
+		Core.onBodyMutation(debounce(repair, 200));
+	});
+	defineFeature({
+		id: "fastLoad",
+		key: "fastLoadEnabled",
+		section: "AniList Enhancements",
+		early: true,
+		def: false,
+		title: "AniList Fast Load",
+		help: "Performance optimizer: lazy media, off-screen row skipping, observer coalescing, safe GraphQL cache/de-duplication with stale fallback, navigation prefetch and early request start."
+	}, () => {
+		const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+		if (win.top !== win.self) return;
+		if (win.__ANILIST_FAST_LOAD__ || win.__ANILIST_FAST_LOAD_V4__) return;
+		win.__ANILIST_FAST_LOAD__ = "0.3.1";
+		const CFG = {
+			lazyMedia: true,
+			rowSkipping: true,
+			coalesceObservers: true,
+			observerBatchMs: 80,
+			fastInnerText: true,
+			memoSelectorProbes: true,
+			blockTierInData: true,
+			tierAssist: true,
+			tierAssistMs: 250,
+			gqlTtl: 15e3,
+			gqlStaleTtl: 3e5,
+			gqlMaxBytes: 41943040,
+			gqlMaxEntryBytes: 16777216,
+			prefetch: true,
+			earlyStart: true,
+			prefetchMaxPerMin: 8,
+			prefetchDwellMs: 140,
+			learnWindowMs: 3e3,
+			learnMaxReqs: 4
+		};
+		const GQL_ORIGIN = "https://graphql.anilist.co";
+		const MEDIA_ORIGIN = "https://s4.anilist.co";
+		const stats = {
+			graphqlRequests: 0,
+			cacheHits: 0,
+			deduped: 0,
+			staleServed: 0,
+			prefetched: 0,
+			earlyStarts: 0,
+			observerBatches: 0,
+			observerRecordsMerged: 0,
+			probesShared: 0,
+			labelsReleased: 0
+		};
+		win.__ALFL_STATS__ = stats;
+		const attempt = (fn) => {
+			try {
+				return fn();
+			} catch {}
+		};
+		const idle = (fn, timeout = 1500) => "requestIdleCallback" in win ? win.requestIdleCallback(fn, { timeout }) : setTimeout(fn, 0);
+		const doc = win.document;
+		attempt(() => {
+			const parent = doc.head || doc.documentElement;
+			for (const [href, cors] of [
+				[GQL_ORIGIN, true],
+				[MEDIA_ORIGIN, false],
+				["https://fonts.googleapis.com", false],
+				["https://fonts.gstatic.com", true]
+			]) {
+				if (parent.querySelector(`link[rel="preconnect"][href="${href}"]`)) continue;
+				const link = doc.createElement("link");
+				link.rel = "preconnect";
+				link.href = href;
+				if (cors) link.crossOrigin = "";
+				parent.appendChild(link);
+			}
+		});
+		const navListeners = [];
+		attempt(() => {
+			const fire = () => navListeners.forEach(attempt);
+			for (const name of ["pushState", "replaceState"]) {
+				const orig = win.history[name];
+				win.history[name] = function(...args) {
+					const r = orig.apply(this, args);
+					fire();
+					return r;
+				};
+			}
+			win.addEventListener("popstate", fire);
+		});
+		function installLazyMedia() {
+			const lazify = (el) => {
+				if (!el || el.nodeType !== 1) return;
+				switch (el.localName) {
+					case "img":
+						if (!el.hasAttribute("loading")) el.loading = "lazy";
+						if (!el.hasAttribute("decoding")) el.decoding = "async";
+						break;
+					case "iframe":
+						if (!el.hasAttribute("loading")) el.loading = "lazy";
+						break;
+					case "video": if (!el.hasAttribute("preload")) el.preload = "metadata";
+				}
+			};
+			const patchCreate = (target) => {
+				if (!target) return;
+				const orig = target.createElement;
+				if (typeof orig !== "function") return;
+				const patched = function(tag, options) {
+					const el = orig.call(this, tag, options);
+					try {
+						lazify(el);
+					} catch {}
+					return el;
+				};
+				try {
+					target.createElement = patched;
+				} catch {
+					try {
+						Object.defineProperty(target, "createElement", {
+							value: patched,
+							writable: true,
+							configurable: true
+						});
+					} catch {}
+				}
+			};
+			patchCreate(win.Document?.prototype);
+			patchCreate(win.HTMLDocument?.prototype);
+			patchCreate(Document.prototype);
+			patchCreate(doc);
+			if (typeof document !== "undefined" && document !== doc) patchCreate(document);
+			const MEDIA_TAG = /<(?:img|iframe|video)[\s>/]/i;
+			const MEDIA_SEL = "img:not([loading]),iframe:not([loading]),video:not([preload])";
+			const lazifyTree = (root) => {
+				if (!root || typeof root.querySelectorAll !== "function") return;
+				lazify(root);
+				for (const el of root.querySelectorAll(MEDIA_SEL)) lazify(el);
+			};
+			const ElementProto = win.Element?.prototype || Element.prototype;
+			attempt(() => {
+				const desc = Object.getOwnPropertyDescriptor(ElementProto, "innerHTML");
+				if (!desc || !desc.set || !desc.configurable) return;
+				Object.defineProperty(ElementProto, "innerHTML", {
+					...desc,
+					set(value) {
+						desc.set.call(this, value);
+						if (typeof value === "string" && MEDIA_TAG.test(value)) attempt(() => lazifyTree(this instanceof win.HTMLTemplateElement ? this.content : this));
+					}
+				});
+			});
+			attempt(() => {
+				const native = ElementProto.insertAdjacentHTML;
+				ElementProto.insertAdjacentHTML = function(position, html) {
+					const r = native.call(this, position, html);
+					if (typeof html === "string" && MEDIA_TAG.test(html)) {
+						const outer = /^(?:beforebegin|afterend)$/i.test(position);
+						attempt(() => lazifyTree(outer ? this.parentNode : this));
+					}
+					return r;
+				};
+			});
+		}
+		const ROW_GROUPS = [
+			{
+				selector: ".medialist .entry.row",
+				h: 56
+			},
+			{
+				selector: ".medialist .entry-card",
+				h: 220
+			},
+			{
+				selector: ".activity-entry",
+				h: 160
+			}
+		];
+		function injectCSS(text) {
+			try {
+				if ("adoptedStyleSheets" in doc && typeof win.CSSStyleSheet !== "undefined") {
+					const sheet = new win.CSSStyleSheet();
+					sheet.replaceSync(text);
+					doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet];
+					return;
+				}
+			} catch {}
+			const style = doc.createElement("style");
+			style.textContent = text;
+			(doc.head || doc.documentElement).appendChild(style);
+		}
+		function installRowSkipping() {
+			injectCSS(`@supports (content-visibility: auto) and (contain-intrinsic-height: auto 1px) { ${ROW_GROUPS.map(({ selector, h }, i) => `
+            ${selector} {
+                content-visibility: auto;
+                contain-intrinsic-height: auto var(--alfast-h${i}, ${h}px);
+                overflow-clip-margin: 16px;
+            }
+            ${selector}:hover,
+            ${selector}:focus-within {
+                content-visibility: visible;
+            }`).join("\n")} }`);
+			const measuredFor = ROW_GROUPS.map(() => "");
+			let timers = [];
+			function measure() {
+				const path = win.location.pathname;
+				const vh = win.innerHeight || doc.documentElement.clientHeight;
+				ROW_GROUPS.forEach(({ selector }, i) => {
+					if (measuredFor[i] === path) return;
+					let nodes;
+					try {
+						nodes = doc.querySelectorAll(selector);
+					} catch {
+						return;
+					}
+					let total = 0;
+					let count = 0;
+					for (const el of nodes) {
+						const r = el.getBoundingClientRect();
+						if (r.top > vh) break;
+						if (r.height > 0 && r.bottom > 0) {
+							total += r.height;
+							if (++count >= 6) break;
+						}
+					}
+					if (!count) return;
+					doc.documentElement.style.setProperty(`--alfast-h${i}`, `${Math.max(1, Math.round(total / count))}px`);
+					measuredFor[i] = path;
+				});
+			}
+			function schedule() {
+				timers.forEach(clearTimeout);
+				timers = [
+					500,
+					1800,
+					4500
+				].map((ms) => setTimeout(() => idle(() => {
+					if (!doc.hidden) measure();
+				}), ms));
+			}
+			navListeners.push(schedule);
+			if (doc.readyState !== "loading") schedule();
+			else doc.addEventListener("DOMContentLoaded", schedule, { once: true });
+			win.addEventListener("load", schedule, { once: true });
+			let resizeTimer = 0;
+			const onResize = () => {
+				clearTimeout(resizeTimer);
+				resizeTimer = setTimeout(() => {
+					measuredFor.fill("");
+					schedule();
+				}, 200);
+			};
+			win.addEventListener("resize", onResize, { passive: true });
+			win.addEventListener("orientationchange", onResize, { passive: true });
+		}
+		function installObserverCoalescing() {
+			const Native = win.MutationObserver;
+			if (typeof Native !== "function") return;
+			const states = new WeakMap();
+			const ignoresRecords = (fn) => {
+				if (typeof fn !== "function" || fn.length !== 0) return false;
+				try {
+					const src = Function.prototype.toString.call(fn);
+					if (/\barguments\b/.test(src)) return false;
+					const params = /^[^(]*\(([^)]*)\)/.exec(src);
+					return !params || params[1].trim() === "";
+				} catch {
+					return false;
+				}
+			};
+			const isPageRoot = (t) => t === doc || t === doc.documentElement || t === doc.body;
+			function schedule(st) {
+				if (st.timer) return;
+				const wait = Math.max(0, st.last + CFG.observerBatchMs - performance.now());
+				st.timer = setTimeout(() => {
+					st.timer = 0;
+					if (!st.queue.length) return;
+					const records = st.queue.splice(0);
+					stats.observerBatches++;
+					stats.observerRecordsMerged += records.length;
+					try {
+						st.callback.call(st.self, records, st.self);
+					} catch (e) {
+						setTimeout(() => {
+							throw e;
+						});
+					}
+					st.last = performance.now();
+				}, wait);
+			}
+			class CoalescedMutationObserver extends Native {
+				constructor(callback) {
+					const st = {
+						callback,
+						eligible: ignoresRecords(callback),
+						on: false,
+						queue: [],
+						timer: 0,
+						last: -Infinity,
+						self: null
+					};
+					super(typeof callback === "function" ? (records) => {
+						if (!st.on) return callback.call(st.self, records, st.self);
+						for (const r of records) st.queue.push(r);
+						schedule(st);
+					} : callback);
+					st.self = this;
+					states.set(this, st);
+				}
+				observe(target, options) {
+					const st = states.get(this);
+					if (st && st.eligible && options && options.subtree && isPageRoot(target)) st.on = true;
+					return super.observe(target, options);
+				}
+				disconnect() {
+					const st = states.get(this);
+					if (st) {
+						st.queue.length = 0;
+						st.on = false;
+					}
+					return super.disconnect();
+				}
+				takeRecords() {
+					const st = states.get(this);
+					const pending = super.takeRecords();
+					return st ? st.queue.splice(0).concat(pending) : pending;
+				}
+			}
+			try {
+				Object.defineProperty(win, "MutationObserver", {
+					value: CoalescedMutationObserver,
+					writable: true,
+					configurable: true
+				});
+			} catch {
+				win.MutationObserver = CoalescedMutationObserver;
+			}
+		}
+		function installFastInnerText() {
+			const proto = win.HTMLElement?.prototype || HTMLElement.prototype;
+			const desc = Object.getOwnPropertyDescriptor(proto, "innerText");
+			if (!desc || !desc.get || !desc.configurable) return;
+			const LEAF = ".score, .value, .type, .percentage";
+			Object.defineProperty(proto, "innerText", {
+				...desc,
+				get() {
+					try {
+						if (this.childElementCount === 0 && this.matches(LEAF)) return (this.textContent || "").replace(/\s+/g, " ").trim();
+					} catch {}
+					return desc.get.call(this);
+				}
+			});
+		}
+		function installProbeMemo() {
+			const ElementProto = win.Element?.prototype || Element.prototype;
+			const native = ElementProto.querySelector;
+			let memo = null;
+			ElementProto.querySelector = function querySelector(sel) {
+				if (typeof sel === "string" && sel.charCodeAt(0) === 46 && sel.startsWith(".medialist.table.POINT_")) {
+					if (!memo) {
+						memo = new WeakMap();
+						queueMicrotask(() => {
+							memo = null;
+						});
+					}
+					let perEl = memo.get(this);
+					if (!perEl) memo.set(this, perEl = new Map());
+					if (perEl.has(sel)) {
+						stats.probesShared++;
+						return perEl.get(sel);
+					}
+					const r = native.call(this, sel);
+					perEl.set(sel, r);
+					return r;
+				}
+				return native.call(this, sel);
+			};
+		}
+		function installTierSupport() {
+			const DATA_VALUE = ".data .data-set .value";
+			const mark = (node) => {
+				if (!node || node.nodeType !== 1) return;
+				if (node.matches?.(DATA_VALUE)) node.dataset.tierModified = "true";
+				if (node.firstElementChild) for (const el of node.querySelectorAll(DATA_VALUE)) el.dataset.tierModified = "true";
+			};
+			const DONE_SCORE = ".medialist .score[data-tier-modified]";
+			const releases = new WeakMap();
+			let sweepTimer = 0;
+			const needsBadge = (el) => {
+				const attr = el.getAttribute("score");
+				if (!attr || !(parseFloat(attr) > 0)) return false;
+				const badge = el.firstElementChild;
+				return !badge || (badge.firstElementChild?.textContent || "").trim() !== attr.trim();
+			};
+			function sweep() {
+				sweepTimer = 0;
+				if (doc.hidden) return;
+				let released = 0;
+				for (const el of doc.querySelectorAll(DONE_SCORE)) {
+					const n = releases.get(el) || 0;
+					if (n >= 2 || !needsBadge(el)) continue;
+					releases.set(el, n + 1);
+					delete el.dataset.tierModified;
+					released++;
+				}
+				if (!released || !doc.body) return;
+				stats.labelsReleased += released;
+				const wake = doc.createComment("");
+				doc.body.appendChild(wake);
+				wake.remove();
+			}
+			const scheduleSweep = () => {
+				if (!sweepTimer) sweepTimer = setTimeout(() => attempt(sweep), CFG.tierAssistMs);
+			};
+			new (win.MutationObserver || MutationObserver)((records) => {
+				if (CFG.blockTierInData) for (const r of records) for (const n of r.addedNodes) try {
+					mark(n);
+				} catch {}
+				if (CFG.tierAssist) scheduleSweep();
+			}).observe(doc, CFG.tierAssist ? {
+				childList: true,
+				subtree: true,
+				attributes: true,
+				attributeFilter: ["score"]
+			} : {
+				childList: true,
+				subtree: true
+			});
+			if (CFG.tierAssist) doc.addEventListener("visibilitychange", () => {
+				if (!doc.hidden) scheduleSweep();
+			});
+			if (CFG.blockTierInData) attempt(() => mark(doc.documentElement));
+		}
+		function installGraphQLLayer() {
+			const nativeFetch = win.fetch.bind(win);
+			const store = new Map();
+			const inflight = new Map();
+			let bytes = 0;
+			let epoch = 0;
+			let pausedUntil = 0;
+			let freshFloor = 0;
+			let prefetching = false;
+			const isGraphQL = (u) => {
+				try {
+					return new URL(u, win.location.href).origin === GQL_ORIGIN;
+				} catch {
+					return false;
+				}
+			};
+			const SKIP_HEADERS = /^(?:content-encoding|content-length|transfer-encoding)$/i;
+			const RATE_HEADERS = /^(?:retry-after|x-ratelimit-.+)$/i;
+			function toResponse(snap, live) {
+				const HeadersCtor = win.Headers || Headers;
+				const ResponseCtor = win.Response || Response;
+				const headers = new HeadersCtor(snap.headers);
+				if (live) {
+					for (const [k, v] of live.headers.entries()) if (RATE_HEADERS.test(k)) headers.set(k, v);
+				}
+				return new ResponseCtor(snap.buf, {
+					status: snap.status,
+					statusText: snap.statusText,
+					headers
+				});
+			}
+			function abortable(promise, signal) {
+				if (!signal) return promise;
+				return new Promise((resolve, reject) => {
+					const fail = () => reject(signal.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+					if (signal.aborted) return fail();
+					signal.addEventListener("abort", fail, { once: true });
+					const done = () => signal.removeEventListener("abort", fail);
+					promise.then((v) => {
+						done();
+						resolve(v);
+					}, (e) => {
+						done();
+						reject(e);
+					});
+				});
+			}
+			function clearAll() {
+				epoch++;
+				store.clear();
+				inflight.clear();
+				bytes = 0;
+			}
+			function evict() {
+				const now = Date.now();
+				for (const [key, entry] of store) {
+					if (now - entry.time <= CFG.gqlStaleTtl && bytes <= CFG.gqlMaxBytes) break;
+					bytes -= entry.size;
+					store.delete(key);
+				}
+			}
+			function put(key, snap) {
+				const old = store.get(key);
+				if (old) {
+					bytes -= old.size;
+					store.delete(key);
+				}
+				const size = snap.buf.byteLength;
+				if (size > CFG.gqlMaxEntryBytes) return;
+				store.set(key, {
+					time: Date.now(),
+					size,
+					snap
+				});
+				bytes += size;
+				evict();
+			}
+			function parseBody(body) {
+				try {
+					const parsed = JSON.parse(body);
+					return parsed && typeof parsed === "object" && !Array.isArray(parsed) && typeof parsed.query === "string" ? parsed : null;
+				} catch {
+					return null;
+				}
+			}
+			const isMutation = (parsed) => /\bmutation\b/i.test(String(parsed.query).replace(/#[^\n\r]*/g, " "));
+			const isVolatile = (parsed) => /notification|activit/i.test(parsed.query);
+			const noStore = (d) => d.cache === "no-store" || d.cache === "reload" || !!d.headers.get("cache-control")?.toLowerCase().includes("no-store");
+			const decoder = new TextDecoder();
+			const ERROR_SCAN_BYTES = 2048;
+			function hasGraphQLErrors(buf) {
+				const view = new Uint8Array(buf);
+				const head = decoder.decode(view.subarray(0, ERROR_SCAN_BYTES));
+				const tail = view.length > ERROR_SCAN_BYTES ? decoder.decode(view.subarray(view.length - ERROR_SCAN_BYTES)) : "";
+				return /"errors"\s*:/.test(head) || /"errors"\s*:/.test(tail);
+			}
+			const makeKey = (d) => [
+				d.headers.get("authorization") || "",
+				d.headers.get("accept") || "",
+				d.url,
+				d.method,
+				d.credentials || "",
+				d.mode || "",
+				d.body
+			].join("");
+			const note429 = (res) => {
+				if (res.status === 429) pausedUntil = Date.now() + 6e4;
+			};
+			const sameId = (a, b) => a === b || typeof a === "string" && typeof b === "string" && a.toLowerCase() === b.toLowerCase();
+			const isIdKey = (key) => /^(?:id|name|userName|username)$|Id$/.test(key);
+			const STATIC_ROUTE = /^\/(?:home|search\/(?:anime|manga))\/?$/;
+			function parseRoute(path, search = "") {
+				const parts = path.split("/").filter(Boolean).map((x) => {
+					try {
+						return decodeURIComponent(x);
+					} catch {
+						return x;
+					}
+				});
+				if ([
+					"anime",
+					"manga",
+					"character",
+					"staff",
+					"studio"
+				].includes(parts[0]) && /^\d+$/.test(parts[1] || "")) return {
+					shape: `${parts[0]}/${parts[3] || ""}`,
+					id: Number(parts[1])
+				};
+				if (parts[0] === "user" && parts[1]) return {
+					shape: `user/${parts[2] || ""}`,
+					id: parts[1]
+				};
+				if (STATIC_ROUTE.test(path)) return {
+					shape: `static:${path.replace(/\/$/, "")}${search}`,
+					id: null,
+					static: true
+				};
+				return null;
+			}
+			const here = () => parseRoute(win.location.pathname, win.location.search);
+			function hasPageId(value, id) {
+				if (!value || typeof value !== "object") return false;
+				return Object.keys(value).some((key) => {
+					const x = value[key];
+					if (x && typeof x === "object") return hasPageId(x, id);
+					return isIdKey(key) && sameId(x, id);
+				});
+			}
+			function replacePageId(value, from, to) {
+				if (!value || typeof value !== "object") return 0;
+				let count = 0;
+				for (const key of Object.keys(value)) {
+					const x = value[key];
+					if (x && typeof x === "object") count += replacePageId(x, from, to);
+					else if (isIdKey(key) && sameId(x, from)) {
+						value[key] = to;
+						count++;
+					}
+				}
+				return count;
+			}
+			const learned = new Map();
+			const ROUTES_KEY = "alfl:routes:v1";
+			const ROUTES_TTL = 2592e6;
+			let persistTimer = 0;
+			const persistRoutes = () => {
+				clearTimeout(persistTimer);
+				persistTimer = setTimeout(() => attempt(() => {
+					const out = {};
+					for (const [shape, v] of [...learned].slice(-40)) out[shape] = {
+						t: v.t,
+						id: v.route.id,
+						static: !!v.route.static,
+						reqs: v.reqs
+					};
+					win.localStorage.setItem(ROUTES_KEY, JSON.stringify(out));
+				}), 1e3);
+			};
+			function loadRoutes() {
+				attempt(() => {
+					const raw = win.localStorage.getItem(ROUTES_KEY);
+					if (!raw) return;
+					const now = Date.now();
+					for (const [shape, v] of Object.entries(JSON.parse(raw))) {
+						if (!v || !Array.isArray(v.reqs) || typeof v.t !== "number" || now - v.t > ROUTES_TTL) continue;
+						const reqs = v.reqs.filter((r) => r && typeof r.body === "string" && typeof r.url === "string" && isGraphQL(r.url) && r.headers && typeof r.headers === "object");
+						if (reqs.length) learned.set(shape, {
+							route: {
+								shape,
+								id: v.id,
+								static: !!v.static
+							},
+							reqs,
+							t: v.t
+						});
+					}
+				});
+			}
+			let learning = {
+				key: "",
+				started: 0,
+				route: null,
+				reqs: []
+			};
+			function refreshLearning() {
+				const key = win.location.pathname + (STATIC_ROUTE.test(win.location.pathname) ? win.location.search : "");
+				if (learning.key === key) return;
+				learning = {
+					key,
+					started: 0,
+					route: here(),
+					reqs: []
+				};
+			}
+			function rememberQuery(desc, parsed) {
+				refreshLearning();
+				if (!(CFG.prefetch || CFG.earlyStart) || prefetching || !learning.route) return;
+				if (!learning.started) learning.started = Date.now();
+				if (Date.now() - learning.started > CFG.learnWindowMs) return;
+				if (learning.reqs.length >= CFG.learnMaxReqs) return;
+				if (!learning.route.static && !hasPageId(parsed.variables, learning.route.id)) return;
+				if (JSON.stringify(parsed) !== desc.body) return;
+				const headers = Object.fromEntries(desc.headers.entries());
+				const authValue = headers.authorization;
+				delete headers.authorization;
+				let auth = false;
+				if (authValue !== void 0) {
+					if (!win.al_token || authValue !== `Bearer ${win.al_token}`) return;
+					auth = true;
+				} else if (win.al_token) return;
+				learning.reqs.push({
+					url: desc.url,
+					body: desc.body,
+					headers,
+					auth,
+					credentials: desc.credentials,
+					mode: desc.mode
+				});
+				learned.delete(learning.route.shape);
+				learned.set(learning.route.shape, {
+					route: learning.route,
+					reqs: [...learning.reqs],
+					t: Date.now()
+				});
+				persistRoutes();
+			}
+			function classify(input, init) {
+				const isRequest = input instanceof (win.Request || Request);
+				const method = String(init?.method || (isRequest ? input.method : "GET")).toUpperCase();
+				if (method !== "POST") return null;
+				const url = isRequest ? input.url : input instanceof URL ? input.href : String(input);
+				if (!isGraphQL(url)) return null;
+				const body = init?.body ?? null;
+				if (typeof body !== "string") return null;
+				const parsed = parseBody(body);
+				if (!parsed) return null;
+				const desc = {
+					url,
+					method,
+					body,
+					headers: new (win.Headers || Headers)(init?.headers ?? (isRequest ? input.headers : void 0)),
+					credentials: init?.credentials ?? (isRequest ? input.credentials : void 0),
+					mode: init?.mode ?? (isRequest ? input.mode : void 0),
+					cache: init?.cache ?? (isRequest ? input.cache : void 0)
+				};
+				return {
+					desc,
+					parsed,
+					mutation: isMutation(parsed),
+					bypass: isVolatile(parsed) || noStore(desc)
+				};
+			}
+			function cachedFetch(job, input, init) {
+				const { desc, parsed } = job;
+				if (init?.signal?.aborted) return nativeFetch(input, init);
+				attempt(() => rememberQuery(desc, parsed));
+				const key = makeKey(desc);
+				const now = Date.now();
+				const cached = store.get(key);
+				if (cached && cached.time >= freshFloor && now - cached.time < CFG.gqlTtl) {
+					stats.cacheHits++;
+					return Promise.resolve(toResponse(cached.snap));
+				}
+				const flying = inflight.get(key);
+				if (flying) {
+					stats.deduped++;
+					return abortable(flying.then((snap) => toResponse(snap), () => nativeFetch(input, init)), init?.signal);
+				}
+				const myEpoch = epoch;
+				const stale = cached && now - cached.time < CFG.gqlStaleTtl ? cached.snap : null;
+				const original = nativeFetch(input, init);
+				const snapshot = original.then(async (res) => {
+					note429(res);
+					if (res.status !== 200) throw new Error("not cacheable");
+					const buf = await res.clone().arrayBuffer();
+					if (hasGraphQLErrors(buf)) throw new Error("graphql errors");
+					return {
+						buf,
+						status: res.status,
+						statusText: res.statusText,
+						headers: [...res.headers.entries()].filter(([k]) => !SKIP_HEADERS.test(k) && !RATE_HEADERS.test(k))
+					};
+				});
+				inflight.set(key, snapshot);
+				snapshot.then((snap) => {
+					if (inflight.get(key) === snapshot) inflight.delete(key);
+					if (epoch === myEpoch) put(key, snap);
+				}, () => {
+					if (inflight.get(key) === snapshot) inflight.delete(key);
+				});
+				if (!stale) return original;
+				return original.then((res) => {
+					if (res.status === 429 || res.status >= 500) {
+						stats.staleServed++;
+						return toResponse(stale, res);
+					}
+					return res;
+				}, (err) => {
+					if (init?.signal?.aborted || err?.name === "AbortError") throw err;
+					stats.staleServed++;
+					return toResponse(stale);
+				});
+			}
+			win.fetch = function fetch(input, init) {
+				let job = null;
+				try {
+					job = classify(input, init);
+				} catch {}
+				if (!job) return nativeFetch(input, init);
+				stats.graphqlRequests++;
+				if (job.mutation) {
+					clearAll();
+					const p = nativeFetch(input, init);
+					p.then((res) => {
+						note429(res);
+						clearAll();
+					}, () => clearAll());
+					return p;
+				}
+				if (job.bypass) {
+					const p = nativeFetch(input, init);
+					p.then(note429, () => {});
+					return p;
+				}
+				return cachedFetch(job, input, init);
+			};
+			doc.addEventListener("visibilitychange", () => {
+				if (doc.hidden) return;
+				epoch++;
+				freshFloor = Date.now();
+				inflight.clear();
+			});
+			const prefetched = new Map();
+			const stamps = [];
+			let dwellTimer = 0;
+			let tokenWait = null;
+			function waitForToken(cb) {
+				tokenWait ||= new Promise((resolve) => {
+					let tries = 0;
+					const t = setInterval(() => {
+						const ready = !!win.al_token;
+						if (!ready && ++tries <= 300) return;
+						clearInterval(t);
+						tokenWait = null;
+						resolve(ready);
+					}, 10);
+				});
+				tokenWait.then((ready) => {
+					if (ready) cb();
+				});
+			}
+			function replayRoute(known, route) {
+				let sent = 0;
+				for (const request of known.reqs) {
+					let parsed;
+					try {
+						parsed = JSON.parse(request.body);
+					} catch {
+						continue;
+					}
+					if (isMutation(parsed) || isVolatile(parsed)) continue;
+					if (!known.route.static && !replacePageId(parsed.variables, known.route.id, route.id)) continue;
+					const body = JSON.stringify(parsed);
+					const send = () => {
+						const headers = { ...request.headers };
+						if (request.auth) headers.authorization = `Bearer ${win.al_token}`;
+						prefetching = true;
+						try {
+							win.fetch(request.url, {
+								method: "POST",
+								headers,
+								body,
+								credentials: request.credentials,
+								mode: request.mode
+							}).catch(() => {});
+						} catch {}
+						prefetching = false;
+					};
+					stamps.push(Date.now());
+					sent++;
+					if (request.auth && !win.al_token) waitForToken(send);
+					else send();
+				}
+				return sent;
+			}
+			if (CFG.earlyStart) {
+				loadRoutes();
+				attempt(() => {
+					if (navigator.connection?.saveData) return;
+					const route = here();
+					const known = route && learned.get(route.shape);
+					if (known) stats.earlyStarts += replayRoute(known, route);
+				});
+			} else if (CFG.prefetch) loadRoutes();
+			if (!CFG.prefetch) return;
+			function prefetchFor(anchor) {
+				const now = Date.now();
+				if (doc.hidden || now < pausedUntil || navigator.connection?.saveData) return;
+				let url;
+				try {
+					url = new URL(anchor.href, win.location.href);
+				} catch {
+					return;
+				}
+				if (url.origin !== win.location.origin) return;
+				const route = parseRoute(url.pathname, url.search);
+				if (!route || route.static) return;
+				const known = learned.get(route.shape);
+				if (!known || known.route.static) return;
+				if (typeof known.route.id !== typeof route.id || sameId(known.route.id, route.id)) return;
+				const current = here();
+				if (current && current.shape === route.shape && sameId(current.id, route.id)) return;
+				const key = `${route.shape}|${String(route.id).toLowerCase()}`;
+				if (now - (prefetched.get(key) || 0) < CFG.gqlTtl) return;
+				while (stamps.length && now - stamps[0] > 6e4) stamps.shift();
+				if (prefetched.size > 200) {
+					for (const [k, t] of prefetched) if (now - t > CFG.gqlTtl) prefetched.delete(k);
+				}
+				if (stamps.length + known.reqs.length > CFG.prefetchMaxPerMin) return;
+				const sent = replayRoute(known, route);
+				if (sent) {
+					prefetched.set(key, now);
+					stats.prefetched += sent;
+				}
+			}
+			const linkOf = (event) => event.target?.closest?.("a[href]") || null;
+			const opts = {
+				capture: true,
+				passive: true
+			};
+			doc.addEventListener("pointerover", (event) => {
+				if (event.pointerType !== "mouse") return;
+				const anchor = linkOf(event);
+				clearTimeout(dwellTimer);
+				if (anchor) dwellTimer = setTimeout(() => prefetchFor(anchor), CFG.prefetchDwellMs);
+			}, opts);
+			doc.addEventListener("pointerout", () => clearTimeout(dwellTimer), opts);
+			doc.addEventListener("pointerdown", (event) => {
+				const anchor = linkOf(event);
+				if (anchor) prefetchFor(anchor);
+			}, opts);
+		}
+		if (CFG.coalesceObservers) attempt(installObserverCoalescing);
+		if (CFG.fastInnerText) attempt(installFastInnerText);
+		if (CFG.memoSelectorProbes) attempt(installProbeMemo);
+		if (CFG.blockTierInData || CFG.tierAssist) attempt(installTierSupport);
+		if (CFG.lazyMedia) attempt(installLazyMedia);
+		if (CFG.rowSkipping) attempt(installRowSkipping);
+		if (CFG.gqlTtl > 0 && typeof win.fetch === "function") attempt(installGraphQLLayer);
+	});
+	function getValidTiers() {
+		const check = validateTiers(Settings.get("tierLabels"));
+		return check.valid && check.tiers ? check.tiers : DEFAULT_TIERS;
+	}
+	defineFeature({
+		id: "tierLabels",
+		key: "tierLabelsEnabled",
+		section: "AniList Enhancements",
+		def: false,
+		legacy: ["tierLabelsEnabled"],
+		title: "AniList Tier Labels",
+		help: "Adds customizable tier badges (S+, S, A, etc.) next to ratings across list, card, browse, and compare views.",
+		options: [
+			{
+				key: "tierLabelsColorScore",
+				type: "toggle",
+				def: true,
+				title: "Color score value",
+				help: "Color the score number text to match its tier badge."
+			},
+			{
+				key: "tierLabelsAverageScore",
+				type: "toggle",
+				def: true,
+				title: "Show on Average & Mean scores",
+				help: "Display tier badge next to Average Score / Mean Score on profile and media pages."
+			},
+			{
+				key: "tierLabels",
+				type: "json",
+				def: DEFAULT_TIERS,
+				title: "Tier Ranges & Colors",
+				help: "Customize score ranges, badge labels, and colors.",
+				validate: validateTiers
+			}
+		]
+	}, () => {
+		try {
+			const legacy = localStorage.getItem("anilistTierLabelsSettings");
+			if (legacy) {
+				const parsed = JSON.parse(legacy);
+				if (Array.isArray(parsed.tiers) && parsed.tiers.length && store.get("ala_setting_tierLabels", null) === null) {
+					const check = validateTiers(parsed.tiers);
+					if (check.valid && check.tiers) store.set(PREFIX + "tierLabels", check.tiers);
+				}
+				if (typeof parsed.enableRatingTextColor === "boolean" && store.get("ala_setting_tierLabelsColorScore", null) === null) store.set(PREFIX + "tierLabelsColorScore", parsed.enableRatingTextColor);
+			}
+		} catch (_) {}
+		addStyle("ala-tier-labels-css", `
+      .ala-tier-badge {
+        display: inline-block;
+        font-weight: 700;
+        border-radius: 4px;
+        vertical-align: middle;
+        white-space: nowrap;
+        line-height: 1.2;
+        box-sizing: border-box;
+      }
+      .ala-tier-badge--list {
+        font-size: 11px;
+        padding: 2px 5px;
+        margin-left: 5px;
+      }
+      .ala-tier-badge--block {
+        font-size: 10px;
+        padding: 1px 4px;
+        margin-left: 4px;
+      }
+      .ala-tier-container {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .ala-tier-container--block {
+        background-color: rgba(0, 0, 0, 0.55);
+        padding: 2px 6px;
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      `);
+		function createBadge(tier, isBlockView = false) {
+			const badge = document.createElement("span");
+			badge.className = `ala-tier-badge ${isBlockView ? "ala-tier-badge--block" : "ala-tier-badge--list"}`;
+			badge.textContent = tier.label;
+			badge.style.backgroundColor = tier.color;
+			badge.style.color = tier.textColor;
+			return badge;
+		}
+		function getScoreSystem() {
+			const container = document.querySelector(".content.container, .medialist");
+			if (container) {
+				if (container.querySelector(".medialist.table.POINT_100, .medialist.POINT_100")) return "POINT_100";
+				if (container.querySelector(".medialist.table.POINT_10_DECIMAL, .medialist.POINT_10_DECIMAL")) return "POINT_10_DECIMAL";
+				if (container.querySelector(".medialist.table.POINT_10, .medialist.POINT_10")) return "POINT_10";
+				if (container.querySelector(".medialist.table.POINT_5, .medialist.POINT_5")) return "POINT_5";
+				if (container.querySelector(".medialist.table.POINT_3, .medialist.POINT_3")) return "POINT_3";
+			}
+			const viewerFmt = store.get("al_score_format", null);
+			if (viewerFmt) return viewerFmt;
+			return "UNKNOWN";
+		}
+		function getCompareColumnFormat(el) {
+			const compareRoot = el.closest(".compare");
+			if (!compareRoot) return "UNKNOWN";
+			const isAuthUser = (el.getAttribute("label") || "") === "Score" || !!el.matches(".entry > .cell.score:first-of-type, .entry > .score:first-of-type");
+			const sideKey = isAuthUser ? "auth" : "target";
+			if (!compareRoot._colFormats) compareRoot._colFormats = {};
+			if (compareRoot._colFormats[sideKey]) return compareRoot._colFormats[sideKey];
+			if (isAuthUser) {
+				const viewerFmt = store.get("al_score_format", null);
+				if (viewerFmt) {
+					compareRoot._colFormats[sideKey] = viewerFmt;
+					return viewerFmt;
+				}
+			}
+			const colSelector = isAuthUser ? ".entry > .cell.score:first-of-type, .entry > .score:first-of-type, .score[label=\"Score\"]" : ".entry > .cell.score:nth-of-type(2), .entry > .score:nth-of-type(2), .score:not([label=\"Score\"])";
+			const cells = compareRoot.querySelectorAll(colSelector);
+			let maxScore = 0;
+			let hasDecimal = false;
+			let hasStarIcon = false;
+			for (const cell of cells) {
+				if (cell.querySelector("svg, .icon")) hasStarIcon = true;
+				const s = cell.getAttribute("score") || (cell.textContent || "").replace("%", "").trim();
+				const num = parseFloat(s);
+				if (!isNaN(num) && num > 0) {
+					if (num > maxScore) maxScore = num;
+					if (s.includes(".")) hasDecimal = true;
+				}
+			}
+			let detected = "UNKNOWN";
+			if (maxScore > 10) detected = "POINT_100";
+			else if (hasDecimal) detected = "POINT_10_DECIMAL";
+			else if (hasStarIcon) detected = "POINT_5";
+			else if (maxScore > 5) detected = "POINT_10";
+			else if (maxScore > 0) detected = "POINT_10";
+			compareRoot._colFormats[sideKey] = detected;
+			return detected;
+		}
+		function normalizeScore(score, scoreSystem, isPercentage = false) {
+			if (isNaN(score) || score <= 0) return null;
+			if (isPercentage) return score;
+			switch (scoreSystem) {
+				case "POINT_100": return score;
+				case "POINT_10_DECIMAL":
+				case "POINT_10": return score * 10;
+				case "POINT_5": return score * 20;
+				case "POINT_3": return score === 3 ? 100 : score === 2 ? 60 : 20;
+				default: return score > 10 ? score : score * 10;
+			}
+		}
+		function processScoreElement(el, tiers, colorScore, isPercentage = false, isBlockView = false) {
+			if (el.dataset.tierModified) return;
+			const rawText = (el.getAttribute("score") || el.textContent || "").replace("%", "").trim();
+			if (!rawText || rawText === "-" || rawText === "0") return;
+			const num = parseFloat(rawText);
+			if (isNaN(num) || num <= 0) return;
+			const normalizedRating = normalizeScore(num, el.closest(".compare") ? getCompareColumnFormat(el) : getScoreSystem(), isPercentage);
+			if (normalizedRating === null) return;
+			const tier = getTier(normalizedRating, tiers);
+			if (!tier) return;
+			el.dataset.tierModified = "true";
+			const container = document.createElement("div");
+			container.className = `ala-tier-container ${isBlockView ? "ala-tier-container--block" : ""}`;
+			const scoreSpan = document.createElement("span");
+			scoreSpan.className = "ala-tier-score-text";
+			if (colorScore) scoreSpan.style.color = tier.color;
+			const icon = el.querySelector("svg, .icon");
+			if (icon) {
+				scoreSpan.appendChild(icon.cloneNode(true));
+				scoreSpan.appendChild(document.createTextNode(" " + rawText));
+			} else scoreSpan.textContent = isPercentage ? `${rawText}%` : rawText;
+			container.appendChild(scoreSpan);
+			container.appendChild(createBadge(tier, isBlockView));
+			el.textContent = "";
+			el.appendChild(container);
+		}
+		function processTop100Elements(tiers, colorScore) {
+			document.querySelectorAll(".row.score").forEach((row) => {
+				const percentageEl = row.querySelector(".percentage");
+				if (!percentageEl || percentageEl.classList.contains("popularity") || percentageEl.dataset.tierModified) return;
+				const textNode = Array.from(percentageEl.childNodes).find((n) => n.nodeType === Node.TEXT_NODE && (n.textContent || "").trim() !== "");
+				if (!textNode) return;
+				const ratingText = (textNode.textContent || "").trim().replace("%", "");
+				const numericRating = parseFloat(ratingText);
+				if (isNaN(numericRating) || numericRating <= 0) return;
+				const tier = getTier(numericRating, tiers);
+				if (!tier) return;
+				percentageEl.dataset.tierModified = "true";
+				textNode.remove();
+				const ratingWrapper = document.createElement("div");
+				ratingWrapper.className = "ala-tier-container";
+				ratingWrapper.style.display = "inline-flex";
+				ratingWrapper.style.alignItems = "center";
+				ratingWrapper.style.gap = "6px";
+				const textSpan = document.createElement("span");
+				textSpan.className = "ala-tier-score-text";
+				textSpan.textContent = numericRating + "%";
+				if (colorScore) textSpan.style.color = tier.color;
+				ratingWrapper.appendChild(textSpan);
+				ratingWrapper.appendChild(createBadge(tier));
+				const popularityEl = percentageEl.querySelector(".sub-row.popularity");
+				if (popularityEl) percentageEl.insertBefore(ratingWrapper, popularityEl);
+				else percentageEl.appendChild(ratingWrapper);
+			});
+		}
+		function applyTierLabels() {
+			const tiers = getValidTiers();
+			const colorScore = Settings.get("tierLabelsColorScore");
+			const showAverage = Settings.get("tierLabelsAverageScore");
+			document.querySelectorAll(".score:not(.media-card .score):not(.entry-card .score)").forEach((el) => {
+				processScoreElement(el, tiers, colorScore, false, false);
+			});
+			document.querySelectorAll(".entry-card .score").forEach((el) => {
+				processScoreElement(el, tiers, colorScore, false, true);
+			});
+			if (showAverage) document.querySelectorAll(".data-set").forEach((dataSet) => {
+				const label = dataSet.querySelector(".type");
+				const value = dataSet.querySelector(".value");
+				if (label && value && !value.dataset.tierModified && ((label.textContent || "").includes("Average Score") || (label.textContent || "").includes("Mean Score"))) processScoreElement(value, tiers, colorScore, true, false);
+			});
+			processTop100Elements(tiers, colorScore);
+		}
+		Core.ready(() => {
+			applyTierLabels();
+			Core.onNavigate(() => {
+				document.querySelectorAll(".compare").forEach((c) => {
+					delete c._colFormats;
+				});
+				applyTierLabels();
+			});
+			Core.onBodyMutation(() => {
+				applyTierLabels();
+			});
+		});
+	});
 	addStyle("almal-style", `
   #almal-panel{box-sizing:border-box;width:100%;margin-top:12px;padding:12px;border-radius:4px;background:rgb(var(--color-foreground));color:rgb(var(--color-text));font-size:13px;line-height:1.45}
   #almal-panel *{box-sizing:border-box}
@@ -3403,7 +5503,7 @@
 		}
 	}
 	function renderRateLimitWarning(panelEl) {
-		if (!panelEl) return;
+		if (!panelEl || !panelEl.isConnected) return;
 		const now = Date.now();
 		const limited = [["AniList", AniList.resumeAt()], ["MAL", malLimiter.resumeAt]].filter(([, at]) => Number(at) > now);
 		let warn = panelEl.querySelector("#almal-api-limit-warning");
@@ -3515,6 +5615,7 @@
 			saveAniListToken(token);
 			log("AniList connected (manual).");
 			renderPanel();
+			maybeAutoSync();
 		},
 		"mal-manual-save": async () => {
 			const code = document.getElementById("almal-mal-manual")?.value.trim();
@@ -3523,6 +5624,7 @@
 				await exchangeMalCode(code);
 				log("MAL connected (manual).");
 				renderPanel();
+				maybeAutoSync();
 			} catch (e) {
 				log("MAL token exchange failed: " + e.message);
 			}
@@ -3658,35 +5760,73 @@
 		section: "Sync",
 		hosts: ["anilist.co", "myanimelist.net"],
 		alwaysRun: true,
+		def: false,
 		legacy: ["syncEnabled", "syncOn"],
 		title: "AniList → MyAnimeList Sync",
-		help: "Enable syncing your AniList list to MyAnimeList, including automatic syncs.",
-		options: [{
-			key: "syncIntervalHours",
-			type: "number",
-			def: 6,
-			min: 1,
-			max: 720,
-			legacy: [
-				"syncIntervalHours",
-				"autoSyncIntervalHours",
-				"autoSyncInterval"
-			],
-			title: "Automatic Sync Interval",
-			help: "How often automatic syncing checks and updates MyAnimeList. The minimum is 1 hour."
-		}, {
-			key: "syncScoreRounding",
-			type: "select",
-			def: "round",
-			options: [
-				["ceil", "Ceil"],
-				["round", "Round"],
-				["floor", "Floor"]
-			],
-			legacy: ["syncScoreRounding", "scoreConversionMethod"],
-			title: "Decimal Score Conversion",
-			help: "MyAnimeList only accepts whole-number scores. <b>Ceil</b> always rounds up (7.4 → 8), <b>Round</b> rounds normally (7.4 → 7, 7.5 → 8), and <b>Floor</b> always rounds down (7.9 → 7)."
-		}]
+		help: "Enable sync and show the list page sync panel",
+		options: [
+			{
+				key: "syncAutoAnime",
+				type: "toggle",
+				def: false,
+				legacy: ["syncAutoAnime"],
+				title: "Auto-Sync Anime",
+				help: "Automatically sync your anime list to MyAnimeList in the background."
+			},
+			{
+				key: "syncIntervalAnime",
+				type: "number",
+				childOf: "syncAutoAnime",
+				def: 6,
+				min: 1,
+				max: 720,
+				legacy: [
+					"syncIntervalAnime",
+					"syncIntervalHours",
+					"autoSyncIntervalHours",
+					"autoSyncInterval"
+				],
+				title: "Auto-Sync Anime Interval",
+				help: "How often to automatically sync your anime list (in hours, minimum 1)."
+			},
+			{
+				key: "syncAutoManga",
+				type: "toggle",
+				def: false,
+				legacy: ["syncAutoManga"],
+				title: "Auto-Sync Manga",
+				help: "Automatically sync your manga list to MyAnimeList in the background."
+			},
+			{
+				key: "syncIntervalManga",
+				type: "number",
+				childOf: "syncAutoManga",
+				def: 6,
+				min: 1,
+				max: 720,
+				legacy: [
+					"syncIntervalManga",
+					"syncIntervalMangaHours",
+					"autoSyncIntervalMangaHours",
+					"syncIntervalHours"
+				],
+				title: "Auto-Sync Manga Interval",
+				help: "How often to automatically sync your manga list (in hours, minimum 1)."
+			},
+			{
+				key: "syncScoreRounding",
+				type: "select",
+				def: "round",
+				options: [
+					["ceil", "Ceil"],
+					["round", "Round"],
+					["floor", "Floor"]
+				],
+				legacy: ["syncScoreRounding", "scoreConversionMethod"],
+				title: "Decimal Score Conversion",
+				help: "MyAnimeList only accepts whole-number scores. <b>Ceil</b> always rounds up (7.4 → 8), <b>Round</b> rounds normally (7.4 → 7, 7.5 → 8), and <b>Floor</b> always rounds down (7.9 → 7)."
+			}
+		]
 	}, () => {
 		if (store.get("sync_schema", 0) < 2) safe(() => {
 			for (const k of [

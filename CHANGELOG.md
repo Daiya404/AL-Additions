@@ -2,10 +2,21 @@
 
 ## 0.8.0
 
-- Refactor: Migrated the entire codebase to TypeScript and modularized it using Vite with `vite-plugin-monkey`.
-- Split the monolithic script into structured directories (`src/api`, `src/core`, `src/modules`, `src/settings`, `src/utils`).
-- Modern build & development pipeline: added static type checking, automated bundle compilation to root `al-additions.user.js`, and `npm run watch` for local development.
-- Zero breaking changes: 100% feature parity, identical runtime behavior, and complete backward compatibility with existing user settings and storage keys.
+- **Modular TypeScript Refactor**: Migrated the entire codebase to TypeScript and modularized it using Vite with `vite-plugin-monkey`. Split the monolithic script into structured directories (`src/api`, `src/core`, `src/modules`, `src/settings`, `src/utils`), with static type-checking, bundle compilation (`al-additions.user.js`), automated CI testing, and version bump tooling.
+- **AniList Fast Load**: Integrated as a built-in module (lazy media loading, off-screen row skipping via content-visibility, MutationObserver coalescing, safe GraphQL cache and de-duplication with stale fallback, navigation prefetch, and reload early-request start).
+- **AniList Tier Labels**: Integrated as a built-in module adding tier badges (S+, S, A, B, etc.) to scores across list, card, browse, and compare views. Features an interactive in-settings modal editor for custom score ranges, labels, and color pickers. Includes smart scoring system detection that permanently fixes the list comparison (`/animelist/compare` and `/mangalist/compare`) view.
+- **Settings Backup & Restore**: Added export and import of settings to `.settings` files, compressed with Gzip stream compression and optional PBKDF2/AES-GCM password encryption. Sensitive credentials (tokens) can optionally be included in encrypted backups.
+- **Account Management**: Added dedicated Connect/Disconnect management buttons and live status indicators for AniList and MyAnimeList directly in the settings panel.
+- **Sync Enhancements**: Separated anime and manga auto-sync into independent toggles and sync intervals (15m to 24h). Added score rounding options (round down, nearest integer, or decimal).
+- **Default State**: All enhancement modules are now disabled by default on clean installations.
+- **Core Observer Hardening**: Patched `history.pushState` and `replaceState` on `unsafeWindow` with 50ms mutation batching while filtering out the script's own UI mutations.
+- **Bug Fixes & Improvements**:
+  - Media Info: show a "Connect AniList" prompt when logged out instead of an inactive editor; automatically update entry status when episode/chapter reaches total count; stop rescheduling renders after max failures.
+  - Nyaa search: open tabs synchronously on click to prevent browser popup blockers during asynchronous MAL ID resolution.
+  - Anisongs: cache empty theme queries for 12 hours instead of 7 days; debounced mutation repair listener.
+  - Airing Dots: added rejection handling in update batches to prevent unhandled promise rejections.
+  - Manga Matching: scaled substring matching score by length ratio and raised minimum threshold to 70 to eliminate false positive MangaUpdates matches.
+  - Settings: enforced numeric bounds clamping and integer rounding on number inputs, hardened JSON setting validation, and prevented stale rate-limit countdown timers.
 
 ## 0.7.2
 

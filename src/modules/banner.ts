@@ -10,6 +10,7 @@ defineFeature(
     id: 'banner',
     key: 'bannerEnabled',
     section: 'External Links & Downloads',
+    def: false,
     legacy: ['bannerEnabled', 'bannerDownloadEnabled', 'bannerDownloaderEnabled'],
     title: 'Anime/Manga Banner Downloader',
     help: 'Add a button for downloading the AniList banner image.',

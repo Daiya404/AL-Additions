@@ -1,7 +1,7 @@
 import { store, safe, esc } from '../utils/helpers';
 import type { SettingRow, SettingType, FeatureMeta, RegisteredFeature } from '../types';
 
-const PREFIX = 'ala_setting_';
+export const PREFIX = 'ala_setting_';
 export const features: RegisteredFeature[] = [];
 export const ROWS: Record<string, SettingRow> = {};
 
@@ -32,11 +32,15 @@ export const TYPES: Record<
   },
   number: {
     normalize: (v, r) => {
+      if (v == null || String(v).trim() === '') return r?.def;
       const n = Math.round(Number(v));
-      return Number.isFinite(n) && n > 0 ? Math.max(r?.min ?? 1, Math.min(r?.max ?? 100, n)) : r?.def;
+      if (!Number.isFinite(n)) return r?.def;
+      const min = r?.min ?? 0;
+      const max = r?.max ?? 100;
+      return Math.max(min, Math.min(max, n));
     },
     html: (r, v) =>
-      `<input type="number" data-key="${r.key}" min="${r.min ?? 1}" max="${r.max ?? 100}" step="1" inputmode="numeric" value="${esc(v)}">`,
+      `<input type="number" data-key="${r.key}" min="${r.min ?? 0}" max="${r.max ?? 100}" step="1" inputmode="numeric" value="${esc(v)}">`,
     ...textIO
   },
   select: {
@@ -60,6 +64,40 @@ export const TYPES: Record<
     write: (el: HTMLInputElement, v: string[]) => {
       el.value = v.join(', ');
     }
+  },
+  json: {
+    normalize: (v, r) => {
+      if (v == null) return r?.def;
+      let val = v;
+      if (typeof v === 'string') {
+        try {
+          val = JSON.parse(v);
+        } catch (_) {
+          return r?.def;
+        }
+      }
+      if (r?.validate) {
+        const check = r.validate(val);
+        if (check === false) return r.def;
+        if (check && typeof check === 'object') {
+          if (check.valid === false) return r.def;
+          if (check.tiers) return check.tiers;
+        }
+      }
+      return val;
+    },
+    html: (r, v) =>
+      `<input type="hidden" data-key="${r.key}" value="${esc(JSON.stringify(v))}"><button type="button" class="ala-btn ala-btn--secondary ala-btn--edit-json" id="ala-btn-edit-${r.key}">Customize</button>`,
+    read: (el: HTMLInputElement) => {
+      try {
+        return JSON.parse(el.value);
+      } catch (_) {
+        return ROWS[el.dataset.key!]?.def;
+      }
+    },
+    write: (el: HTMLInputElement, v: any) => {
+      el.value = JSON.stringify(v);
+    }
   }
 };
 
@@ -67,7 +105,7 @@ function register(f: FeatureMeta): void {
   const toggle: SettingRow = {
     key: f.key,
     type: 'toggle',
-    def: f.def !== false,
+    def: f.def === true,
     legacy: f.legacy || [],
     title: f.title,
     help: f.help
@@ -101,14 +139,21 @@ function migrate(): void {
     for (const r of Object.values(ROWS)) {
       if (store.get(PREFIX + r.key, undefined) !== undefined) continue;
       for (const name of r.legacy) {
-        const raw = localStorage.getItem('ALAdditions:' + name);
-        if (raw == null) continue;
-        let v: any = raw;
-        try {
-          v = JSON.parse(raw);
-        } catch (_) {}
-        store.set(PREFIX + r.key, v);
-        break;
+        let v: any = store.get(PREFIX + name, undefined);
+        if (v === undefined) {
+          const raw = localStorage.getItem('ALAdditions:' + name);
+          if (raw != null) {
+            try {
+              v = JSON.parse(raw);
+            } catch (_) {
+              v = raw;
+            }
+          }
+        }
+        if (v !== undefined) {
+          store.set(PREFIX + r.key, v);
+          break;
+        }
       }
     }
   }, 'settings migration');
