@@ -5,12 +5,14 @@ import { MediaData } from '../api/anilist';
 import { addStyle, icon, mediaRoute } from '../utils/dom';
 import { openTab, debounce } from '../utils/helpers';
 import type { MediaRoute } from '../types';
+import { getEffectiveMalId, isIgnored } from './sync/overrides';
+import { openQuickOverrideModal } from './sync/overridesModal';
 
 defineFeature(
   {
     id: 'nyaa',
     key: 'nyaaEnabled',
-    section: 'External Links & Downloads',
+    section: 'External Links, Downloads & Mappings',
     def: false,
     legacy: ['nyaaEnabled', 'malNyaaLinksEnabled', 'malNyaaEnabled'],
     title: 'MyAnimeList & Nyaa Links',
@@ -32,7 +34,7 @@ defineFeature(
     const ICON = icon('external', 17);
     addStyle(
       'ala-nyaa-style',
-      `#${ID}{margin-left:10px;display:inline-flex;align-items:center;vertical-align:middle;color:rgb(var(--color-text-lighter));opacity:.8;transition:opacity .15s,transform .15s}#${ID}:hover{opacity:1;color:rgb(var(--color-blue));transform:scale(1.1)}`
+      `#${ID},#ala-edit-mal-id{display:inline-flex;align-items:center;vertical-align:middle;color:rgb(var(--color-text-lighter));opacity:.75;transition:opacity .15s,transform .15s,color .15s}#${ID}{margin-left:10px}#ala-edit-mal-id{margin-left:6px;cursor:pointer}#${ID}:hover,#ala-edit-mal-id:hover{opacity:1;color:rgb(var(--color-blue));transform:scale(1.1)}`
     );
 
     const nyaaUrl = (title: string): string => {
@@ -42,17 +44,21 @@ defineFeature(
     };
 
     function attach(h1: HTMLElement, route: MediaRoute): void {
+      const EDIT_ID = 'ala-edit-mal-id';
       const a = document.createElement('a');
       a.id = ID;
       a.href = '#';
-      a.title = 'Open on MAL (Ctrl/Cmd+click or long-press: search Nyaa)';
+      a.title = isIgnored(route.id)
+        ? 'Marked as AniList-Only (searches Nyaa)'
+        : 'Open on MAL (Ctrl/Cmd+click or long-press: search Nyaa)';
       a.setAttribute('aria-label', 'Open on MAL; long-press to search Nyaa');
       a.innerHTML = ICON;
       const titleText = (): string =>
         [...h1.childNodes]
-          .filter((n) => n !== a)
+          .filter((n) => n !== a && (n as HTMLElement)?.id !== EDIT_ID)
           .map((n) => n.textContent)
-          .join('');
+          .join('')
+          .trim();
       const searchNyaa = (): void => openTab(nyaaUrl(titleText()));
       MediaData.get(route.id, route.type);
 
@@ -108,11 +114,21 @@ defineFeature(
           return;
         }
         const w = window.open('about:blank', '_blank');
-        const nyaa = nyaaUrl(titleText());
+        const title = titleText();
+        const nyaa = nyaaUrl(title);
         let target = nyaa;
         if (!e.ctrlKey && !e.metaKey) {
-          const media = await MediaData.get(route.id, route.type);
-          if (media?.idMal) target = `https://myanimelist.net/${route.kind}/${media.idMal}`;
+          if (isIgnored(route.id)) {
+            target = nyaa;
+          } else {
+            const media = await MediaData.get(route.id, route.type);
+            const effectiveMalId = getEffectiveMalId(route.id, media?.idMal);
+            if (effectiveMalId) {
+              target = `https://myanimelist.net/${route.kind}/${effectiveMalId}`;
+            } else {
+              target = `https://myanimelist.net/search/all?q=${encodeURIComponent(title)}&cat=all`;
+            }
+          }
         }
         if (w) {
           w.opener = null;
@@ -121,6 +137,21 @@ defineFeature(
       });
 
       h1.appendChild(a);
+
+      document.getElementById(EDIT_ID)?.remove();
+
+      const editBtn = document.createElement('a');
+      editBtn.id = EDIT_ID;
+      editBtn.href = '#';
+      editBtn.title = 'Set or edit MyAnimeList mapping';
+      editBtn.setAttribute('aria-label', 'Set or edit MyAnimeList mapping');
+      editBtn.innerHTML = icon('edit', 16);
+      editBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openQuickOverrideModal(route.id, route.type);
+      });
+      h1.appendChild(editBtn);
     }
 
     let token = 0;
@@ -132,6 +163,7 @@ defineFeature(
       const key = route && `${route.type}:${route.id}`;
       if (key && key === placedKey && document.getElementById(ID)) return;
       document.getElementById(ID)?.remove();
+      document.getElementById('ala-edit-mal-id')?.remove();
       placedKey = null;
       if (!route) return;
 

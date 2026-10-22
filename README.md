@@ -142,6 +142,16 @@ The main **AniList → MyAnimeList Sync** toggle controls both the list page syn
 - **Rate-limit friendly.** Requests are paced by an adaptive limiter that slows down on rate-limit responses and honours cooldowns across tabs. A circuit breaker pauses writes after repeated MAL failures, and a lock stops two tabs from syncing at once.
 - **Account switches.** If you connect a different AniList or MAL account, the stored sync watermarks are reset automatically.
 
+### Manual Mappings & Sync Audit
+
+AniList and MyAnimeList maintain different databases. Entries such as music videos, donghua, or indie shorts may not exist on MAL, or title romanization differences might prevent auto-matching. You can manage these differences using the **Manual Mappings & Sync Audit** tool:
+
+- **Custom MAL ID Overrides**: Assign a custom MAL ID to any AniList entry (by ID or full URL). Custom mappings take absolute precedence across the sync engine, deletion handling, and "Open on MAL" navigation. When no MAL ID is found and no override is set, clicking "Open on MAL" searches the title on MyAnimeList.
+- **Mark as AniList-Only (Ignore List)**: Permanently ignore titles that do not exist on MAL. Ignored entries are cleanly skipped during sync without producing "Unmatched" warnings or errors, and will not queue MAL deletions.
+- **Media Page Shortcut**: When "Open on MAL" is enabled, a quick settings shortcut icon is displayed directly next to the media title on anime and manga pages to quickly inspect or update its mapping.
+- **Sync Audit Tab**: Inspect titles on your AniList library that could not be matched automatically, and run a live MAL scan to detect orphaned entries on MyAnimeList (titles present on MAL but missing from AniList), offering one-click deletion or retention.
+- **Automatic Metadata Refresh**: Cached titles and cover images are refreshed every 24 hours in batched chunks of 50 via rate-limited GraphQL queries. All overrides are safely saved in your script settings and included in backup exports.
+
 ### Disconnecting and resetting
 
 You can connect or disconnect either account anytime directly from **Settings → AL Additions** under **Connected Accounts**.
@@ -173,6 +183,8 @@ Each feature has a toggle, and some have options:
 | Auto-Sync Manga          | Off                  | Automatically sync your manga list to MAL in the background.                                                 |
 | Auto-Sync Manga Interval | 6 hours              | 1–720 hours.                                                                                                 |
 | Decimal Score Conversion | Round                | **Ceil** rounds up (7.4 → 8), **Round** rounds normally (7.4 → 7, 7.5 → 8), **Floor** rounds down (7.9 → 7). |
+| Sync Mode                | Update Only          | **Update Only** adds and updates entries on MAL without deleting. **Exact Match (Mirror)** automatically removes entries from MAL when deleted on AniList. |
+| Manual Mappings & Sync Audit | `{}`             | Configure custom MAL IDs, mark titles as AniList-only, and audit sync discrepancies.                         |
 
 Changes apply when you press **Save and reload**. **Reset to defaults** restores the defaults in the panel, and you still need to press Save.
 

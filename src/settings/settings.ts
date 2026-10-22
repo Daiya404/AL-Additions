@@ -104,8 +104,8 @@ export const TYPES: Record<
 function register(f: FeatureMeta): void {
   const toggle: SettingRow = {
     key: f.key,
-    type: 'toggle',
-    def: f.def === true,
+    type: f.type || 'toggle',
+    def: f.def !== undefined ? f.def : f.type === 'json' ? {} : false,
     legacy: f.legacy || [],
     title: f.title,
     help: f.help

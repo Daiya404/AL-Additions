@@ -12,7 +12,7 @@ defineFeature(
   {
     id: 'keyframe',
     key: 'keyframeEnabled',
-    section: 'External Links & Downloads',
+    section: 'External Links, Downloads & Mappings',
     def: false,
     legacy: ['keyframeEnabled'],
     title: 'Keyframe Staff List Links',

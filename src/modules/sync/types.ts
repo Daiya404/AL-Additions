@@ -12,6 +12,7 @@ export interface SyncProgress {
 
 export interface SyncCounters {
   pushed: number;
+  deleted: number;
   unchanged: number;
   settled: number;
   skipped: number;
@@ -19,6 +20,14 @@ export interface SyncCounters {
   conflicts: number;
   transient: number;
   permanent: number;
+}
+
+export interface PendingDelete {
+  mediaId: number;
+  malId?: number;
+  type: SyncMediaType;
+  title: string;
+  deletedAt: number;
 }
 
 export interface AniListSyncEntry {
@@ -56,3 +65,13 @@ export interface FlaggedError extends Error {
   status?: number;
   html?: boolean;
 }
+
+export interface ManualOverride {
+  malId: number;
+  type: SyncMediaType;
+  title: string;
+  cover?: string;
+  updatedAt: number;
+}
+
+export type ManualOverrideStore = Record<string, ManualOverride>;

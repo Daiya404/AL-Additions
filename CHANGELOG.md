@@ -8,20 +8,23 @@
 - **Compare View Improvements**: Added interactive sorting and status filtering to list comparison pages (`/animelist/compare` and `/mangalist/compare`). Sort by Title (A-Z / Z-A), Your Score, or Other User's Score (high-to-low / low-to-high) with directional arrow indicators. Features dual-user status filtering checkboxes (Completed, Planning, Current, Paused, Dropped) with real-time counts, automatic background full-list loading, luminance-adaptive column hover highlighting, and a collapsible mobile dropdown.
 - **Settings Backup & Restore**: Added export and import of settings to `.settings` files, compressed with Gzip stream compression and optional PBKDF2/AES-GCM password encryption. Sensitive credentials (tokens) can optionally be included in encrypted backups.
 - **Account Management**: Added dedicated Connect/Disconnect management buttons and live status indicators for AniList and MyAnimeList directly in the settings panel.
-- **Sync Enhancements**: Separated anime and manga auto-sync into independent toggles and sync intervals (15m to 24h). Added score rounding options (round down, nearest integer, or decimal).
+- **Sync Enhancements**:
+    - Separated anime and manga auto-sync into independent toggles and sync intervals (min 1h).
+    - Added **Sync Mode** setting ("Update Only" vs. "Exact Match (Mirror)") with a safe pending deletions queue that catches UI deletions with re-add protection and automated full compare sync with panic circuit breaker protection.
+    - Added **Manual Mappings & Sync Audit**: interactive modal to configure custom MyAnimeList ID overrides and mark entries as "AniList-Only (Ignored)" to suppress sync warnings. Features debounced 300ms live AniList preview, quick media page shortcut button next to titles, automated 50-item batched stale metadata cache refresh via GraphQL, and a Sync Audit view for unmatched AniList titles and orphaned MAL entries with interactive deletion and retention.
 - **Default State**: All enhancement modules are now disabled by default on clean installations.
 - **Core Observer Hardening**: Patched `history.pushState` and `replaceState` on `unsafeWindow` with 50ms mutation batching while filtering out the script's own UI mutations.
 - **Bug Fixes & Improvements**:
-  - Media Info: show a "Connect AniList" prompt when logged out instead of an inactive editor; automatically update entry status when episode/chapter reaches total count; stop rescheduling renders after max failures.
-  - Nyaa search: open tabs synchronously on click to prevent browser popup blockers during asynchronous MAL ID resolution.
-  - Anisongs: cache empty theme queries for 12 hours instead of 7 days; debounced mutation repair listener.
-  - Airing Dots: added rejection handling in update batches to prevent unhandled promise rejections.
-  - Manga Matching: scaled substring matching score by length ratio and raised minimum threshold to 70 to eliminate false positive MangaUpdates matches.
-  - Settings: enforced numeric bounds clamping and integer rounding on number inputs, hardened JSON setting validation, and prevented stale rate-limit countdown timers.
-  - Short URLs: only strip the slug when it is the last path segment, so sub-pages such as `/characters` keep working.
-  - Tier Labels: badges refresh when AniList re-renders a score or changes its score attribute, and page scans are throttled.
-  - Settings Backup: exporting credentials now requires a password.
-  - Internal: bounded memo cache, deduplicated sync constants, and consistent auth errors.
+    - Media Info: show a "Connect AniList" prompt when logged out instead of an inactive editor; automatically update entry status when episode/chapter reaches total count; stop rescheduling renders after max failures; prevent 3+ digit episode and chapter numbers from clipping against stepper buttons in the desktop sidebar.
+    - Nyaa search: open tabs synchronously on click to prevent browser popup blockers during asynchronous MAL ID resolution.
+    - Anisongs: cache empty theme queries for 12 hours instead of 7 days; debounced mutation repair listener.
+    - Airing Dots: added rejection handling in update batches to prevent unhandled promise rejections.
+    - Manga Matching: scaled substring matching score by length ratio and raised minimum threshold to 70 to eliminate false positive MangaUpdates matches.
+    - Settings: enforced numeric bounds clamping and integer rounding on number inputs, hardened JSON setting validation, and prevented stale rate-limit countdown timers.
+    - Short URLs: only strip the slug when it is the last path segment, so sub-pages such as `/characters` keep working.
+    - Tier Labels: badges refresh when AniList re-renders a score or changes its score attribute, and page scans are throttled.
+    - Settings Backup: exporting credentials now requires a password.
+    - Internal: bounded memo cache, deduplicated sync constants, and consistent auth errors.
 
 ## 0.7.2
 

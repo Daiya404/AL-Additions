@@ -1,5 +1,5 @@
 import { persistent, jsonGet, jsonSet, store, randomString, sleep } from '../../utils/helpers';
-import { TYPES, SyncMediaType, SyncProgress, FlaggedError } from './types';
+import { TYPES, SyncMediaType, SyncProgress, FlaggedError, PendingDelete } from './types';
 
 export const ID_MISS_TTL_MS = 7 * 86400e3;
 const SETTLED_TTL_MS = 45 * 86400e3;
@@ -66,12 +66,39 @@ export const clearCache = (c: { data: Record<string, any>; save: () => void }): 
   c.save();
 };
 
+export const PENDING_DELETES_KEY = 'sync_pending_deletes';
+
+export function getPendingDeletes(): PendingDelete[] {
+  return jsonGet<PendingDelete[]>(PENDING_DELETES_KEY, []);
+}
+
+export function addPendingDelete(del: PendingDelete): void {
+  const list = getPendingDeletes().filter((p) => !(p.mediaId === del.mediaId && p.type === del.type));
+  list.push(del);
+  jsonSet(PENDING_DELETES_KEY, list);
+}
+
+export function removePendingDelete(mediaId: number, type: SyncMediaType): void {
+  const list = getPendingDeletes().filter((p) => !(p.mediaId === mediaId && p.type === type));
+  jsonSet(PENDING_DELETES_KEY, list);
+}
+
+export function clearPendingDeletes(type?: SyncMediaType): void {
+  if (type) {
+    const list = getPendingDeletes().filter((p) => p.type !== type);
+    jsonSet(PENDING_DELETES_KEY, list);
+  } else {
+    store.del(PENDING_DELETES_KEY);
+  }
+}
+
 export function resetAccountState(): void {
   for (const t of TYPES) {
     for (const k of ['last_sync', 'last_run', 'last_compare']) store.del(`${k}_${t}`);
     clearCache(stores[t].settled);
   }
   store.del('sync_retry_at');
+  store.del(PENDING_DELETES_KEY);
 }
 
 let heartbeat: ReturnType<typeof setInterval> | null = null;
