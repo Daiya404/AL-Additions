@@ -141,3 +141,16 @@ defineFeature(
     initSyncPanel();
   }
 );
+
+defineFeature(
+  {
+    id: 'manualOverrides',
+    key: 'syncManualOverrides',
+    type: 'json',
+    def: {},
+    section: 'External Links, Downloads & Mappings',
+    title: 'Manual Mappings & Sync Audit',
+    help: 'Manage custom MyAnimeList ID overrides, entries ignored from sync, and review database discrepancies.'
+  },
+  () => {}
+);

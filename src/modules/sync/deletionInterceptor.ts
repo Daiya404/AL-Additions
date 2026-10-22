@@ -4,6 +4,7 @@ import { mediaRoute } from '../../utils/dom';
 import { log } from '../../api/mal';
 import { stores, addPendingDelete, removePendingDelete } from './state';
 import { SyncMediaType, typeLabel } from './types';
+import { getOverride } from './overrides';
 
 let activeCandidate: { mediaId: number; type: SyncMediaType; title: string; malId?: number } | null = null;
 
@@ -59,7 +60,12 @@ export function extractDialogMedia(root: Element = document.body): { mediaId: nu
 
   if (!mediaId) return null;
 
-  const malId = stores[type].ids.data[mediaId]?.m || undefined;
+  const override = getOverride(mediaId);
+  if (override && override.malId === 0) {
+    return null;
+  }
+
+  const malId = override?.malId || stores[type].ids.data[mediaId]?.m || undefined;
   return { mediaId, type, title: title || `Media #${mediaId}`, malId };
 }
 

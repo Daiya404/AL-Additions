@@ -65,3 +65,13 @@ export interface FlaggedError extends Error {
   status?: number;
   html?: boolean;
 }
+
+export interface ManualOverride {
+  malId: number;
+  type: SyncMediaType;
+  title: string;
+  cover?: string;
+  updatedAt: number;
+}
+
+export type ManualOverrideStore = Record<string, ManualOverride>;

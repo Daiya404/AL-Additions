@@ -9,8 +9,10 @@ import { maybeAutoSync } from '../modules/sync/engine';
 import { createBackup, downloadBackupFile, importBackup, readFileAsBytes } from './backup';
 import type { SettingRow, RegisteredFeature } from '../types';
 import { DEFAULT_TIERS, validateTiers, normalizeHexColor, type TierConfig } from '../utils/tiers';
+import { openOverridesModal } from '../modules/sync/overridesModal';
+import { OVERRIDES_SETTING_KEY, getManualOverrides } from '../modules/sync/overrides';
 
-const SECTIONS = ['Sync', 'AniList Enhancements', 'External Links & Downloads'];
+const SECTIONS = ['Sync', 'AniList Enhancements', 'External Links, Downloads & Mappings'];
 
 const CSS = `
   .ala-settings-nav-section{margin-top:26px}
@@ -147,6 +149,11 @@ const optionHtml = (r: SettingRow): string => {
 };
 
 const featureHtml = (f: RegisteredFeature): string => {
+  if (f.toggle.type === 'json') {
+    return `<div class="ala-feature" data-feature="${f.id}">
+      <div class="ala-row ala-row--main">${rowText(f.title, f.help)}${TYPES.json.html(f.toggle, Settings.get(f.toggle.key))}</div>
+    </div>`;
+  }
   const isFeatureOn = !!Settings.get(f.toggle.key);
   return `<div class="ala-feature ${isFeatureOn ? '' : 'is-off'}" data-feature="${f.id}">
     <label class="ala-row ala-row--main">${rowText(f.title, f.help)}${TYPES.toggle.html(f.toggle, isFeatureOn)}</label>
@@ -537,8 +544,9 @@ export function showPanel(): void {
   const controls = () => panel.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-key]');
 
   const syncFeature = (card: HTMLElement) => {
-    const toggle = card.querySelector<HTMLInputElement>('.ala-row--main [data-key]');
-    const on = toggle ? toggle.checked : false;
+    const toggle = card.querySelector<HTMLInputElement>('.ala-row--main input[type="checkbox"][data-key]');
+    if (!toggle) return;
+    const on = toggle.checked;
     card.classList.toggle('is-off', !on);
 
     const optionsCollapsible = card.querySelector<HTMLElement>(':scope > .ala-options-collapsible');
@@ -574,7 +582,10 @@ export function showPanel(): void {
   panel.querySelector('.ala-save')?.addEventListener('click', () => {
     controls().forEach((el) => {
       const r = ROWS[el.dataset.key!];
-      if (r) Settings.set(r.key, TYPES[r.type].read(el));
+      if (r) {
+        if (r.key === OVERRIDES_SETTING_KEY) return;
+        Settings.set(r.key, TYPES[r.type].read(el));
+      }
     });
     setStatus('Saved. Reloading…');
     setTimeout(() => location.reload(), 350);
@@ -583,7 +594,10 @@ export function showPanel(): void {
   panel.querySelector('.ala-reset')?.addEventListener('click', () => {
     controls().forEach((el) => {
       const r = ROWS[el.dataset.key!];
-      if (r) TYPES[r.type].write(el, r.def);
+      if (r) {
+        if (r.key === OVERRIDES_SETTING_KEY) return;
+        TYPES[r.type].write(el, r.def);
+      }
     });
     panel.querySelectorAll<HTMLElement>('.ala-feature').forEach(syncFeature);
     setStatus('Defaults restored. Press Save to apply them.');
@@ -656,7 +670,13 @@ export function showPanel(): void {
     const overrides: Record<string, any> = {};
     controls().forEach((el) => {
       const r = ROWS[el.dataset.key!];
-      if (r) overrides[r.key] = TYPES[r.type].read(el);
+      if (r) {
+        if (r.key === OVERRIDES_SETTING_KEY) {
+          overrides[r.key] = getManualOverrides();
+          return;
+        }
+        overrides[r.key] = TYPES[r.type].read(el);
+      }
     });
     return overrides;
   };
@@ -733,6 +753,11 @@ export function showPanel(): void {
     e.preventDefault();
     const inputEl = panel.querySelector<HTMLInputElement>('input[data-key="tierLabels"]');
     if (inputEl) openTierEditor(inputEl);
+  });
+
+  panel.querySelector('#ala-btn-edit-syncManualOverrides')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    openOverridesModal();
   });
 
   const onFocus = () => {

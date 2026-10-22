@@ -9,7 +9,7 @@ defineFeature(
   {
     id: 'banner',
     key: 'bannerEnabled',
-    section: 'External Links & Downloads',
+    section: 'External Links, Downloads & Mappings',
     def: false,
     legacy: ['bannerEnabled', 'bannerDownloadEnabled', 'bannerDownloaderEnabled'],
     title: 'Anime/Manga Banner Downloader',

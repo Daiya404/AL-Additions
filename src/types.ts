@@ -24,7 +24,8 @@ export interface FeatureMeta {
   section?: string;
   title: string;
   help: string;
-  def?: boolean;
+  type?: SettingType;
+  def?: any;
   legacy?: string[];
   options?: SettingOption[];
   hosts?: string[];
