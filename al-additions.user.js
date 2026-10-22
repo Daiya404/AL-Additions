@@ -4550,17 +4550,18 @@
       #${ID}{box-sizing:border-box;width:100%;max-width:100%;margin:0 0 12px;padding:14px 15px 15px;border-radius:3px;background:rgb(var(--color-foreground));color:rgb(var(--color-text));font-size:1.3rem;line-height:1.4;overflow:hidden}
       #${ID} *{box-sizing:border-box}
       #${ID} :focus-visible{outline:2px solid rgb(var(--color-blue));outline-offset:2px}
-      #${ID} .ala-mi-fields{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:12px}
+      #${ID} .ala-mi-fields{display:grid;grid-template-columns:minmax(54px,1fr) minmax(0,2fr);gap:10px}
       #${ID} .ala-mi-field{display:flex;flex-direction:column;gap:6px;min-width:0}
       #${ID} .ala-mi-label{color:rgb(var(--color-text-lighter));font-size:1.2rem}
       #${ID} .ala-mi-box{display:flex;align-items:stretch;height:38px;border-radius:3px;background:rgb(var(--color-background));box-shadow:inset 0 0 0 1px transparent;overflow:hidden;transition:box-shadow .15s}
       #${ID} .ala-mi-box:hover{box-shadow:inset 0 0 0 1px rgba(var(--color-blue),.4)}
       #${ID} .ala-mi-box:focus-within{box-shadow:inset 0 0 0 1px rgb(var(--color-blue))}
-      #${ID} input{flex:1 1 auto;width:100%;min-width:0;height:100%;margin:0;padding:0 4px;border:0;outline:none;background:transparent;color:rgb(var(--color-text));font:inherit;font-size:1.5rem;text-align:center;-moz-appearance:textfield}
+      #${ID} input{flex:1 1 auto;width:100%;min-width:0;height:100%;margin:0;padding:0 2px;border:0;outline:none;background:transparent;color:rgb(var(--color-text));font:inherit;font-size:1.45rem;text-align:center;-moz-appearance:textfield}
+      #${ID} .ala-mi-progress-input[data-digits="4"],#${ID} .ala-mi-progress-input[data-digits="5"]{font-size:1.25rem}
       #${ID} input::placeholder{color:rgb(var(--color-text-lighter))}
       #${ID} input:focus::placeholder{color:transparent}
       #${ID} input::-webkit-outer-spin-button,#${ID} input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
-      #${ID} .ala-mi-step{flex:0 0 34px;display:flex;align-items:center;justify-content:center;padding:0;border:0;background:transparent;color:rgb(var(--color-text-lighter));font:inherit;font-size:1.8rem;line-height:1;cursor:pointer;transition:color .15s}
+      #${ID} .ala-mi-step{flex:0 0 26px;display:flex;align-items:center;justify-content:center;padding:0;border:0;background:transparent;color:rgb(var(--color-text-lighter));font:inherit;font-size:1.7rem;line-height:1;cursor:pointer;transition:color .15s}
       #${ID} .ala-mi-step:hover{color:rgb(var(--color-blue))}
       #${ID} .ala-mi-step:active{color:rgb(var(--color-text))}
       #${ID} .ala-mi-sub{min-height:16px;overflow:hidden;color:rgb(var(--color-text-lighter));font-size:1.15rem;white-space:nowrap;text-overflow:ellipsis}
@@ -4575,7 +4576,7 @@
       #${ID} .ala-mi-save:disabled{opacity:.45;cursor:default}
       #${ID} .ala-mi-save.is-saving,#${ID} .ala-mi-save.is-saving:disabled{opacity:.7;cursor:wait}
       #${ID} .ala-mi-save.is-saved,#${ID} .ala-mi-save.is-saved:disabled{background:rgb(var(--color-green,76,175,80));color:rgb(var(--color-white,255,255,255));opacity:1;cursor:default}
-      @media (pointer:coarse){#${ID} .ala-mi-box{height:42px}#${ID} .ala-mi-step{flex-basis:40px}#${ID} input{font-size:16px}#${ID} .ala-mi-save{height:40px}}
+      @media (pointer:coarse){#${ID} .ala-mi-box{height:42px}#${ID} .ala-mi-step{flex:0 0 34px}#${ID} input{font-size:15px}#${ID} .ala-mi-save{height:40px}}
       @media (prefers-reduced-motion:reduce){#${ID} .ala-mi-aired,#${ID} .ala-mi-done,#${ID} .ala-mi-save{transition:none}}`);
 		const maxOf = (info, type) => {
 			const n = Math.floor(Number(type === "ANIME" ? info?.episodes : info?.chapters));
@@ -4787,6 +4788,8 @@
 					if (saveBtn.textContent === "Saved" || saveBtn.textContent === "Saving..." || saveBtn.textContent === "Failed") saveBtn.textContent = "Save";
 				}
 				function paint() {
+					const digits = String(progressInput.value || "").trim().length;
+					progressInput.dataset.digits = digits >= 4 ? String(digits) : "";
 					const typed = Number(progressInput.value);
 					const watched = Number.isFinite(typed) && typed > 0 ? typed : 0;
 					sub.innerHTML = `of <b>${max !== null ? max : "—"}</b>` + (released != null ? ` · <b>${released}</b> ${word}` : lookupPending ? " · …" : "");
