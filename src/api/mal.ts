@@ -295,6 +295,16 @@ export async function malUpdateEntry(type: 'ANIME' | 'MANGA', malId: number, pat
   return res;
 }
 
+export async function malDeleteEntry(type: 'ANIME' | 'MANGA', malId: number): Promise<any> {
+  const res = await malCall({
+    method: 'DELETE',
+    url: `${MAL_API}/${type === 'ANIME' ? 'anime' : 'manga'}/${malId}/my_list_status`
+  });
+  if (res.status === 404) return res;
+  if (res.status < 200 || res.status >= 300) throw new MalError('MAL delete', res);
+  return res;
+}
+
 export async function malWhoAmI(): Promise<any> {
   const res = await malCall({ url: `${MAL_API}/users/@me` });
   if (res.status < 200 || res.status >= 300) throw new MalError('MAL profile', res);

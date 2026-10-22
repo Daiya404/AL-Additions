@@ -6,6 +6,7 @@ import { SENSITIVE_KEYS } from '../../settings/backup';
 import { TYPES } from './types';
 import { stores, clearCache } from './state';
 import { initSyncPanel, renderPanel } from './panel';
+import { initDeletionInterceptor } from './deletionInterceptor';
 
 const ALL_KEYS = [
   ...SENSITIVE_KEYS,
@@ -13,6 +14,7 @@ const ALL_KEYS = [
   'sync_onboarded',
   'sync_retry_at',
   'sync_account',
+  'sync_pending_deletes',
   ...TYPES.flatMap((t) => [`last_sync_${t}`, `last_run_${t}`, `last_compare_${t}`])
 ];
 
@@ -78,10 +80,23 @@ defineFeature(
         legacy: ['syncScoreRounding', 'scoreConversionMethod'],
         title: 'Decimal Score Conversion',
         help: 'MyAnimeList only accepts whole-number scores. <b>Ceil</b> always rounds up (7.4 → 8), <b>Round</b> rounds normally (7.4 → 7, 7.5 → 8), and <b>Floor</b> always rounds down (7.9 → 7).'
+      },
+      {
+        key: 'syncMode',
+        type: 'select',
+        def: 'update',
+        options: [
+          ['update', 'Update Only'],
+          ['exact', 'Exact Match (Mirror)']
+        ],
+        legacy: ['syncMode'],
+        title: 'Sync Mode',
+        help: '<b>Update Only</b> (default) only adds and updates entries on MyAnimeList, keeping existing MAL entries intact if deleted on AniList. <b>Exact Match (Mirror)</b> automatically deletes entries from MyAnimeList when removed from AniList.'
       }
     ]
   },
   () => {
+    initDeletionInterceptor();
     if (store.get('sync_schema', 0) < 2) {
       safe(() => {
         for (const k of [

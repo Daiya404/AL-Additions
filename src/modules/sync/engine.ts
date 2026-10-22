@@ -1,6 +1,7 @@
 import { AniList } from '../../api/anilist';
 import {
   malUpdateEntry,
+  malDeleteEntry,
   malWhoAmI,
   malFetchList,
   malLimiter,
@@ -34,10 +35,12 @@ import {
   acquireLock,
   releaseLock,
   clearCache,
-  resetAccountState
+  resetAccountState,
+  getPendingDeletes,
+  removePendingDelete
 } from './state';
 import { reconcile, fallbackPatch, describePatch, malKey, PROGRESS_KEYS } from './reconcile';
-import { resolveTargets, dedupeTargets, runPool, rememberId } from './targets';
+import { resolveTargets, dedupeTargets, runPool, rememberId, cachedId } from './targets';
 
 hooks.checkCancel = checkCancel;
 
@@ -235,9 +238,10 @@ export function planJobs(
 
 export async function syncType(type: SyncMediaType, userId: number, full: boolean): Promise<{ ok: boolean }> {
   const label = typeLabel(type);
-  const c: SyncCounters = { pushed: 0, unchanged: 0, settled: 0, skipped: 0, unmatched: 0, conflicts: 0, transient: 0, permanent: 0 };
+  const c: SyncCounters = { pushed: 0, deleted: 0, unchanged: 0, settled: 0, skipped: 0, unmatched: 0, conflicts: 0, transient: 0, permanent: 0 };
   const lastSync = Number(store.get(`last_sync_${type}`, 0)) || 0;
   const fullPass = full || !lastSync || Date.now() - Number(store.get(`last_compare_${type}`, 0)) > FULL_COMPARE_MS;
+  const isExact = Settings.get('syncMode') === 'exact';
 
   log(`${label}: starting ${fullPass ? 'full library comparison' : 'incremental sync'} — fetching AniList entries and your current MAL list.`);
   const [entries, mal] = await Promise.all([
@@ -250,9 +254,86 @@ export async function syncType(type: SyncMediaType, userId: number, full: boolea
   progress.phase = 'pushing';
   notifyProgress(true);
 
+  if (isExact) {
+    const pending = getPendingDeletes().filter((p) => p.type === type);
+    for (const p of pending) {
+      checkCancel();
+      const readded = entries.some((e) => e.mediaId === p.mediaId);
+      if (readded) {
+        removePendingDelete(p.mediaId, type);
+        log(`${label}: deletion cancelled for "${p.title}" — entry is present on AniList.`);
+        continue;
+      }
+
+      let malId = p.malId || cachedId(type, { mediaId: p.mediaId } as any) || stores[type].ids.data[p.mediaId]?.m;
+      if (!malId && mal) {
+        for (const [id, st] of Object.entries(mal)) {
+          if (st.__malTitle && p.title && strictTitle(st.__malTitle) === strictTitle(p.title)) {
+            malId = Number(id);
+            break;
+          }
+        }
+      }
+
+      if (malId) {
+        try {
+          await breaker.wait(checkCancel);
+          checkCancel();
+          await malDeleteEntry(type, Number(malId));
+          if (mal[malId]) delete mal[malId];
+          c.deleted++;
+          log(`${label}: deleted "${p.title}" from MAL (Exact Match).`, 'success');
+        } catch (e: any) {
+          if (e.status === 404) {
+            if (mal[malId]) delete mal[malId];
+          } else {
+            log(`${label}: failed to delete "${p.title}" from MAL: ${e.message}`, 'warn');
+          }
+        }
+      } else {
+        log(`${label}: could not find MAL ID for deleted title "${p.title}".`, 'warn');
+      }
+      removePendingDelete(p.mediaId, type);
+    }
+  }
+
   const targets = dedupeTargets(type, await resolveTargets(type, entries, mal, c), c);
   const jobs = planJobs(type, targets, mal, c);
   await runPool(jobs, (job) => pushJob(type, job, mal, c), Math.max(2, Math.min(8, Math.round(malLimiter.rate / 20))));
+
+  if (isExact && fullPass) {
+    const targetMalIds = new Set(targets.map((t) => t.malId));
+    const orphanedMalIds = Object.keys(mal)
+      .map(Number)
+      .filter((id) => id > 0 && !targetMalIds.has(id));
+
+    const MAX_AUTO_DELETE_LIMIT = 10;
+    if (orphanedMalIds.length > MAX_AUTO_DELETE_LIMIT) {
+      log(
+        `${label}: Exact Match found ${orphanedMalIds.length} MAL entries not present on AniList, exceeding the safety limit of ${MAX_AUTO_DELETE_LIMIT}. Auto-delete was skipped to protect your MAL list from potential API data loss.`,
+        'warn'
+      );
+    } else if (orphanedMalIds.length > 0) {
+      for (const orphanId of orphanedMalIds) {
+        checkCancel();
+        const orphanTitle = mal[orphanId]?.__malTitle || `MAL ID ${orphanId}`;
+        try {
+          await breaker.wait(checkCancel);
+          checkCancel();
+          await malDeleteEntry(type, orphanId);
+          delete mal[orphanId];
+          c.deleted++;
+          log(`${label}: deleted "${orphanTitle}" from MAL (not on AniList).`, 'success');
+        } catch (e: any) {
+          if (e.status === 404) {
+            delete mal[orphanId];
+          } else {
+            log(`${label}: failed to delete "${orphanTitle}" from MAL: ${e.message}`, 'warn');
+          }
+        }
+      }
+    }
+  }
 
   const ok = c.transient === 0;
   if (ok) {
@@ -264,6 +345,7 @@ export async function syncType(type: SyncMediaType, userId: number, full: boolea
   }
   const parts = [
     `${c.pushed} updated`,
+    c.deleted ? `${c.deleted} deleted` : null,
     `${c.unchanged + c.settled} already in sync`,
     c.unmatched && `${c.unmatched} unmatched`,
     c.skipped && `${c.skipped} skipped`,
