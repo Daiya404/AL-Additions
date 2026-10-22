@@ -15,7 +15,7 @@
 - **Default State**: All enhancement modules are now disabled by default on clean installations.
 - **Core Observer Hardening**: Patched `history.pushState` and `replaceState` on `unsafeWindow` with 50ms mutation batching while filtering out the script's own UI mutations.
 - **Bug Fixes & Improvements**:
-    - Media Info: show a "Connect AniList" prompt when logged out instead of an inactive editor; automatically update entry status when episode/chapter reaches total count; stop rescheduling renders after max failures.
+    - Media Info: show a "Connect AniList" prompt when logged out instead of an inactive editor; automatically update entry status when episode/chapter reaches total count; stop rescheduling renders after max failures; prevent 3+ digit episode and chapter numbers from clipping against stepper buttons in the desktop sidebar.
     - Nyaa search: open tabs synchronously on click to prevent browser popup blockers during asynchronous MAL ID resolution.
     - Anisongs: cache empty theme queries for 12 hours instead of 7 days; debounced mutation repair listener.
     - Airing Dots: added rejection handling in update batches to prevent unhandled promise rejections.
