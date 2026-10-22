@@ -1029,6 +1029,15 @@
 		if (res.status < 200 || res.status >= 300) throw new MalError("MAL", res);
 		return res;
 	}
+	async function malDeleteEntry(type, malId) {
+		const res = await malCall({
+			method: "DELETE",
+			url: `${MAL_API}/${type === "ANIME" ? "anime" : "manga"}/${malId}/my_list_status`
+		});
+		if (res.status === 404) return res;
+		if (res.status < 200 || res.status >= 300) throw new MalError("MAL delete", res);
+		return res;
+	}
 	async function malWhoAmI() {
 		const res = await malCall({ url: `${MAL_API}/users/@me` });
 		if (res.status < 200 || res.status >= 300) throw new MalError("MAL profile", res);
@@ -1171,6 +1180,18 @@
 		for (const k of Object.keys(c.data)) delete c.data[k];
 		c.save();
 	};
+	var PENDING_DELETES_KEY = "sync_pending_deletes";
+	function getPendingDeletes() {
+		return jsonGet(PENDING_DELETES_KEY, []);
+	}
+	function addPendingDelete(del) {
+		const list = getPendingDeletes().filter((p) => !(p.mediaId === del.mediaId && p.type === del.type));
+		list.push(del);
+		jsonSet(PENDING_DELETES_KEY, list);
+	}
+	function removePendingDelete(mediaId, type) {
+		jsonSet(PENDING_DELETES_KEY, getPendingDeletes().filter((p) => !(p.mediaId === mediaId && p.type === type)));
+	}
 	function resetAccountState() {
 		for (const t of TYPES) {
 			for (const k of [
@@ -1181,6 +1202,7 @@
 			clearCache(stores[t].settled);
 		}
 		store.del("sync_retry_at");
+		store.del(PENDING_DELETES_KEY);
 	}
 	var heartbeat = null;
 	async function acquireLock() {
@@ -1670,6 +1692,7 @@
 		const label = typeLabel(type);
 		const c = {
 			pushed: 0,
+			deleted: 0,
 			unchanged: 0,
 			settled: 0,
 			skipped: 0,
@@ -1680,6 +1703,7 @@
 		};
 		const lastSync = Number(store.get(`last_sync_${type}`, 0)) || 0;
 		const fullPass = full || !lastSync || Date.now() - Number(store.get(`last_compare_${type}`, 0)) > FULL_COMPARE_MS;
+		const isExact = Settings.get("syncMode") === "exact";
 		log(`${label}: starting ${fullPass ? "full library comparison" : "incremental sync"} — fetching AniList entries and your current MAL list.`);
 		const [entries, mal] = await Promise.all([fullPass ? alFetchAll(userId, type) : alFetchIncremental(userId, type, lastSync), malFetchList(type)]);
 		const newest = entries.reduce((m, e) => Math.max(m, e.updatedAt), 0);
@@ -1687,7 +1711,61 @@
 		progress.total += entries.length;
 		progress.phase = "pushing";
 		notifyProgress(true);
-		await runPool(planJobs(type, dedupeTargets(type, await resolveTargets(type, entries, mal, c), c), mal, c), (job) => pushJob(type, job, mal, c), Math.max(2, Math.min(8, Math.round(malLimiter.rate / 20))));
+		if (isExact) {
+			const pending = getPendingDeletes().filter((p) => p.type === type);
+			for (const p of pending) {
+				checkCancel();
+				if (entries.some((e) => e.mediaId === p.mediaId)) {
+					removePendingDelete(p.mediaId, type);
+					log(`${label}: deletion cancelled for "${p.title}" — entry is present on AniList.`);
+					continue;
+				}
+				let malId = p.malId || cachedId(type, { mediaId: p.mediaId }) || stores[type].ids.data[p.mediaId]?.m;
+				if (!malId && mal) {
+					for (const [id, st] of Object.entries(mal)) if (st.__malTitle && p.title && strictTitle(st.__malTitle) === strictTitle(p.title)) {
+						malId = Number(id);
+						break;
+					}
+				}
+				if (malId) try {
+					await breaker.wait(checkCancel);
+					checkCancel();
+					await malDeleteEntry(type, Number(malId));
+					if (mal[malId]) delete mal[malId];
+					c.deleted++;
+					log(`${label}: deleted "${p.title}" from MAL (Exact Match).`, "success");
+				} catch (e) {
+					if (e.status === 404) {
+						if (mal[malId]) delete mal[malId];
+					} else log(`${label}: failed to delete "${p.title}" from MAL: ${e.message}`, "warn");
+				}
+				else log(`${label}: could not find MAL ID for deleted title "${p.title}".`, "warn");
+				removePendingDelete(p.mediaId, type);
+			}
+		}
+		const targets = dedupeTargets(type, await resolveTargets(type, entries, mal, c), c);
+		await runPool(planJobs(type, targets, mal, c), (job) => pushJob(type, job, mal, c), Math.max(2, Math.min(8, Math.round(malLimiter.rate / 20))));
+		if (isExact && fullPass) {
+			const targetMalIds = new Set(targets.map((t) => t.malId));
+			const orphanedMalIds = Object.keys(mal).map(Number).filter((id) => id > 0 && !targetMalIds.has(id));
+			const MAX_AUTO_DELETE_LIMIT = 10;
+			if (orphanedMalIds.length > MAX_AUTO_DELETE_LIMIT) log(`${label}: Exact Match found ${orphanedMalIds.length} MAL entries not present on AniList, exceeding the safety limit of ${MAX_AUTO_DELETE_LIMIT}. Auto-delete was skipped to protect your MAL list from potential API data loss.`, "warn");
+			else if (orphanedMalIds.length > 0) for (const orphanId of orphanedMalIds) {
+				checkCancel();
+				const orphanTitle = mal[orphanId]?.__malTitle || `MAL ID ${orphanId}`;
+				try {
+					await breaker.wait(checkCancel);
+					checkCancel();
+					await malDeleteEntry(type, orphanId);
+					delete mal[orphanId];
+					c.deleted++;
+					log(`${label}: deleted "${orphanTitle}" from MAL (not on AniList).`, "success");
+				} catch (e) {
+					if (e.status === 404) delete mal[orphanId];
+					else log(`${label}: failed to delete "${orphanTitle}" from MAL: ${e.message}`, "warn");
+				}
+			}
+		}
 		const ok = c.transient === 0;
 		if (ok) {
 			if (fullPass) {
@@ -1698,6 +1776,7 @@
 		}
 		log(`${label}: finished — ${[
 			`${c.pushed} updated`,
+			c.deleted ? `${c.deleted} deleted` : null,
 			`${c.unchanged + c.settled} already in sync`,
 			c.unmatched && `${c.unmatched} unmatched`,
 			c.skipped && `${c.skipped} skipped`,
@@ -6500,12 +6579,142 @@
 			maybeAutoSync();
 		}, 2e3);
 	}
+	var activeCandidate = null;
+	function extractDialogMedia(root = document.body) {
+		const dialog = root.closest(".el-dialog, .el-dialog__wrapper, body")?.querySelector(".el-dialog__body") || document.querySelector(".el-dialog__body");
+		if (!dialog) return null;
+		const title = dialog.querySelector(".title, .header .title")?.textContent?.trim() || "";
+		let type = "ANIME";
+		if (dialog.querySelector(".input-wrap.manga, .form.manga, .manga")) type = "MANGA";
+		else if (dialog.querySelector(".input-wrap.anime, .form.anime, .anime")) type = "ANIME";
+		let mediaId = 0;
+		const vue = dialog.__vue__ || dialog.parentElement?.__vue__;
+		if (vue?.mediaId) mediaId = Number(vue.mediaId);
+		else if (vue?.media?.id) mediaId = Number(vue.media.id);
+		if (!mediaId) {
+			const el = dialog.querySelector(".header[data-src], .header[style*=\"media/\"], .cover img, img[src*=\"/media/\"]");
+			const m = (el?.getAttribute("src") || el?.getAttribute("data-src") || el?.style.backgroundImage || "").match(/\/media\/(anime|manga)\/[^\/]+\/(?:bx)?(\d+)/i);
+			if (m) {
+				type = m[1].toUpperCase();
+				mediaId = Number(m[2]);
+			}
+		}
+		if (!mediaId && title) {
+			const link = Array.from(document.querySelectorAll("a[href*=\"/anime/\"], a[href*=\"/manga/\"]")).find((a) => a.textContent?.trim() === title);
+			if (link) {
+				const m = link.getAttribute("href")?.match(/^\/(anime|manga)\/(\d+)/);
+				if (m) {
+					type = m[1].toUpperCase();
+					mediaId = Number(m[2]);
+				}
+			}
+		}
+		if (!mediaId) {
+			const route = mediaRoute();
+			if (route) {
+				mediaId = route.id;
+				type = route.type;
+			}
+		}
+		if (!mediaId) return null;
+		const malId = stores[type].ids.data[mediaId]?.m || void 0;
+		return {
+			mediaId,
+			type,
+			title: title || `Media #${mediaId}`,
+			malId
+		};
+	}
+	var installed = false;
+	function initDeletionInterceptor() {
+		if (installed || typeof window === "undefined") return;
+		if (location.hostname !== "anilist.co") return;
+		installed = true;
+		const targetWindows = [window, typeof _unsafeWindow !== "undefined" ? _unsafeWindow : null].filter(Boolean);
+		for (const win of targetWindows) {
+			const origFetch = win.fetch;
+			if (typeof origFetch !== "function") continue;
+			win.fetch = async function(input, init) {
+				const url = typeof input === "string" ? input : input?.url || "";
+				const isGraphQL = typeof url === "string" && url.includes("graphql.anilist.co");
+				let queryStr = "";
+				let variables = null;
+				if (isGraphQL && init?.body) try {
+					const bodyStr = typeof init.body === "string" ? init.body : "";
+					if (bodyStr) {
+						const parsed = JSON.parse(bodyStr);
+						queryStr = parsed.query || parsed.operationName || "";
+						variables = parsed.variables || null;
+					}
+				} catch (_) {}
+				if (queryStr.includes("DeleteMediaListEntry")) {
+					if (Settings.get("syncMode") === "exact") {
+						const candidate = activeCandidate || extractDialogMedia(document.body);
+						if (candidate) {
+							addPendingDelete({
+								mediaId: candidate.mediaId,
+								malId: candidate.malId,
+								type: candidate.type,
+								title: candidate.title,
+								deletedAt: Date.now()
+							});
+							activeCandidate = null;
+							log(`${typeLabel(candidate.type)}: queued "${candidate.title}" for deletion on MAL (Exact Match).`, "info");
+						}
+					}
+				}
+				const res = await origFetch.apply(this, arguments);
+				if (queryStr.includes("SaveMediaListEntry") && variables?.mediaId) {
+					const mediaId = Number(variables.mediaId);
+					removePendingDelete(mediaId, "ANIME");
+					removePendingDelete(mediaId, "MANGA");
+				}
+				return res;
+			};
+		}
+		document.addEventListener("click", (e) => {
+			if (Settings.get("syncMode") !== "exact") return;
+			const target = e.target;
+			if (!target) return;
+			const btnText = ((target.closest(".delete-btn, .delete, button, [role=\"button\"]") || target).textContent || "").trim().toLowerCase();
+			if (target.classList.contains("delete-btn") || target.classList.contains("delete") || btnText === "delete" || btnText.includes("delete list entry")) {
+				const candidate = extractDialogMedia(target);
+				if (candidate) activeCandidate = candidate;
+				return;
+			}
+			const inWarningBox = !!target.closest(".el-message-box, .el-message-box__wrapper");
+			if ((btnText === "ok" || target.classList.contains("el-button--primary") || !!target.closest(".el-message-box__btns .el-button--primary")) && inWarningBox) {
+				const candidate = activeCandidate || extractDialogMedia(document.body);
+				if (candidate) {
+					addPendingDelete({
+						mediaId: candidate.mediaId,
+						malId: candidate.malId,
+						type: candidate.type,
+						title: candidate.title,
+						deletedAt: Date.now()
+					});
+					activeCandidate = null;
+					log(`${typeLabel(candidate.type)}: queued "${candidate.title}" for deletion on MAL (Exact Match).`, "info");
+				}
+				return;
+			}
+			if (btnText === "cancel" && inWarningBox) {
+				activeCandidate = null;
+				return;
+			}
+			if (btnText === "save" || target.classList.contains("save-btn")) {
+				const candidate = extractDialogMedia(target);
+				if (candidate) removePendingDelete(candidate.mediaId, candidate.type);
+			}
+		}, true);
+	}
 	var ALL_KEYS = [
 		...SENSITIVE_KEYS,
 		"sync_lock_heartbeat",
 		"sync_onboarded",
 		"sync_retry_at",
 		"sync_account",
+		"sync_pending_deletes",
 		...TYPES.flatMap((t) => [
 			`last_sync_${t}`,
 			`last_run_${t}`,
@@ -6583,9 +6792,19 @@
 				legacy: ["syncScoreRounding", "scoreConversionMethod"],
 				title: "Decimal Score Conversion",
 				help: "MyAnimeList only accepts whole-number scores. <b>Ceil</b> always rounds up (7.4 → 8), <b>Round</b> rounds normally (7.4 → 7, 7.5 → 8), and <b>Floor</b> always rounds down (7.9 → 7)."
+			},
+			{
+				key: "syncMode",
+				type: "select",
+				def: "update",
+				options: [["update", "Update Only"], ["exact", "Exact Match (Mirror)"]],
+				legacy: ["syncMode"],
+				title: "Sync Mode",
+				help: "<b>Update Only</b> (default) only adds and updates entries on MyAnimeList, keeping existing MAL entries intact if deleted on AniList. <b>Exact Match (Mirror)</b> automatically deletes entries from MyAnimeList when removed from AniList."
 			}
 		]
 	}, () => {
+		initDeletionInterceptor();
 		if (store.get("sync_schema", 0) < 2) safe(() => {
 			for (const k of [
 				"mal_mirror_ANIME",

@@ -173,6 +173,7 @@ Each feature has a toggle, and some have options:
 | Auto-Sync Manga          | Off                  | Automatically sync your manga list to MAL in the background.                                                 |
 | Auto-Sync Manga Interval | 6 hours              | 1–720 hours.                                                                                                 |
 | Decimal Score Conversion | Round                | **Ceil** rounds up (7.4 → 8), **Round** rounds normally (7.4 → 7, 7.5 → 8), **Floor** rounds down (7.9 → 7). |
+| Sync Mode                | Update Only          | **Update Only** adds and updates entries on MAL without deleting. **Exact Match (Mirror)** automatically removes entries from MAL when deleted on AniList. |
 
 Changes apply when you press **Save and reload**. **Reset to defaults** restores the defaults in the panel, and you still need to press Save.
 
