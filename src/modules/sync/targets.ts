@@ -3,6 +3,7 @@ import { searchMalId, log } from '../../api/mal';
 import { stores, markDone, ID_MISS_TTL_MS } from './state';
 import { STATUS_MAP } from './reconcile';
 import { SyncMediaType, AniListSyncEntry, SyncTarget, SyncCounters, typeLabel } from './types';
+import { getOverride } from './overrides';
 
 export function buildTitleIndex(mal: Record<number, any>): Map<string, number> {
   const idx = new Map<string, number>();
@@ -26,6 +27,8 @@ export function localMatch(entry: AniListSyncEntry, idx: Map<string, number>): n
 }
 
 export function cachedId(type: SyncMediaType, entry: AniListSyncEntry): number | undefined {
+  const override = getOverride(entry.mediaId);
+  if (override) return override.malId;
   const c = stores[type].ids.data[entry.mediaId];
   const fresh = !!c && Date.now() - c.t < ID_MISS_TTL_MS;
   if (entry.idMal) return fresh && c.bad === entry.idMal ? 0 : entry.idMal;
@@ -78,6 +81,18 @@ export async function resolveTargets(
       c.skipped++;
       markDone();
       continue;
+    }
+    const override = getOverride(entry.mediaId);
+    if (override) {
+      if (override.malId === 0) {
+        c.skipped++;
+        markDone();
+        continue;
+      }
+      if (override.malId > 0) {
+        targets.push({ entry, malId: override.malId, explicit: true });
+        continue;
+      }
     }
     const id = cachedId(type, entry);
     if (id !== undefined && id > 0) {
