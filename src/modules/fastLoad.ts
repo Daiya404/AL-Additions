@@ -1,5 +1,6 @@
 import { defineFeature } from '../core/registry';
 import { unsafeWindow } from 'vite-plugin-monkey/dist/client';
+import { store as gmStore } from '../utils/helpers';
 
 defineFeature(
   {
@@ -15,30 +16,30 @@ defineFeature(
     const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
     if (win.top !== win.self) return;
     if (win.__ANILIST_FAST_LOAD__ || win.__ANILIST_FAST_LOAD_V4__) return;
-    win.__ANILIST_FAST_LOAD__ = '0.3.1';
+    win.__ANILIST_FAST_LOAD__ = '0.4.1';
 
     const CFG = {
-      lazyMedia: true,
-      rowSkipping: true,
-      coalesceObservers: true,
+      lazyMedia: false,
+      rowSkipping: false,
+      coalesceObservers: false,
       observerBatchMs: 80,
-      fastInnerText: true,
-      memoSelectorProbes: true,
-      blockTierInData: true,
-      tierAssist: true,
+      fastInnerText: false,
+      memoSelectorProbes: false,
+      blockTierInData: false,
+      tierAssist: false,
       tierAssistMs: 250,
 
       gqlTtl: 15_000,
       gqlStaleTtl: 5 * 60_000,
-      gqlMaxBytes: 40 * 1024 * 1024,
-      gqlMaxEntryBytes: 16 * 1024 * 1024,
+      gqlMaxBytes: 64 * 1024 * 1024,
+      gqlMaxEntryBytes: 24 * 1024 * 1024,
 
       prefetch: true,
-      earlyStart: true,
-      prefetchMaxPerMin: 8,
-      prefetchDwellMs: 140,
-      learnWindowMs: 3_000,
-      learnMaxReqs: 4
+      earlyStart: false,
+      prefetchMaxPerMin: 12,
+      prefetchDwellMs: 200,
+      learnWindowMs: 8_000,
+      learnMaxReqs: 6
     };
 
     const GQL_ORIGIN = 'https://graphql.anilist.co';
@@ -531,11 +532,14 @@ defineFeature(
       let epoch = 0;
       let pausedUntil = 0;
       let freshFloor = 0;
-      let prefetching = false;
 
-      const isGraphQL = (u: any) => {
+      const isGraphQL = (u: any): boolean => {
         try {
-          return new URL(u, win.location.href).origin === GQL_ORIGIN;
+          const url = new URL(u, win.location.href);
+          return (
+            url.origin === 'https://graphql.anilist.co' ||
+            (url.origin === win.location.origin && url.pathname.replace(/\/$/, '') === '/graphql')
+          );
         } catch {
           return false;
         }
@@ -552,7 +556,7 @@ defineFeature(
             if (RATE_HEADERS.test(k)) headers.set(k, v);
           }
         }
-        return new ResponseCtor(snap.buf, { status: snap.status, statusText: snap.statusText, headers });
+        return new ResponseCtor(snap.buf, { status: snap.status || 200, statusText: snap.statusText || 'OK', headers });
       }
 
       function abortable(promise: Promise<any>, signal?: AbortSignal | null) {
@@ -617,30 +621,90 @@ defineFeature(
       }
 
       const isMutation = (parsed: any) => /\bmutation\b/i.test(String(parsed.query).replace(/#[^\n\r]*/g, ' '));
-      const isVolatile = (parsed: any) => /notification|activit/i.test(parsed.query);
+      const isVolatile = (parsed: any) =>
+        /\b(?:notifications|activities|Activity|Notification)\s*\(/.test(String(parsed?.query || '').replace(/#[^\n\r]*/g, ' '));
       const noStore = (d: any) =>
         d.cache === 'no-store' || d.cache === 'reload' || !!d.headers.get('cache-control')?.toLowerCase().includes('no-store');
 
       const decoder = new TextDecoder();
       const ERROR_SCAN_BYTES = 2048;
       function hasGraphQLErrors(buf: ArrayBuffer) {
-        const view = new Uint8Array(buf);
-        const head = decoder.decode(view.subarray(0, ERROR_SCAN_BYTES));
-        const tail =
-          view.length > ERROR_SCAN_BYTES ? decoder.decode(view.subarray(view.length - ERROR_SCAN_BYTES)) : '';
-        return /"errors"\s*:/.test(head) || /"errors"\s*:/.test(tail);
+        try {
+          const view = new Uint8Array(buf);
+          const head = decoder.decode(view.subarray(0, ERROR_SCAN_BYTES));
+          return /^\s*\{\s*"errors"\s*:/.test(head);
+        } catch {
+          return false;
+        }
       }
 
-      const makeKey = (d: any) =>
-        [
-          d.headers.get('authorization') || '',
-          d.headers.get('accept') || '',
-          d.url,
-          d.method,
-          d.credentials || '',
-          d.mode || '',
-          d.body
-        ].join('\u0001');
+      function normalizeGqlQuery(q: string): string {
+        if (typeof q !== 'string') return '';
+        return q
+          .replace(/#[^\n\r]*/g, '')
+          .replace(/\s+/g, ' ')
+          .replace(/\s*([{}():,])\s*/g, '$1')
+          .trim();
+      }
+
+      function stableStringify(obj: any): string {
+        if (obj === null || typeof obj !== 'object') {
+          return JSON.stringify(obj);
+        }
+        if (Array.isArray(obj)) {
+          return '[' + obj.map(stableStringify).join(',') + ']';
+        }
+        const keys = Object.keys(obj).sort();
+        return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableStringify(obj[k])).join(',') + '}';
+      }
+
+      function normalizeVariables(vars: any): any {
+        if (!vars || typeof vars !== 'object') return {};
+        const copy: Record<string, any> = {};
+        for (const k of Object.keys(vars)) {
+          if (vars[k] !== undefined && vars[k] !== null) {
+            copy[k] = vars[k];
+          }
+        }
+        if (copy.userName && !copy.userId) {
+          const name = String(copy.userName).toLowerCase();
+          const mine = String(gmStore.get('al_username', '') || '').toLowerCase();
+          const id = userMap.get(name) || (name === mine ? Number(gmStore.get('al_user_id', 0)) : 0);
+          if (id) {
+            copy.userId = id;
+            delete copy.userName;
+          }
+        }
+        if (copy.userId && copy.userName) {
+          delete copy.userName;
+        }
+        return copy;
+      }
+
+      const isTaxonomyQuery = (parsed: any): boolean =>
+        /\bGenreCollection\b|\bMediaTagCollection\b/i.test(String(parsed?.query || ''));
+      const isMediaListQuery = (parsed: any): boolean =>
+        /\bMediaListCollection\b/i.test(String(parsed?.query || ''));
+      const isViewerQuery = (parsed: any): boolean =>
+        /\bViewer\b/i.test(String(parsed?.query || ''));
+
+      function makeKey(d: any, parsed: any): string {
+        if (isMediaListQuery(parsed)) {
+          const { type = 'ANIME', userId, userName, ...rest } = normalizeVariables(parsed?.variables);
+          const who = userId || (userName ? String(userName).toLowerCase() : getViewerFromWindow().id || 'me');
+          return `gql:MediaListCollection:${String(type).toUpperCase()}:${who}:${stableStringify(rest)}`;
+        }
+        if (isTaxonomyQuery(parsed)) {
+          return 'gql:Taxonomy';
+        }
+        if (isViewerQuery(parsed)) {
+          return 'gql:Viewer';
+        }
+        const normQuery = normalizeGqlQuery(parsed?.query || '');
+        const normVars = stableStringify(normalizeVariables(parsed?.variables));
+        const auth = d.headers?.get?.('authorization') ? 'a' : '';
+        return `${d.url}\u0001${auth}\u0001${normQuery}\u0001${normVars}`;
+      }
 
       const note429 = (res: Response) => {
         if (res.status === 429) pausedUntil = Date.now() + 60_000;
@@ -648,8 +712,103 @@ defineFeature(
 
       const sameId = (a: any, b: any) =>
         a === b || (typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase());
-      const isIdKey = (key: string) => /^(?:id|name|userName|username)$|Id$/.test(key);
+      const isIdKey = (key: string) => /^(?:id|name|userName|username|userId)$|Id$/.test(key);
       const STATIC_ROUTE = /^\/(?:home|search\/(?:anime|manga))\/?$/;
+
+      const userMap = new Map<string, number>();
+      const idToUserMap = new Map<number, string>();
+
+      function rememberUser(name: string, id: number) {
+        if (!name || !id || typeof id !== 'number') return;
+        const normName = String(name).trim().toLowerCase();
+        if (!normName) return;
+        userMap.set(normName, id);
+        idToUserMap.set(id, normName);
+        attempt(() => {
+          const stored = JSON.parse(win.localStorage.getItem('alfl:userMap') || '{}');
+          if (stored[normName] !== id) {
+            stored[normName] = id;
+            const keys = Object.keys(stored);
+            if (keys.length > 300) delete stored[keys[0]];
+            win.localStorage.setItem('alfl:userMap', JSON.stringify(stored));
+          }
+        });
+      }
+
+      attempt(() => {
+        const stored = JSON.parse(win.localStorage.getItem('alfl:userMap') || '{}');
+        for (const [k, v] of Object.entries(stored)) {
+          if (typeof v === 'number' && v > 0) {
+            userMap.set(k.toLowerCase(), v);
+            idToUserMap.set(v, k.toLowerCase());
+          }
+        }
+      });
+
+      function getViewerFromWindow(): { id: number; name: string } {
+        const res = { id: 0, name: '' };
+        attempt(() => {
+          const nuxt = win.__NUXT__;
+          const user = nuxt?.state?.auth?.user || nuxt?.state?.user;
+          if (user) {
+            if (typeof user.id === 'number' && user.id > 0) res.id = user.id;
+            if (typeof user.name === 'string' && user.name) res.name = user.name;
+          }
+        });
+        if (!res.id) {
+          const storedId = Number(gmStore.get('al_user_id', 0));
+          if (storedId > 0) res.id = storedId;
+        }
+        if (!res.name) {
+          const stored = gmStore.get<string | null>('al_username', null);
+          if (stored) res.name = stored;
+        }
+        if (!res.name) {
+          const href = doc
+            .querySelector('nav a[href^="/user/"], .nav-wrap a[href^="/user/"], .nav a[href^="/user/"]')
+            ?.getAttribute('href');
+          const m = href?.match(/^\/user\/([^/?#]+)/);
+          if (m) {
+            try {
+              res.name = decodeURIComponent(m[1]);
+            } catch {}
+          }
+        }
+        return res;
+      }
+
+      function getLocalUsername(): string | null {
+        return getViewerFromWindow().name || null;
+      }
+
+      attempt(() => {
+        const viewer = getViewerFromWindow();
+        if (viewer.name && viewer.id) {
+          rememberUser(viewer.name, viewer.id);
+          gmStore.set('al_user_id', viewer.id);
+          gmStore.set('al_username', viewer.name);
+        } else if (viewer.name) {
+          gmStore.set('al_username', viewer.name);
+        }
+      });
+
+      function extractUserMappings(buf: ArrayBuffer) {
+        try {
+          const text = decoder.decode(new Uint8Array(buf));
+          if (!text.includes('Viewer') && !text.includes('User')) return;
+          const json = JSON.parse(text);
+          const viewer = json?.data?.Viewer;
+          if (viewer && viewer.id && viewer.name) {
+            rememberUser(String(viewer.name), Number(viewer.id));
+            gmStore.set('al_user_id', Number(viewer.id));
+            gmStore.set('al_username', String(viewer.name));
+          }
+          const user = json?.data?.User;
+          if (user && user.id && user.name) {
+            rememberUser(String(user.name), Number(user.id));
+          }
+        } catch {}
+      }
 
       function parseRoute(path: string, search = '') {
         const parts = path
@@ -666,6 +825,10 @@ defineFeature(
           return { shape: `${parts[0]}/${parts[3] || ''}`, id: Number(parts[1]) };
         }
         if (parts[0] === 'user' && parts[1]) return { shape: `user/${parts[2] || ''}`, id: parts[1] };
+        if (parts[0] === 'animelist' || parts[0] === 'mangalist') {
+          const myName = getLocalUsername();
+          if (myName) return { shape: `user/${parts[0]}`, id: myName };
+        }
         if (STATIC_ROUTE.test(path))
           return { shape: `static:${path.replace(/\/$/, '')}${search}`, id: null, static: true };
         return null;
@@ -674,29 +837,41 @@ defineFeature(
 
       function hasPageId(value: any, id: any): boolean {
         if (!value || typeof value !== 'object') return false;
+        const targetUserId = typeof id === 'string' ? userMap.get(id.toLowerCase()) : undefined;
         return Object.keys(value).some((key) => {
           const x = value[key];
           if (x && typeof x === 'object') return hasPageId(x, id);
-          return isIdKey(key) && sameId(x, id);
+          if (isIdKey(key)) {
+            if (sameId(x, id)) return true;
+            if (targetUserId != null && (key === 'userId' || key === 'id') && x === targetUserId) return true;
+          }
+          return false;
         });
       }
 
       function replacePageId(value: any, from: any, to: any): number {
         if (!value || typeof value !== 'object') return 0;
+        const fromUserId = typeof from === 'string' ? userMap.get(from.toLowerCase()) : undefined;
+        const toUserId = typeof to === 'string' ? userMap.get(to.toLowerCase()) : undefined;
         let count = 0;
         for (const key of Object.keys(value)) {
           const x = value[key];
           if (x && typeof x === 'object') count += replacePageId(x, from, to);
-          else if (isIdKey(key) && sameId(x, from)) {
-            value[key] = to;
-            count++;
+          else if (isIdKey(key)) {
+            if (sameId(x, from)) {
+              value[key] = to;
+              count++;
+            } else if (fromUserId != null && toUserId != null && (key === 'userId' || key === 'id') && x === fromUserId) {
+              value[key] = toUserId;
+              count++;
+            }
           }
         }
         return count;
       }
 
       const learned = new Map<string, any>();
-      const ROUTES_KEY = 'alfl:routes:v1';
+      const ROUTES_KEY = 'alfl:routes:v3';
       const ROUTES_TTL = 30 * 86400e3;
 
       let persistTimer: any = 0;
@@ -716,21 +891,24 @@ defineFeature(
 
       function loadRoutes() {
         attempt(() => {
+          win.localStorage.removeItem('alfl:routes:v1');
+          win.localStorage.removeItem('alfl:routes:v2');
           const raw = win.localStorage.getItem(ROUTES_KEY);
-          if (!raw) return;
-          const now = Date.now();
-          for (const [shape, v] of Object.entries(JSON.parse(raw)) as any) {
-            if (!v || !Array.isArray(v.reqs) || typeof v.t !== 'number' || now - v.t > ROUTES_TTL) continue;
-            const reqs = v.reqs.filter(
-              (r: any) =>
-                r &&
-                typeof r.body === 'string' &&
-                typeof r.url === 'string' &&
-                isGraphQL(r.url) &&
-                r.headers &&
-                typeof r.headers === 'object'
-            );
-            if (reqs.length) learned.set(shape, { route: { shape, id: v.id, static: !!v.static }, reqs, t: v.t });
+          if (raw) {
+            const now = Date.now();
+            for (const [shape, v] of Object.entries(JSON.parse(raw)) as any) {
+              if (!v || !Array.isArray(v.reqs) || typeof v.t !== 'number' || now - v.t > ROUTES_TTL) continue;
+              const reqs = v.reqs.filter(
+                (r: any) =>
+                  r &&
+                  typeof r.body === 'string' &&
+                  typeof r.url === 'string' &&
+                  isGraphQL(r.url) &&
+                  r.headers &&
+                  typeof r.headers === 'object'
+              );
+              if (reqs.length) learned.set(shape, { route: { shape, id: v.id, static: !!v.static }, reqs, t: v.t });
+            }
           }
         });
       }
@@ -750,46 +928,87 @@ defineFeature(
 
       function rememberQuery(desc: any, parsed: any) {
         refreshLearning();
-        if (!(CFG.prefetch || CFG.earlyStart) || prefetching || !learning.route) return;
+        if (!(CFG.prefetch || CFG.earlyStart) || !learning.route) return;
         if (!learning.started) learning.started = Date.now();
         if (Date.now() - learning.started > CFG.learnWindowMs) return;
         if (learning.reqs.length >= CFG.learnMaxReqs) return;
         if (!learning.route.static && !hasPageId(parsed.variables, learning.route.id)) return;
-        if (JSON.stringify(parsed) !== desc.body) return;
 
         const headers = Object.fromEntries(desc.headers.entries());
+        delete headers['content-length'];
+        delete headers['host'];
+        delete headers['connection'];
+        delete headers['content-encoding'];
         const authValue = headers.authorization;
         delete headers.authorization;
         let auth = false;
         if (authValue !== undefined) {
-          if (!win.al_token || authValue !== `Bearer ${win.al_token}`) return;
           auth = true;
-        } else if (win.al_token) {
-          return;
+          if (authValue.startsWith('Bearer ')) {
+            const token = authValue.slice(7).trim();
+            if (token) {
+              win.al_token = token;
+            }
+          }
         }
         learning.reqs.push({
           url: desc.url,
-          body: desc.body,
+          body: JSON.stringify(parsed),
           headers,
           auth,
-          credentials: desc.credentials,
-          mode: desc.mode
+          credentials: desc.credentials || 'same-origin',
+          mode: desc.mode || 'cors'
         });
         learned.delete(learning.route.shape);
         learned.set(learning.route.shape, { route: learning.route, reqs: [...learning.reqs], t: Date.now() });
+
+        if (learning.route.shape === 'user/animelist') {
+          const mangaReqs = learning.reqs.map((r) => ({
+            ...r,
+            body: r.body.replace(/"type"\s*:\s*"ANIME"/g, '"type":"MANGA"')
+          }));
+          learned.set('user/mangalist', {
+            route: { shape: 'user/mangalist', id: learning.route.id, static: false },
+            reqs: mangaReqs,
+            t: Date.now()
+          });
+        } else if (learning.route.shape === 'user/mangalist') {
+          const animeReqs = learning.reqs.map((r) => ({
+            ...r,
+            body: r.body.replace(/"type"\s*:\s*"MANGA"/g, '"type":"ANIME"')
+          }));
+          learned.set('user/animelist', {
+            route: { shape: 'user/animelist', id: learning.route.id, static: false },
+            reqs: animeReqs,
+            t: Date.now()
+          });
+        }
+
         persistRoutes();
       }
 
-      function classify(input: any, init?: RequestInit) {
+      async function classify(input: any, init?: RequestInit) {
         const RequestCtor = win.Request || Request;
         const isRequest = input instanceof RequestCtor;
         const method = String(init?.method || (isRequest ? input.method : 'GET')).toUpperCase();
         if (method !== 'POST') return null;
 
-        const url = isRequest ? input.url : input instanceof URL ? input.href : String(input);
-        if (!isGraphQL(url)) return null;
+        const rawUrl = isRequest ? input.url : input instanceof URL ? input.href : String(input);
+        if (!isGraphQL(rawUrl)) return null;
 
-        const body = init?.body ?? null;
+        let resolvedUrl = rawUrl;
+        try {
+          resolvedUrl = new URL(rawUrl, win.location.href).href;
+        } catch {}
+
+        let body: string | null = null;
+        if (typeof init?.body === 'string') {
+          body = init.body;
+        } else if (isRequest) {
+          try {
+            body = await input.clone().text();
+          } catch {}
+        }
         if (typeof body !== 'string') return null;
 
         const parsed = parseBody(body);
@@ -797,27 +1016,101 @@ defineFeature(
 
         const HeadersCtor = win.Headers || Headers;
         const desc = {
-          url,
+          url: resolvedUrl,
           method,
           body,
           headers: new HeadersCtor(init?.headers ?? (isRequest ? input.headers : undefined)),
-          credentials: init?.credentials ?? (isRequest ? input.credentials : undefined),
-          mode: init?.mode ?? (isRequest ? input.mode : undefined),
+          credentials: init?.credentials ?? (isRequest ? input.credentials : undefined) ?? 'same-origin',
+          mode: init?.mode ?? (isRequest ? input.mode : undefined) ?? 'cors',
           cache: init?.cache ?? (isRequest ? input.cache : undefined)
         };
-        return { desc, parsed, mutation: isMutation(parsed), bypass: isVolatile(parsed) || noStore(desc) };
+        const authHeader = desc.headers.get('authorization');
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.slice(7).trim();
+          if (token) {
+            win.al_token = token;
+          }
+        }
+        const mediaList = isMediaListQuery(parsed);
+        const bypass = !mediaList && (isVolatile(parsed) || noStore(desc));
+        return { desc, parsed, mutation: isMutation(parsed), bypass };
       }
 
-      function cachedFetch(job: any, input: any, init?: RequestInit) {
+      const TAXONOMY_STORAGE_KEY = 'alfl:taxonomy:v1';
+      const TAXONOMY_TTL = 24 * 3600 * 1000;
+
+      function getQueryTtl(parsed: any): number {
+        if (isTaxonomyQuery(parsed)) return TAXONOMY_TTL;
+        if (isMediaListQuery(parsed)) return 5 * 60_000;
+        if (isViewerQuery(parsed)) return 5 * 60_000;
+        return CFG.gqlTtl;
+      }
+
+      function loadStoredTaxonomy(): {
+        time: number;
+        text: string;
+        status: number;
+        statusText: string;
+        headers: [string, string][];
+      } | null {
+        try {
+          const raw = win.localStorage.getItem(TAXONOMY_STORAGE_KEY);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed.time === 'number' && typeof parsed.text === 'string') return parsed;
+        } catch {}
+        return null;
+      }
+
+      function persistStoredTaxonomy(snap: any) {
+        attempt(() => {
+          const text = decoder.decode(snap.buf);
+          win.localStorage.setItem(
+            TAXONOMY_STORAGE_KEY,
+            JSON.stringify({
+              time: Date.now(),
+              text,
+              status: snap.status,
+              statusText: snap.statusText,
+              headers: snap.headers
+            })
+          );
+        });
+      }
+
+      function cachedFetch(job: any, input: any, init?: RequestInit, replay = false) {
         const { desc, parsed } = job;
         if (init?.signal?.aborted) return nativeFetch(input, init);
-        attempt(() => rememberQuery(desc, parsed));
+        if (!replay) attempt(() => rememberQuery(desc, parsed));
 
-        const key = makeKey(desc);
+        let key = '';
+        let ttl = CFG.gqlTtl;
+        try {
+          key = makeKey(desc, parsed);
+          ttl = getQueryTtl(parsed);
+        } catch {
+          return nativeFetch(input, init);
+        }
         const now = Date.now();
         const cached = store.get(key);
 
-        if (cached && cached.time >= freshFloor && now - cached.time < CFG.gqlTtl) {
+        if (isTaxonomyQuery(parsed)) {
+          const storedTax = loadStoredTaxonomy();
+          if (storedTax && now - storedTax.time < TAXONOMY_TTL) {
+            stats.cacheHits++;
+            const HeadersCtor = win.Headers || Headers;
+            const ResponseCtor = win.Response || Response;
+            return Promise.resolve(
+              new ResponseCtor(storedTax.text, {
+                status: storedTax.status || 200,
+                statusText: storedTax.statusText || 'OK',
+                headers: new HeadersCtor(storedTax.headers)
+              })
+            );
+          }
+        }
+
+        if (cached && cached.time >= freshFloor && now - cached.time < ttl) {
           stats.cacheHits++;
           return Promise.resolve(toResponse(cached.snap));
         }
@@ -840,10 +1133,14 @@ defineFeature(
 
         const snapshot = original.then(async (res: Response) => {
           note429(res);
-          if (res.status !== 200) throw new Error('not cacheable');
+          if (res.status !== 200) {
+            throw new Error('not cacheable');
+          }
           const copy = res.clone();
           const buf = await copy.arrayBuffer();
-          if (hasGraphQLErrors(buf)) throw new Error('graphql errors');
+          if (hasGraphQLErrors(buf)) {
+            throw new Error('graphql errors');
+          }
           return {
             buf,
             status: res.status,
@@ -858,7 +1155,13 @@ defineFeature(
         snapshot.then(
           (snap: any) => {
             if (inflight.get(key) === snapshot) inflight.delete(key);
-            if (epoch === myEpoch) put(key, snap);
+            if (epoch === myEpoch) {
+              put(key, snap);
+            }
+            extractUserMappings(snap.buf);
+            if (isTaxonomyQuery(parsed) && snap.status === 200) {
+              persistStoredTaxonomy(snap);
+            }
           },
           () => {
             if (inflight.get(key) === snapshot) inflight.delete(key);
@@ -883,10 +1186,10 @@ defineFeature(
         );
       }
 
-      win.fetch = function fetch(input: any, init?: RequestInit) {
+      win.fetch = async function fetch(input: any, init?: RequestInit) {
         let job = null;
         try {
-          job = classify(input, init);
+          job = await classify(input, init);
         } catch {
           /* fall back to native */
         }
@@ -910,16 +1213,561 @@ defineFeature(
           p.then(note429, () => {});
           return p;
         }
-        return cachedFetch(job, input, init);
+        return cachedFetch(job, input, init, (init as any)?.__alfl === 'replay');
       };
+
+      /* ---- Worker RPC layer: AniList runs its GraphQL client in a web worker ---- */
+      const rpcCache = new Map<string, { time: number; msg: any }>();
+      const rpcInflight = new Map<string, {
+        promise: Promise<any>;
+        resolve: (val: any) => void;
+        reject: (err: any) => void;
+      }>();
+      const workerPending = new WeakMap<object, Map<string, { key: string | null; mutation: boolean; epoch?: number }>>();
+      const watched = new WeakSet<object>();
+      let workerUrl: string | null = null;
+      let workerOpts: any;
+      let WorkerCtor: any = null;
+      let lastAuth = '';
+      const findWorkerUrl = (): string | null =>
+        workerUrl ||
+        (performance.getEntriesByType('resource') as PerformanceResourceTiming[])
+          .map((e) => e.name)
+          .find((n) => /\.worker\.js(?:\?|$)/.test(n)) ||
+        attempt(() => win.localStorage.getItem('alfl:workerUrl') || gmStore.get('alfl:workerUrl', null)) ||
+        null;
+
+      attempt(() => {
+        win.localStorage.removeItem('alfl:rpc:listTpl');
+        gmStore.del('alfl:rpc:listTpl');
+      });
+
+      win.__ALFL_RPC_CACHE__ = rpcCache;
+      win.__ALFL_RPC_INFLIGHT__ = rpcInflight;
+      const RPC_MAX_ENTRIES = 32;
+      const clone = (v: any) => {
+        try {
+          return (win.structuredClone || structuredClone)(v);
+        } catch {
+          return JSON.parse(JSON.stringify(v));
+        }
+      };
+      let rpcEpoch = 0;
+      const clearRpc = () => {
+        rpcEpoch++;
+        freshFloor = Date.now();
+        rpcCache.clear();
+        rpcInflight.clear();
+      };
+      win.__ALFL_CLEAR__ = clearRpc;
+
+      const isRpcFetch = (d: any) =>
+        !!d && d.type === 'RPC' && d.method === 'fetch' && Array.isArray(d.params) && typeof d.params[1] === 'string';
+
+      const extractUsersFromRpcResult = (res: any) => {
+        if (!res || typeof res !== 'object') return;
+        attempt(() => {
+          const scanUsers = (obj: any, depth = 0) => {
+            if (!obj || typeof obj !== 'object' || depth > 5) return;
+            if (obj.name && obj.id && (typeof obj.id === 'number' || /^\d+$/.test(String(obj.id)))) {
+              rememberUser(String(obj.name), Number(obj.id));
+            }
+            for (const v of Object.values(obj)) {
+              if (v && typeof v === 'object') scanUsers(v, depth + 1);
+            }
+          };
+          scanUsers(res);
+
+          const viewer = res.Viewer || res.data?.Viewer;
+          if (viewer && viewer.id && viewer.name) {
+            rememberUser(String(viewer.name), Number(viewer.id));
+            gmStore.set('al_user_id', Number(viewer.id));
+            gmStore.set('al_username', String(viewer.name));
+          }
+          const user = res.User || res.data?.User || res.MediaListCollection?.user || res.data?.MediaListCollection?.user;
+          if (user && user.id && user.name) {
+            rememberUser(String(user.name), Number(user.id));
+          }
+        });
+      };
+
+      const getMediaListKeys = (type: string, userId?: number, userName?: string): string[] => {
+        const keys = new Set<string>();
+        const t = String(type).toUpperCase();
+        if (userId) {
+          keys.add(`rpc:MediaListCollection:${t}:${userId}:{}`);
+          const mappedName = idToUserMap.get(userId);
+          if (mappedName) keys.add(`rpc:MediaListCollection:${t}:${mappedName}:{}`);
+        }
+        if (userName) {
+          const norm = String(userName).trim().toLowerCase();
+          keys.add(`rpc:MediaListCollection:${t}:${norm}:{}`);
+          const mappedId = userMap.get(norm);
+          if (mappedId) keys.add(`rpc:MediaListCollection:${t}:${mappedId}:{}`);
+        }
+        return [...keys];
+      };
+
+      const rpcKey = (params: any[]) => {
+        const [endpoint, query, variables, headers] = params;
+        const q = { query, variables };
+        if (isMediaListQuery(q)) {
+          const normVars = normalizeVariables(variables);
+          const { type = 'ANIME', userId, userName, ...rest } = normVars;
+          let resolvedId = userId;
+          if (!resolvedId && userName) {
+            resolvedId = userMap.get(String(userName).toLowerCase());
+          }
+          const who = resolvedId || (userName ? String(userName).toLowerCase() : 'me');
+          return `rpc:MediaListCollection:${String(type).toUpperCase()}:${who}:${stableStringify(rest)}`;
+        }
+        if (isTaxonomyQuery(q)) return 'rpc:Taxonomy';
+        if (isViewerQuery(q)) return 'rpc:Viewer';
+        const normQuery = normalizeGqlQuery(query);
+        const normVars = stableStringify(normalizeVariables(variables));
+        const auth = String(headers?.Authorization ?? headers?.authorization ?? '');
+        return `${endpoint}\u0001${auth.slice(-16)}\u0001${normQuery}\u0001${normVars}`;
+      };
+
+      const onIn = function (this: any, ev: MessageEvent) {
+        const d: any = ev.data;
+        if (!d || d.type !== 'RPC') return;
+        const id = String(d.id);
+        const worker = (ev.currentTarget || ev.target || this) as any;
+        const pMap = workerPending.get(worker);
+        if (!pMap) return;
+        const p = pMap.get(id);
+        if (!p) return;
+        pMap.delete(id);
+        if (d.result) {
+          extractUsersFromRpcResult(d.result);
+        }
+        if (p.mutation) return clearRpc();
+        if (p.key && d.error == null && p.epoch === rpcEpoch) {
+          attempt(() => {
+            rpcCache.delete(p.key!);
+            rpcCache.set(p.key!, { time: Date.now(), msg: clone(d) });
+            while (rpcCache.size > RPC_MAX_ENTRIES) rpcCache.delete(rpcCache.keys().next().value as string);
+          });
+        }
+      };
+
+      const prefetchedWorkerKeys = new Map<string, number>();
+
+      function prefetchWorkerList(type: 'ANIME' | 'MANGA', userId: number, userName?: string) {
+        const url = findWorkerUrl();
+        if (!url || !WorkerCtor) {
+          return;
+        }
+        if (!userId && userName) {
+          userId = userMap.get(userName.toLowerCase()) || 0;
+        }
+        if (userId && !userName) {
+          userName = idToUserMap.get(userId) || undefined;
+        }
+        const raw = attempt(() => win.localStorage.getItem('alfl:rpc:listTpl:v2') || gmStore.get('alfl:rpc:listTpl:v2', null));
+        let tpl: any;
+        if (raw) {
+          try {
+            tpl = JSON.parse(raw);
+          } catch {}
+        }
+        if (!tpl) {
+          return;
+        }
+        const vars: any = { ...(tpl.vars || {}), type };
+        if (userId) {
+          vars.userId = userId;
+          delete vars.userName;
+        } else if (userName) {
+          vars.userName = userName;
+          delete vars.userId;
+        }
+        const authVal = lastAuth || gmStore.get('al_token_auth', '') || (win.al_token ? `Bearer ${win.al_token}` : '');
+        const headers: any = { ...(tpl.headers || {}) };
+        if (authVal) {
+          headers.Authorization = authVal;
+          headers.authorization = authVal;
+        }
+        const options = tpl.options
+          ? { ...tpl.options, ...(tpl.options.schemaArgs ? { schemaArgs: [type] } : {}) }
+          : tpl.options;
+        const params = [tpl.endpoint, tpl.query, vars, headers, options];
+        const key = rpcKey(params);
+        const now = Date.now();
+
+        const possibleKeys = getMediaListKeys(type, userId, userName);
+        for (const k of possibleKeys) {
+          const hit = rpcCache.get(k);
+          if (hit && hit.time >= freshFloor && now - hit.time < 5 * 60_000) return;
+          if (rpcInflight.has(k)) return;
+        }
+        if (now - (prefetchedWorkerKeys.get(key) || 0) < 60_000) return;
+        prefetchedWorkerKeys.set(key, now);
+        for (const k of possibleKeys) prefetchedWorkerKeys.set(k, now);
+
+        let w: Worker;
+        try {
+          w = new WorkerCtor(url, workerOpts);
+        } catch {
+          return;
+        }
+        const id = `alfl_prefetch_${type}_${now}`;
+
+        let resolver!: (val: any) => void;
+        let rejecter!: (err: any) => void;
+        const flightPromise = new Promise((resolve, reject) => {
+          resolver = resolve;
+          rejecter = reject;
+        });
+        flightPromise.catch(() => {});
+        const flight = { promise: flightPromise, resolve: resolver, reject: rejecter };
+        rpcInflight.set(key, flight);
+        for (const k of possibleKeys) {
+          if (!rpcInflight.has(k)) rpcInflight.set(k, flight);
+        }
+
+        const finish = () => {
+          clearTimeout(timer);
+          for (const k of [key, ...possibleKeys]) {
+            const f = rpcInflight.get(k);
+            if (f) {
+              f.reject(new Error('finished'));
+              rpcInflight.delete(k);
+            }
+          }
+          attempt(() => w.terminate());
+        };
+        const timer = setTimeout(() => {
+          finish();
+        }, 30_000);
+
+        const startEpoch = rpcEpoch;
+        w.addEventListener('message', (ev: MessageEvent) => {
+          const d: any = ev.data;
+          if (!d || d.type !== 'RPC' || String(d.id) !== id) return;
+          if (startEpoch !== rpcEpoch) {
+            flight.reject(new Error('stale'));
+            clearTimeout(timer);
+            attempt(() => w.terminate());
+            return;
+          }
+          if (d.error == null) {
+            attempt(() => {
+              extractUsersFromRpcResult(d.result);
+              const mlcUser = d.result?.MediaListCollection?.user || d.result?.data?.MediaListCollection?.user;
+              const extractedUserId = mlcUser?.id ? Number(mlcUser.id) : 0;
+              const resolvedUserId = userId || extractedUserId || (userName ? userMap.get(userName.toLowerCase()) : 0) || 0;
+              if (userName && resolvedUserId) {
+                rememberUser(userName, resolvedUserId);
+              }
+              const resolvedUserName = userName || (resolvedUserId ? idToUserMap.get(resolvedUserId) : undefined);
+              const cached = { time: Date.now(), msg: clone(d) };
+              const allKeys = [
+                ...new Set([
+                  key,
+                  ...possibleKeys,
+                  ...getMediaListKeys(type, resolvedUserId, resolvedUserName)
+                ])
+              ];
+              for (const k of allKeys) {
+                rpcCache.delete(k);
+                rpcCache.set(k, cached);
+              }
+              while (rpcCache.size > RPC_MAX_ENTRIES) rpcCache.delete(rpcCache.keys().next().value as string);
+            });
+            for (const k of [key, ...possibleKeys]) {
+              const f = rpcInflight.get(k);
+              if (f) {
+                f.resolve(d);
+                rpcInflight.delete(k);
+              }
+            }
+          } else {
+            for (const k of [key, ...possibleKeys]) {
+              const f = rpcInflight.get(k);
+              if (f) {
+                f.reject(d.error);
+                rpcInflight.delete(k);
+              }
+            }
+          }
+          clearTimeout(timer);
+          attempt(() => w.terminate());
+        });
+
+        w.addEventListener('error', () => {
+          attempt(() => {
+            win.localStorage.removeItem('alfl:workerUrl');
+            gmStore.del('alfl:workerUrl');
+          });
+          workerUrl = null;
+          finish();
+        });
+
+        w.postMessage({ type: 'RPC', id, method: 'fetch', params });
+      }
+
+      let autoPrefetchTimer: any = 0;
+      function scheduleAutoPrefetch(delay = 600) {
+        clearTimeout(autoPrefetchTimer);
+        autoPrefetchTimer = setTimeout(() => {
+          attempt(autoPrefetchListsForCurrentRoute);
+        }, delay);
+      }
+
+      function autoPrefetchListsForCurrentRoute() {
+        if (!CFG.prefetch) return;
+        const now = Date.now();
+        if (doc.hidden || now < pausedUntil || (navigator as any).connection?.saveData) return;
+
+        const path = win.location.pathname;
+        const viewer = getViewerFromWindow();
+        const myId = viewer.id || Number(gmStore.get('al_user_id', 0));
+        const myName = viewer.name || gmStore.get<string | null>('al_username', null);
+
+        const userMatch = path.match(/^\/user\/([^/]+)(?:\/([^/]+))?/i);
+        let isAnotherUserPage = false;
+        let otherUser = '';
+        let otherUserId = 0;
+        let subRoute = '';
+
+        if (userMatch) {
+          const targetUser = decodeURIComponent(userMatch[1]);
+          subRoute = (userMatch[2] || '').toLowerCase();
+          const isMe =
+            (myName && targetUser.toLowerCase() === myName.toLowerCase()) ||
+            (myId > 0 && userMap.get(targetUser.toLowerCase()) === myId);
+
+          if (!isMe) {
+            isAnotherUserPage = true;
+            otherUser = targetUser;
+            otherUserId = userMap.get(targetUser.toLowerCase()) || 0;
+          }
+        }
+
+        if (isAnotherUserPage) {
+          if (subRoute !== 'animelist') {
+            setTimeout(() => {
+              prefetchWorkerList('ANIME', otherUserId, otherUser);
+            }, 100);
+          }
+          if (subRoute !== 'mangalist') {
+            setTimeout(() => {
+              prefetchWorkerList('MANGA', otherUserId, otherUser);
+            }, 300);
+          }
+
+          if (myId || myName) {
+            setTimeout(() => {
+              prefetchWorkerList('ANIME', myId, myName || undefined);
+            }, 500);
+            setTimeout(() => {
+              prefetchWorkerList('MANGA', myId, myName || undefined);
+            }, 800);
+          }
+        } else {
+          if (myId || myName) {
+            const isMyAnimePage = path.includes('/animelist') && (myName ? path.toLowerCase().includes(myName.toLowerCase()) : true);
+            const isMyMangaPage = path.includes('/mangalist') && (myName ? path.toLowerCase().includes(myName.toLowerCase()) : true);
+            if (!isMyAnimePage) {
+              setTimeout(() => {
+                prefetchWorkerList('ANIME', myId, myName || undefined);
+              }, 100);
+            }
+            if (!isMyMangaPage) {
+              setTimeout(() => {
+                prefetchWorkerList('MANGA', myId, myName || undefined);
+              }, 300);
+            }
+          }
+        }
+      }
+
+      navListeners.push(() => scheduleAutoPrefetch(500));
+      if (doc.readyState !== 'loading') scheduleAutoPrefetch(1000);
+      else doc.addEventListener('DOMContentLoaded', () => scheduleAutoPrefetch(1000), { once: true });
+
+      attempt(() => {
+        const pageWin = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+        const origCtor = pageWin.Worker;
+        WorkerCtor = origCtor;
+        if (origCtor && !(origCtor as any).__alfl_ctor_hooked) {
+          try {
+            const ProxiedWorker = function (this: any, scriptURL: string | URL, options?: WorkerOptions) {
+              const instance = Reflect.construct(origCtor, [scriptURL, options], new.target || ProxiedWorker);
+              const urlStr = String(scriptURL || '');
+              if (urlStr.includes('worker.js') && !urlStr.includes('cloudflare')) {
+                attempt(() => {
+                  workerUrl = new URL(urlStr, win.location.href).href;
+                  win.localStorage.setItem('alfl:workerUrl', workerUrl);
+                  gmStore.set('alfl:workerUrl', workerUrl);
+                });
+                workerOpts = options;
+              }
+              if (!watched.has(instance)) {
+                watched.add(instance);
+                instance.addEventListener('message', onIn);
+              }
+              return instance;
+            } as any;
+            ProxiedWorker.prototype = origCtor.prototype;
+            ProxiedWorker.__alfl_ctor_hooked = true;
+            pageWin.Worker = ProxiedWorker;
+          } catch {}
+        }
+
+        const W = pageWin.Worker;
+        if (!W?.prototype || (W.prototype as any).__alfl_hooked) return;
+        (W.prototype as any).__alfl_hooked = true;
+        const origPost = W.prototype.postMessage;
+        W.prototype.postMessage = function (this: Worker, data: any, ...rest: any[]) {
+          try {
+            if (isRpcFetch(data)) {
+              const id = String(data.id || '');
+              if (id.startsWith('alfl_prefetch_')) {
+                return origPost.apply(this, [data, ...rest] as any);
+              }
+              if (!watched.has(this)) {
+                watched.add(this);
+                this.addEventListener('message', onIn);
+              }
+              const h = data.params[3] || {};
+              const a = h.Authorization ?? h.authorization;
+              if (a) {
+                lastAuth = String(a);
+                gmStore.set('al_token_auth', lastAuth);
+              }
+              const q = { query: data.params[1], variables: data.params[2] };
+              if (isMediaListQuery(q)) {
+                attempt(() => {
+                  const headers = { ...h };
+                  delete headers.Authorization;
+                  delete headers.authorization;
+                  const tplStr = JSON.stringify({
+                    endpoint: data.params[0],
+                    query: data.params[1],
+                    vars: data.params[2],
+                    headers,
+                    options: data.params[4]
+                  });
+                  win.localStorage.setItem('alfl:rpc:listTpl:v2', tplStr);
+                  gmStore.set('alfl:rpc:listTpl:v2', tplStr);
+                });
+              }
+              if (isMutation(q)) {
+                clearRpc();
+                let pMap = workerPending.get(this);
+                if (!pMap) {
+                  pMap = new Map();
+                  workerPending.set(this, pMap);
+                }
+                pMap.set(id, { key: null, mutation: true });
+              } else if (!isVolatile(q)) {
+                const key = rpcKey(data.params);
+                let hit: any = null;
+                let flying: any = null;
+
+                if (isMediaListQuery(q)) {
+                  const normVars = normalizeVariables(q.variables);
+                  let { type = 'ANIME', userId, userName } = normVars;
+                  const viewer = getViewerFromWindow();
+                  const myId = viewer.id || Number(gmStore.get('al_user_id', 0));
+                  const isViewerReq = (userId && userId === myId) || (userName && userName.toLowerCase() === viewer.name?.toLowerCase());
+
+                  if (!userName && userId) {
+                    userName = idToUserMap.get(userId);
+                  }
+                  if (!userId && userName) {
+                    userId = userMap.get(userName.toLowerCase());
+                  }
+
+                  if (!isViewerReq) {
+                    const userMatch = win.location.pathname.match(/^\/user\/([^/]+)/i);
+                    if (userMatch) {
+                      const profileUser = decodeURIComponent(userMatch[1]).trim().toLowerCase();
+                      if (!userName) userName = profileUser;
+                      if (userId && !userMap.has(profileUser)) {
+                        rememberUser(profileUser, userId);
+                      }
+                    }
+                  }
+
+                  const possibleKeys = [key, ...getMediaListKeys(type || 'ANIME', userId, userName)];
+                  for (const k of possibleKeys) {
+                    if (!hit) {
+                      const h = rpcCache.get(k);
+                      if (h && h.time >= freshFloor && Date.now() - h.time < getQueryTtl(q)) {
+                        hit = h;
+                      }
+                    }
+                    if (!flying) {
+                      const f = rpcInflight.get(k);
+                      if (f) flying = f;
+                    }
+                  }
+                } else {
+                  const h = rpcCache.get(key);
+                  if (h && h.time >= freshFloor && Date.now() - h.time < getQueryTtl(q)) {
+                    hit = h;
+                  }
+                  flying = rpcInflight.get(key);
+                }
+
+                if (hit) {
+                  stats.cacheHits++;
+                  const worker = this;
+                  const reply = { ...clone(hit.msg), id: data.id };
+                  const MessageEventCtor = win.MessageEvent || MessageEvent;
+                  setTimeout(() => worker.dispatchEvent(new MessageEventCtor('message', { data: reply })), 0);
+                  return;
+                }
+
+                if (flying) {
+                  stats.deduped++;
+                  const worker = this;
+                  const replyId = data.id;
+                  flying.promise.then(
+                    (msg: any) => {
+                      const reply = { ...clone(msg), id: replyId };
+                      const MessageEventCtor = win.MessageEvent || MessageEvent;
+                      setTimeout(() => worker.dispatchEvent(new MessageEventCtor('message', { data: reply })), 0);
+                    },
+                    () => {
+                      origPost.apply(worker, [data, ...rest] as any);
+                    }
+                  );
+                  return;
+                }
+
+                let pMap = workerPending.get(this);
+                if (!pMap) {
+                  pMap = new Map();
+                  workerPending.set(this, pMap);
+                }
+                pMap.set(id, { key, mutation: false, epoch: rpcEpoch });
+              }
+            }
+          } catch {
+            /* fall through to the real worker */
+          }
+          return origPost.apply(this, [data, ...rest] as any);
+        };
+      });
 
       /* ==================================================================
        * Replaying learned queries: navigation prefetch and early start
        * ================================================================== */
+      let hiddenAt = 0;
       doc.addEventListener('visibilitychange', () => {
-        if (doc.hidden) return;
-        epoch++;
-        freshFloor = Date.now();
+        if (doc.hidden) {
+          hiddenAt = Date.now();
+          return;
+        }
+        if (hiddenAt && Date.now() - hiddenAt > 10 * 60_000) {
+          epoch++;
+          freshFloor = Date.now();
+        }
         inflight.clear();
       });
 
@@ -927,21 +1775,39 @@ defineFeature(
       const stamps: number[] = [];
       let dwellTimer: any = 0;
 
-      let tokenWait: Promise<boolean> | null = null;
-      function waitForToken(cb: () => void) {
-        tokenWait ||= new Promise((resolve) => {
-          let tries = 0;
-          const t = setInterval(() => {
-            const ready = !!win.al_token;
-            if (!ready && ++tries <= 300) return;
-            clearInterval(t);
-            tokenWait = null;
-            resolve(ready);
-          }, 10);
-        });
-        tokenWait.then((ready) => {
-          if (ready) cb();
-        });
+      function getAuthToken(): string | null {
+        if (win.al_token) return win.al_token;
+        const stored = gmStore.get<string | null>('al_token', null);
+        if (stored) {
+          win.al_token = stored;
+          return stored;
+        }
+        try {
+          const nuxtToken = win.__NUXT__?.state?.auth?.token || win.__NUXT__?.state?.auth?._token;
+          if (typeof nuxtToken === 'string' && nuxtToken) {
+            const clean = nuxtToken.replace(/^Bearer\s+/i, '').trim();
+            if (clean) {
+              win.al_token = clean;
+              gmStore.set('al_token', clean);
+              return clean;
+            }
+          }
+        } catch {}
+        try {
+          const candidates = ['auth._token.local', 'auth.token', 'access_token', 'token', 'al_token'];
+          for (const k of candidates) {
+            const val = win.localStorage.getItem(k);
+            if (typeof val === 'string' && val) {
+              const clean = val.replace(/^"|"$/g, '').replace(/^Bearer\s+/i, '').trim();
+              if (clean && clean !== 'false' && clean !== 'null' && clean.length > 10) {
+                win.al_token = clean;
+                gmStore.set('al_token', clean);
+                return clean;
+              }
+            }
+          }
+        } catch {}
+        return null;
       }
 
       function replayRoute(known: any, route: any) {
@@ -954,44 +1820,48 @@ defineFeature(
             continue;
           }
           if (isMutation(parsed) || isVolatile(parsed)) continue;
-          if (!known.route.static && !replacePageId(parsed.variables, known.route.id, route.id)) continue;
+          if (!known.route.static && !sameId(known.route.id, route.id)) {
+            if (!replacePageId(parsed.variables, known.route.id, route.id)) continue;
+          }
           const body = JSON.stringify(parsed);
 
-          const send = () => {
-            const headers = { ...request.headers };
-            if (request.auth) headers.authorization = `Bearer ${win.al_token}`;
-            prefetching = true;
-            try {
-              win
-                .fetch(request.url, {
-                  method: 'POST',
-                  headers,
-                  body,
-                  credentials: request.credentials,
-                  mode: request.mode
-                })
-                .catch(() => {});
-            } catch {
-              /* ignore */
-            }
-            prefetching = false;
-          };
+          const headers = { ...request.headers };
+          if (request.auth) {
+            const token = getAuthToken();
+            if (!token) continue;
+            headers.authorization = `Bearer ${token}`;
+          }
           stamps.push(Date.now());
           sent++;
-          if (request.auth && !win.al_token) waitForToken(send);
-          else send();
+          attempt(() => {
+            win
+              .fetch(request.url, {
+                method: 'POST',
+                headers,
+                body,
+                credentials: request.credentials || 'same-origin',
+                mode: request.mode || 'cors',
+                __alfl: 'replay'
+              } as any)
+              .catch(() => {});
+          });
         }
         return sent;
       }
 
-      if (CFG.earlyStart) {
-        loadRoutes();
+      const triggerEarlyStart = () => {
         attempt(() => {
           if ((navigator as any).connection?.saveData) return;
           const route = here();
           const known = route && learned.get(route.shape);
           if (known) stats.earlyStarts += replayRoute(known, route);
         });
+      };
+
+      if (CFG.earlyStart) {
+        loadRoutes();
+        triggerEarlyStart();
+        navListeners.push(triggerEarlyStart);
       } else if (CFG.prefetch) {
         loadRoutes();
       }
@@ -1010,21 +1880,43 @@ defineFeature(
         }
         if (url.origin !== win.location.origin) return;
 
+        const listMatch = url.pathname.match(/^\/(?:user\/([^/]+)\/)?(animelist|mangalist)/i);
+        if (listMatch) {
+          const targetUser = listMatch[1] || getLocalUsername();
+          const listType = listMatch[2].toLowerCase() === 'mangalist' ? 'MANGA' : 'ANIME';
+          const userId = targetUser
+            ? (userMap.get(targetUser.toLowerCase()) || (targetUser.toLowerCase() === getLocalUsername()?.toLowerCase() ? Number(gmStore.get('al_user_id', 0)) : 0))
+            : 0;
+          if (userId || targetUser) {
+            prefetchWorkerList(listType, userId, targetUser || undefined);
+          }
+          return;
+        }
+
         const route = parseRoute(url.pathname, url.search);
         if (!route || route.static) return;
         const known = learned.get(route.shape);
         if (!known || known.route.static) return;
-        if (typeof known.route.id !== typeof route.id || sameId(known.route.id, route.id)) return;
+        if (typeof known.route.id !== typeof route.id) {
+          if (typeof known.route.id === 'number' && typeof route.id === 'string') {
+            if (userMap.get(route.id.toLowerCase()) !== known.route.id) return;
+          } else if (typeof known.route.id === 'string' && typeof route.id === 'number') {
+            if (userMap.get(known.route.id.toLowerCase()) !== route.id) return;
+          } else {
+            return;
+          }
+        }
 
         const current = here();
         if (current && current.shape === route.shape && sameId(current.id, route.id)) return;
 
         const key = `${route.shape}|${String(route.id).toLowerCase()}`;
-        if (now - (prefetched.get(key) || 0) < CFG.gqlTtl) return;
+        const cooldown = route.shape.includes('list') ? 60_000 : CFG.gqlTtl;
+        if (now - (prefetched.get(key) || 0) < cooldown) return;
 
         while (stamps.length && now - stamps[0] > 60_000) stamps.shift();
         if (prefetched.size > 200) {
-          for (const [k, t] of prefetched) if (now - t > CFG.gqlTtl) prefetched.delete(k);
+          for (const [k, t] of prefetched) if (now - t > cooldown) prefetched.delete(k);
         }
         if (stamps.length + known.reqs.length > CFG.prefetchMaxPerMin) return;
 
@@ -1041,7 +1933,7 @@ defineFeature(
       doc.addEventListener(
         'pointerover',
         (event: any) => {
-          if (event.pointerType !== 'mouse') return;
+          if (event.pointerType && event.pointerType !== 'mouse') return;
           const anchor = linkOf(event);
           clearTimeout(dwellTimer);
           if (anchor) dwellTimer = setTimeout(() => prefetchFor(anchor), CFG.prefetchDwellMs);
@@ -1062,13 +1954,13 @@ defineFeature(
     /* ======================================================================
      * Start
      * ====================================================================== */
+    if (CFG.gqlTtl > 0 && typeof win.fetch === 'function') attempt(installGraphQLLayer);
     if (CFG.coalesceObservers) attempt(installObserverCoalescing);
     if (CFG.fastInnerText) attempt(installFastInnerText);
     if (CFG.memoSelectorProbes) attempt(installProbeMemo);
     if (CFG.blockTierInData || CFG.tierAssist) attempt(installTierSupport);
     if (CFG.lazyMedia) attempt(installLazyMedia);
     if (CFG.rowSkipping) attempt(installRowSkipping);
-    if (CFG.gqlTtl > 0 && typeof win.fetch === 'function') attempt(installGraphQLLayer);
   }
 );
 
