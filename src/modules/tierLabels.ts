@@ -2,7 +2,7 @@ import { defineFeature } from '../core/registry';
 import { Core } from '../core/observer';
 import { Settings, PREFIX } from '../settings/settings';
 import { addStyle } from '../utils/dom';
-import { store } from '../utils/helpers';
+import { store, logDebug } from '../utils/helpers';
 import { DEFAULT_TIERS, getTier, validateTiers, type TierConfig } from '../utils/tiers';
 
 export { DEFAULT_TIERS, getTier, validateTiers, type TierConfig };
@@ -176,6 +176,7 @@ defineFeature(
       else if (maxScore > 0) detected = 'POINT_10';
 
       compareRoot._colFormats[sideKey] = detected;
+      logDebug('[TIER]', `Detected score system for ${isAuthUser ? 'viewer' : 'other'}:`, detected, { maxScore, hasDecimal, hasStarIcon });
       return detected;
     }
 
@@ -226,6 +227,7 @@ defineFeature(
 
       const tier = getTier(normalizedRating, tiers);
       if (!tier) return;
+      logDebug('[TIER]', 'Applied tier badge:', tier.label, 'to raw score:', rawText, 'normalized:', normalizedRating);
 
       el.dataset.tierModified = 'true';
       el.dataset.tierSource = attr ?? '';

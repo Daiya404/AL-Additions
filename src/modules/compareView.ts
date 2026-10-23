@@ -1,7 +1,7 @@
 import { defineFeature } from '../core/registry';
 import { Core } from '../core/observer';
 import { addStyle } from '../utils/dom';
-import { debounce } from '../utils/helpers';
+import { debounce, logDebug } from '../utils/helpers';
 import { unsafeWindow } from 'vite-plugin-monkey/dist/client';
 
 interface EntryData {
@@ -489,6 +489,7 @@ defineFeature(
         el.style.display = show ? '' : 'none';
         if (show) visibleCount++;
       }
+      logDebug('[COMPARE]', 'Filter applied:', { activeStatuses: [...activeStatuses], visibleCount, total: entries.length });
 
       let emptyEl = listContainer.querySelector<HTMLElement>('.ala-compare-empty');
       if (visibleCount === 0) {
@@ -525,6 +526,7 @@ defineFeature(
 
       const scroller = listContainer.querySelector('.scroller');
       if (scroller) listContainer.appendChild(scroller);
+      logDebug('[COMPARE]', 'Sort applied:', { col, dir, totalEntries: entries.length });
     }
 
     function updateStatusCounts(sidebar: HTMLElement, entries: HTMLElement[]): void {
@@ -707,6 +709,7 @@ defineFeature(
     }
 
     function setupCompareView(header: HTMLElement, listContainer: HTMLElement, entries: HTMLElement[]): void {
+      logDebug('[COMPARE]', 'Setting up Compare View UI with', entries.length, 'entries');
       header.querySelectorAll<HTMLElement>('.status').forEach((statusEl) => {
         if (!statusEl.querySelector('.ala-header-label')) {
           const text = statusEl.textContent?.trim() || '';

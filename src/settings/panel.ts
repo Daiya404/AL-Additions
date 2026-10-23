@@ -12,7 +12,7 @@ import { DEFAULT_TIERS, validateTiers, normalizeHexColor, type TierConfig } from
 import { openOverridesModal } from '../modules/sync/overridesModal';
 import { OVERRIDES_SETTING_KEY, getManualOverrides } from '../modules/sync/overrides';
 
-const SECTIONS = ['Sync', 'AniList Enhancements', 'External Links, Downloads & Mappings'];
+const SECTIONS = ['Sync', 'AniList Enhancements', 'External Links, Downloads & Mappings', 'Advanced'];
 
 const CSS = `
   .ala-settings-nav-section{margin-top:26px}

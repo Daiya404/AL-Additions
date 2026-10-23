@@ -2,6 +2,7 @@ import { unsafeWindow } from 'vite-plugin-monkey/dist/client';
 import { Settings } from '../../settings/settings';
 import { mediaRoute } from '../../utils/dom';
 import { log } from '../../api/mal';
+import { logDebug } from '../../utils/helpers';
 import { stores, addPendingDelete, removePendingDelete } from './state';
 import { SyncMediaType, typeLabel } from './types';
 import { getOverride } from './overrides';
@@ -99,6 +100,7 @@ export function initDeletionInterceptor(): void {
     }
 
     if (queryStr.includes('DeleteMediaListEntry')) {
+      logDebug('[SYNC]', 'DeleteMediaListEntry intercepted for variables:', variables);
       if (Settings.get('syncMode') === 'exact') {
         const candidate = activeCandidate || extractDialogMedia(document.body);
         if (candidate) {
@@ -109,6 +111,7 @@ export function initDeletionInterceptor(): void {
             title: candidate.title,
             deletedAt: Date.now()
           });
+          logDebug('[SYNC]', 'Queued pending deletion for exact match:', candidate);
           activeCandidate = null;
           log(`${typeLabel(candidate.type)}: queued "${candidate.title}" for deletion on MAL (Exact Match).`, 'info');
         }
@@ -119,6 +122,7 @@ export function initDeletionInterceptor(): void {
 
     if (queryStr.includes('SaveMediaListEntry') && variables?.mediaId) {
       const mediaId = Number(variables.mediaId);
+      logDebug('[SYNC]', 'SaveMediaListEntry intercepted, un-queuing any pending deletion for mediaId:', mediaId);
       removePendingDelete(mediaId, 'ANIME');
       removePendingDelete(mediaId, 'MANGA');
     }

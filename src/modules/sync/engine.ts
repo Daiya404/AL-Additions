@@ -11,7 +11,7 @@ import {
   clearAniListAuth
 } from '../../api/mal';
 import { hooks } from '../../api/mal';
-import { store, tryOr, authError } from '../../utils/helpers';
+import { store, tryOr, authError, logDebug } from '../../utils/helpers';
 import { strictTitle } from '../../utils/matching';
 import { Settings } from '../../settings/settings';
 import {
@@ -244,12 +244,14 @@ export async function syncType(type: SyncMediaType, userId: number, full: boolea
   const isExact = Settings.get('syncMode') === 'exact';
 
   log(`${label}: starting ${fullPass ? 'full library comparison' : 'incremental sync'} — fetching AniList entries and your current MAL list.`);
+  logDebug('[SYNC]', `${label}: starting sync pass:`, { fullPass, lastSync, isExact });
   const [entries, mal] = await Promise.all([
     fullPass ? alFetchAll(userId, type) : alFetchIncremental(userId, type, lastSync),
     malFetchList(type)
   ]);
   const newest = entries.reduce((m, e) => Math.max(m, e.updatedAt), 0);
   log(`${label}: found ${entries.length} AniList entr${entries.length === 1 ? 'y' : 'ies'} to check and ${Object.keys(mal).length} entr${Object.keys(mal).length === 1 ? 'y' : 'ies'} on MAL.`);
+  logDebug('[SYNC]', `${label}: AniList entries=${entries.length}, MAL entries=${Object.keys(mal).length}`);
   progress.total += entries.length;
   progress.phase = 'pushing';
   notifyProgress(true);
@@ -391,6 +393,7 @@ function handleAuthFailure(e: any): void {
 }
 
 export async function runSync(types: SyncMediaType[] = [...TYPES], opts: { full?: boolean } = {}): Promise<void> {
+  logDebug('[SYNC]', 'runSync initiated for types:', types, 'options:', opts);
   if (syncStatus.syncing) return log('Sync already running.');
   if (!store.get('al_token') || !store.get('mal_token')) return log('Connect both AniList and MAL first.');
   if (navigator.onLine === false) return log('You appear to be offline; sync skipped.');
