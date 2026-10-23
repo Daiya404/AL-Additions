@@ -1,5 +1,5 @@
 import { RateLimiter } from '../utils/limiter';
-import { store, gm, sleep, memo, openTab, authError, safe, randomString } from '../utils/helpers';
+import { store, gm, sleep, memo, openTab, authError, safe, randomString, logDebug } from '../utils/helpers';
 import { strictTitle } from '../utils/matching';
 import { Core } from '../core/observer';
 import { AniList } from './anilist';
@@ -242,7 +242,9 @@ export async function malRequest(
 ): Promise<any> {
   await malLimiter.acquire(checkCancel ?? hooks.checkCancel);
   const token = await malEnsureToken();
+  logDebug('[SYNC]', `MAL ${method} ${url}`, data ? { data } : '');
   const res = await gm.request(url, { method, data, timeout, headers: { Authorization: `Bearer ${token}`, ...headers } });
+  logDebug('[SYNC]', `MAL ${method} response: ${res.status} for ${url}`);
   if (looksLimited(res)) malLimiter.limit(parseRetryAfterMs(res.responseHeaders, res.status === 429 ? 5000 : 60000));
   else if (res.status >= 500) malLimiter.limit(2000);
   else if (res.status >= 200 && res.status < 300) malLimiter.success();

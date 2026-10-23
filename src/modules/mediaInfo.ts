@@ -4,7 +4,7 @@ import { AniList, MediaData } from '../api/anilist';
 import { alConnect } from '../api/mal';
 import { externalReleased } from '../api/scrapers';
 import { addStyle, mediaRoute } from '../utils/dom';
-import { tryOr, safe, store } from '../utils/helpers';
+import { tryOr, safe, store, logDebug } from '../utils/helpers';
 import type { MediaRoute } from '../types';
 
 defineFeature(
@@ -145,6 +145,7 @@ defineFeature(
       const isStarting = (!prev.status || prev.status === 'PLANNING') && progress > 0;
       const status = finishNow ? 'COMPLETED' : isStarting ? 'CURRENT' : undefined;
       saving = true;
+      logDebug('[MEDIAINFO]', 'Saving media progress/score:', { mediaId: media.id, score, progress, status });
       try {
         const entry = await MediaData.save(media.id, media.type, {
           score,
@@ -154,8 +155,10 @@ defineFeature(
         });
         if (!entry) throw new Error('AniList did not return the updated entry');
         info.mediaListEntry = entry;
+        logDebug('[MEDIAINFO]', 'Save successful:', entry);
         return entry;
       } catch (e) {
+        logDebug('[MEDIAINFO]', 'Media list save failed:', e);
         console.warn('[AL-Additions] Media list save failed:', e);
         return false;
       } finally {
@@ -187,6 +190,7 @@ defineFeature(
       const g = gen;
       const stale = (): boolean => g !== gen || mediaRoute()?.id !== route.id;
       rendering = true;
+      logDebug('[MEDIAINFO]', 'Rendering media info panel for:', key);
       try {
         const info = await MediaData.get(route.id, route.type);
         if (stale()) return;

@@ -120,6 +120,41 @@
 		set: (k, v) => _GM_setValue(k, v),
 		del: (k) => _GM_deleteValue(k)
 	};
+	var MODULE_SETTING_MAP = {
+		fastLoad: "ala_setting_debugFastLoad",
+		sync: "ala_setting_debugSync",
+		compareView: "ala_setting_debugCompareView",
+		mediaInfo: "ala_setting_debugMediaInfo",
+		tierLabels: "ala_setting_debugTierLabels",
+		general: "ala_setting_debugGeneral"
+	};
+	function isDebug(module) {
+		try {
+			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+			if (win.__ALA_DEBUG__ || win.__ALFL_DEBUG__) return true;
+			if (!store.get("ala_setting_devModeEnabled", false)) return false;
+			if (!module) return true;
+			const settingKey = MODULE_SETTING_MAP[module];
+			if (settingKey) {
+				const def = module === "fastLoad";
+				return store.get(settingKey, def);
+			}
+			return true;
+		} catch {
+			return false;
+		}
+	}
+	function logDebug(moduleOrTag, ...args) {
+		let mod;
+		if (/^\[(?:FASTLOAD|ALFL)/i.test(moduleOrTag)) mod = "fastLoad";
+		else if (/^\[SYNC/i.test(moduleOrTag)) mod = "sync";
+		else if (/^\[COMPARE/i.test(moduleOrTag)) mod = "compareView";
+		else if (/^\[MEDIAINFO/i.test(moduleOrTag)) mod = "mediaInfo";
+		else if (/^\[TIER/i.test(moduleOrTag)) mod = "tierLabels";
+		else if (/^\[CORE|OBSERVER/i.test(moduleOrTag)) mod = "general";
+		if (!isDebug(mod)) return;
+		console.debug(moduleOrTag, ...args);
+	}
 	function jsonGet(key, fallback) {
 		try {
 			const v = store.get(key, null);
@@ -186,6 +221,7 @@
 		function notifyNav() {
 			if (muted || location.href === lastHref) return;
 			lastHref = location.href;
+			logDebug("[CORE]", "Navigation detected:", location.pathname + location.search);
 			fire(navCbs);
 		}
 		for (const name of ["pushState", "replaceState"]) {
@@ -216,6 +252,7 @@
 					flushTimer = 0;
 					const batch = queued;
 					queued = [];
+					logDebug("[OBSERVER]", `Flushing mutation batch: ${batch.length} record(s) to ${bodyCbs.length} listener(s)`);
 					fire(bodyCbs, batch);
 				}, 50);
 			});
@@ -974,6 +1011,7 @@
 	async function malRequest({ method = "GET", url, data, headers = {}, timeout = 3e4 }, checkCancel) {
 		await malLimiter.acquire(checkCancel ?? hooks.checkCancel);
 		const token = await malEnsureToken();
+		logDebug("[SYNC]", `MAL ${method} ${url}`, data ? { data } : "");
 		const res = await gm.request(url, {
 			method,
 			data,
@@ -983,6 +1021,7 @@
 				...headers
 			}
 		});
+		logDebug("[SYNC]", `MAL ${method} response: ${res.status} for ${url}`);
 		if (looksLimited(res)) malLimiter.limit(parseRetryAfterMs(res.responseHeaders, res.status === 429 ? 5e3 : 6e4));
 		else if (res.status >= 500) malLimiter.limit(2e3);
 		else if (res.status >= 200 && res.status < 300) malLimiter.success();
@@ -1822,9 +1861,15 @@
 		const fullPass = full || !lastSync || Date.now() - Number(store.get(`last_compare_${type}`, 0)) > FULL_COMPARE_MS;
 		const isExact = Settings.get("syncMode") === "exact";
 		log(`${label}: starting ${fullPass ? "full library comparison" : "incremental sync"} — fetching AniList entries and your current MAL list.`);
+		logDebug("[SYNC]", `${label}: starting sync pass:`, {
+			fullPass,
+			lastSync,
+			isExact
+		});
 		const [entries, mal] = await Promise.all([fullPass ? alFetchAll(userId, type) : alFetchIncremental(userId, type, lastSync), malFetchList(type)]);
 		const newest = entries.reduce((m, e) => Math.max(m, e.updatedAt), 0);
 		log(`${label}: found ${entries.length} AniList entr${entries.length === 1 ? "y" : "ies"} to check and ${Object.keys(mal).length} entr${Object.keys(mal).length === 1 ? "y" : "ies"} on MAL.`);
+		logDebug("[SYNC]", `${label}: AniList entries=${entries.length}, MAL entries=${Object.keys(mal).length}`);
 		progress.total += entries.length;
 		progress.phase = "pushing";
 		notifyProgress(true);
@@ -1926,6 +1971,7 @@
 		log(`⚠ ${e.message}`);
 	}
 	async function runSync(types = [...TYPES], opts = {}) {
+		logDebug("[SYNC]", "runSync initiated for types:", types, "options:", opts);
 		if (syncStatus.syncing) return log("Sync already running.");
 		if (!store.get("al_token") || !store.get("mal_token")) return log("Connect both AniList and MAL first.");
 		if (navigator.onLine === false) return log("You appear to be offline; sync skipped.");
@@ -3285,7 +3331,8 @@
 	var SECTIONS = [
 		"Sync",
 		"AniList Enhancements",
-		"External Links, Downloads & Mappings"
+		"External Links, Downloads & Mappings",
+		"Advanced"
 	];
 	var CSS$1 = `
   .ala-settings-nav-section{margin-top:26px}
@@ -4016,6 +4063,7 @@
 		for (const m of modules) {
 			if (m.early !== early || !m.hosts.includes(HOST)) continue;
 			if (m.setting && !Settings.get(m.setting)) continue;
+			logDebug("[CORE]", `Initializing module "${m.name}" (early=${early})`);
 			try {
 				Promise.resolve(m.init()).catch((e) => console.error("[AL-Additions]", m.name, e));
 			} catch (e) {
@@ -4957,6 +5005,7 @@
 					const storedTax = loadStoredTaxonomy();
 					if (storedTax && now - storedTax.time < TAXONOMY_TTL) {
 						stats.cacheHits++;
+						logDebug("[FASTLOAD] Cache HIT (24h localStorage): GenreCollection & MediaTagCollection");
 						const HeadersCtor = win.Headers || Headers;
 						const ResponseCtor = win.Response || Response;
 						return Promise.resolve(new ResponseCtor(storedTax.text, {
@@ -4968,21 +5017,31 @@
 				}
 				if (cached && cached.time >= freshFloor && now - cached.time < ttl) {
 					stats.cacheHits++;
+					logDebug("[FASTLOAD] Cache HIT (RAM):", isMediaListQuery(parsed) ? "MediaListCollection" : "GraphQL query", `${Math.round((now - cached.time) / 1e3)}s old`);
 					return Promise.resolve(toResponse(cached.snap));
 				}
 				const flying = inflight.get(key);
 				if (flying) {
 					stats.deduped++;
+					logDebug("[FASTLOAD] Attached to in-flight request:", isMediaListQuery(parsed) ? "MediaListCollection" : "GraphQL query");
 					return abortable(flying.then((snap) => toResponse(snap), () => nativeFetch(input, init)), init?.signal);
 				}
 				const myEpoch = epoch;
 				const stale = cached && now - cached.time < CFG.gqlStaleTtl ? cached.snap : null;
+				const opName = parsed.operationName || (isMediaListQuery(parsed) ? "MediaListCollection" : "query");
+				logDebug("[FASTLOAD] Cache MISS (network fetch):", opName, "key:", key);
 				const original = nativeFetch(input, init);
 				const snapshot = original.then(async (res) => {
 					note429(res);
-					if (res.status !== 200) throw new Error("not cacheable");
+					if (res.status !== 200) {
+						logDebug("[FASTLOAD] Response not 200:", res.status, opName);
+						throw new Error("not cacheable");
+					}
 					const buf = await res.clone().arrayBuffer();
-					if (hasGraphQLErrors(buf)) throw new Error("graphql errors");
+					if (hasGraphQLErrors(buf)) {
+						logDebug("[FASTLOAD] Response had GraphQL errors:", opName);
+						throw new Error("graphql errors");
+					}
 					return {
 						buf,
 						status: res.status,
@@ -4993,7 +5052,10 @@
 				inflight.set(key, snapshot);
 				snapshot.then((snap) => {
 					if (inflight.get(key) === snapshot) inflight.delete(key);
-					if (epoch === myEpoch) put(key, snap);
+					if (epoch === myEpoch) {
+						put(key, snap);
+						logDebug("[FASTLOAD] Cached in RAM:", opName, `${Math.round(snap.buf.byteLength / 1024)} KB`);
+					}
 					extractUserMappings(snap.buf);
 					if (isTaxonomyQuery(parsed) && snap.status === 200) persistStoredTaxonomy(snap);
 				}, () => {
@@ -5131,6 +5193,7 @@
 				const p = pMap.get(id);
 				if (!p) return;
 				pMap.delete(id);
+				logDebug("[FASTLOAD RPC] IN", id, Object.keys(d));
 				if (d.result) extractUsersFromRpcResult(d.result);
 				if (p.mutation) return clearRpc();
 				if (p.key && d.error == null && p.epoch === rpcEpoch) attempt(() => {
@@ -5145,7 +5208,10 @@
 			const prefetchedWorkerKeys = new Map();
 			function prefetchWorkerList(type, userId, userName) {
 				const url = findWorkerUrl();
-				if (!url || !WorkerCtor) return;
+				if (!url || !WorkerCtor) {
+					logDebug("[FASTLOAD RPC] Prefetch skipped: worker script unknown");
+					return;
+				}
 				if (!userId && userName) userId = userMap.get(userName.toLowerCase()) || 0;
 				if (userId && !userName) userName = idToUserMap.get(userId) || void 0;
 				const raw = attempt(() => win.localStorage.getItem("alfl:rpc:listTpl:v2") || store.get("alfl:rpc:listTpl:v2", null));
@@ -5153,7 +5219,10 @@
 				if (raw) try {
 					tpl = JSON.parse(raw);
 				} catch {}
-				if (!tpl) return;
+				if (!tpl) {
+					logDebug("[FASTLOAD RPC] Prefetch skipped: no list template yet");
+					return;
+				}
 				const vars = {
 					...tpl.vars || {},
 					type
@@ -5196,7 +5265,8 @@
 				let w;
 				try {
 					w = new WorkerCtor(url, workerOpts);
-				} catch {
+				} catch (err) {
+					logDebug("[FASTLOAD RPC] Prefetch worker failed to start", err);
 					return;
 				}
 				const id = `alfl_prefetch_${type}_${now}`;
@@ -5226,6 +5296,7 @@
 					attempt(() => w.terminate());
 				};
 				const timer = setTimeout(() => {
+					logDebug("[FASTLOAD RPC] Prefetch timed out", type);
 					finish();
 				}, 3e4);
 				const startEpoch = rpcEpoch;
@@ -5261,6 +5332,7 @@
 							}
 							while (rpcCache.size > RPC_MAX_ENTRIES) rpcCache.delete(rpcCache.keys().next().value);
 						});
+						logDebug("[FASTLOAD RPC] Prefetch cached", type, Object.keys(d));
 						for (const k of [key, ...possibleKeys]) {
 							const f = rpcInflight.get(k);
 							if (f) {
@@ -5268,17 +5340,21 @@
 								rpcInflight.delete(k);
 							}
 						}
-					} else for (const k of [key, ...possibleKeys]) {
-						const f = rpcInflight.get(k);
-						if (f) {
-							f.reject(d.error);
-							rpcInflight.delete(k);
+					} else {
+						logDebug("[FASTLOAD RPC] Prefetch failed", d.error);
+						for (const k of [key, ...possibleKeys]) {
+							const f = rpcInflight.get(k);
+							if (f) {
+								f.reject(d.error);
+								rpcInflight.delete(k);
+							}
 						}
 					}
 					clearTimeout(timer);
 					attempt(() => w.terminate());
 				});
-				w.addEventListener("error", () => {
+				w.addEventListener("error", (e) => {
+					logDebug("[FASTLOAD RPC] Prefetch worker error", e?.message);
 					attempt(() => {
 						win.localStorage.removeItem("alfl:workerUrl");
 						store.del("alfl:workerUrl");
@@ -5286,6 +5362,7 @@
 					workerUrl = null;
 					finish();
 				});
+				logDebug("[FASTLOAD RPC] Prefetch dispatching", type, vars);
 				w.postMessage({
 					type: "RPC",
 					id,
@@ -5323,6 +5400,7 @@
 					}
 				}
 				if (isAnotherUserPage) {
+					logDebug("[FASTLOAD RPC] Auto-prefetching for target user:", otherUser, "subRoute:", subRoute);
 					if (subRoute !== "animelist") setTimeout(() => {
 						prefetchWorkerList("ANIME", otherUserId, otherUser);
 					}, 100);
@@ -5366,6 +5444,7 @@
 								store.set("alfl:workerUrl", workerUrl);
 							});
 							workerOpts = options;
+							logDebug("[FASTLOAD RPC] Page worker created:", urlStr);
 						}
 						if (!watched.has(instance)) {
 							watched.add(instance);
@@ -5427,6 +5506,7 @@
 								});
 							} else if (!isVolatile(q)) {
 								const key = rpcKey(data.params);
+								const label = String(q.query).replace(/\s+/g, " ").slice(0, 50);
 								let hit = null;
 								let flying = null;
 								if (isMediaListQuery(q)) {
@@ -5462,6 +5542,7 @@
 								}
 								if (hit) {
 									stats.cacheHits++;
+									logDebug("[FASTLOAD RPC] HIT", label, `${Math.round((Date.now() - hit.time) / 1e3)}s old`);
 									const worker = this;
 									const reply = {
 										...clone(hit.msg),
@@ -5473,9 +5554,11 @@
 								}
 								if (flying) {
 									stats.deduped++;
+									logDebug("[FASTLOAD RPC] Attached to in-flight prefetch:", label);
 									const worker = this;
 									const replyId = data.id;
 									flying.promise.then((msg) => {
+										logDebug("[FASTLOAD RPC] In-flight prefetch delivered to page:", label);
 										const reply = {
 											...clone(msg),
 											id: replyId
@@ -5487,6 +5570,7 @@
 									});
 									return;
 								}
+								logDebug("[FASTLOAD RPC] MISS", label, JSON.stringify(q.variables).slice(0, 80));
 								let pMap = workerPending.get(this);
 								if (!pMap) {
 									pMap = new Map();
@@ -5580,6 +5664,7 @@
 					stamps.push(Date.now());
 					sent++;
 					attempt(() => {
+						logDebug("[FASTLOAD] Replay/Prefetch dispatching for:", route.shape, "vars:", parsed.variables);
 						win.fetch(request.url, {
 							method: "POST",
 							headers,
@@ -5649,6 +5734,7 @@
 				if (sent) {
 					prefetched.set(key, now);
 					stats.prefetched += sent;
+					logDebug("[FASTLOAD] Prefetch sent for:", route.shape, route.id);
 				}
 			}
 			const linkOf = (event) => event.target?.closest?.("a[href]") || null;
@@ -6325,6 +6411,12 @@
 			const isStarting = (!prev.status || prev.status === "PLANNING") && progress > 0;
 			const status = finishNow ? "COMPLETED" : isStarting ? "CURRENT" : void 0;
 			saving = true;
+			logDebug("[MEDIAINFO]", "Saving media progress/score:", {
+				mediaId: media.id,
+				score,
+				progress,
+				status
+			});
 			try {
 				const entry = await MediaData.save(media.id, media.type, {
 					score,
@@ -6334,8 +6426,10 @@
 				});
 				if (!entry) throw new Error("AniList did not return the updated entry");
 				info.mediaListEntry = entry;
+				logDebug("[MEDIAINFO]", "Save successful:", entry);
 				return entry;
 			} catch (e) {
+				logDebug("[MEDIAINFO]", "Media list save failed:", e);
 				console.warn("[AL-Additions] Media list save failed:", e);
 				return false;
 			} finally {
@@ -6365,6 +6459,7 @@
 			const g = gen;
 			const stale = () => g !== gen || mediaRoute()?.id !== route.id;
 			rendering = true;
+			logDebug("[MEDIAINFO]", "Rendering media info panel for:", key);
 			try {
 				const info = await MediaData.get(route.id, route.type);
 				if (stale()) return;
@@ -7185,6 +7280,11 @@
 			else if (maxScore > 5) detected = "POINT_10";
 			else if (maxScore > 0) detected = "POINT_10";
 			compareRoot._colFormats[sideKey] = detected;
+			logDebug("[TIER]", `Detected score system for ${isAuthUser ? "viewer" : "other"}:`, detected, {
+				maxScore,
+				hasDecimal,
+				hasStarIcon
+			});
 			return detected;
 		}
 		function normalizeScore(score, scoreSystem, isPercentage = false) {
@@ -7215,6 +7315,7 @@
 			if (normalizedRating === null) return;
 			const tier = getTier(normalizedRating, tiers);
 			if (!tier) return;
+			logDebug("[TIER]", "Applied tier badge:", tier.label, "to raw score:", rawText, "normalized:", normalizedRating);
 			el.dataset.tierModified = "true";
 			el.dataset.tierSource = attr ?? "";
 			const container = document.createElement("div");
@@ -7732,6 +7833,11 @@
 				el.style.display = show ? "" : "none";
 				if (show) visibleCount++;
 			}
+			logDebug("[COMPARE]", "Filter applied:", {
+				activeStatuses: [...activeStatuses],
+				visibleCount,
+				total: entries.length
+			});
 			let emptyEl = listContainer.querySelector(".ala-compare-empty");
 			if (visibleCount === 0) {
 				if (!emptyEl) {
@@ -7752,6 +7858,11 @@
 			if (emptyEl) listContainer.appendChild(emptyEl);
 			const scroller = listContainer.querySelector(".scroller");
 			if (scroller) listContainer.appendChild(scroller);
+			logDebug("[COMPARE]", "Sort applied:", {
+				col,
+				dir,
+				totalEntries: entries.length
+			});
 		}
 		function updateStatusCounts(sidebar, entries) {
 			const counts = {
@@ -7887,6 +7998,7 @@
 			lastProcessedCount = -1;
 		}
 		function setupCompareView(header, listContainer, entries) {
+			logDebug("[COMPARE]", "Setting up Compare View UI with", entries.length, "entries");
 			header.querySelectorAll(".status").forEach((statusEl) => {
 				if (!statusEl.querySelector(".ala-header-label")) statusEl.innerHTML = `<span class="ala-header-label">${statusEl.textContent?.trim() || ""}</span>`;
 			});
@@ -8446,6 +8558,7 @@
 				}
 			} catch (_) {}
 			if (queryStr.includes("DeleteMediaListEntry")) {
+				logDebug("[SYNC]", "DeleteMediaListEntry intercepted for variables:", variables);
 				if (Settings.get("syncMode") === "exact") {
 					const candidate = activeCandidate || extractDialogMedia(document.body);
 					if (candidate) {
@@ -8456,6 +8569,7 @@
 							title: candidate.title,
 							deletedAt: Date.now()
 						});
+						logDebug("[SYNC]", "Queued pending deletion for exact match:", candidate);
 						activeCandidate = null;
 						log(`${typeLabel(candidate.type)}: queued "${candidate.title}" for deletion on MAL (Exact Match).`, "info");
 					}
@@ -8464,6 +8578,7 @@
 			const res = await origFetch.call(page, input, init);
 			if (queryStr.includes("SaveMediaListEntry") && variables?.mediaId) {
 				const mediaId = Number(variables.mediaId);
+				logDebug("[SYNC]", "SaveMediaListEntry intercepted, un-queuing any pending deletion for mediaId:", mediaId);
 				removePendingDelete(mediaId, "ANIME");
 				removePendingDelete(mediaId, "MANGA");
 			}
@@ -8646,6 +8761,58 @@
 		section: "External Links, Downloads & Mappings",
 		title: "Manual Mappings & Sync Audit",
 		help: "Manage custom MyAnimeList ID overrides, entries ignored from sync, and review database discrepancies."
+	}, () => {});
+	defineFeature({
+		id: "devMode",
+		key: "devModeEnabled",
+		section: "Advanced",
+		def: false,
+		title: "Developer Mode",
+		help: "Enable developer diagnostics and verbose module logging in the browser console.",
+		options: [
+			{
+				key: "debugFastLoad",
+				type: "toggle",
+				def: false,
+				title: "Fast Load Debug",
+				help: "Log Web Worker RPC requests, cache hits/misses, deduplication, and prefetch activity."
+			},
+			{
+				key: "debugSync",
+				type: "toggle",
+				def: false,
+				title: "Sync Debug",
+				help: "Log MAL synchronization steps, queue processing, rate limits, and deletions."
+			},
+			{
+				key: "debugCompareView",
+				type: "toggle",
+				def: false,
+				title: "Compare View Debug",
+				help: "Log list comparison data loading, score diffs, sorting, and filtering passes."
+			},
+			{
+				key: "debugMediaInfo",
+				type: "toggle",
+				def: false,
+				title: "Media Info Debug",
+				help: "Log media info sidebar updates, progress steppers, and save requests."
+			},
+			{
+				key: "debugTierLabels",
+				type: "toggle",
+				def: false,
+				title: "Tier Labels Debug",
+				help: "Log scoring system detection, tier matching, and badge rendering."
+			},
+			{
+				key: "debugGeneral",
+				type: "toggle",
+				def: false,
+				title: "Core & Observer Debug",
+				help: "Log DOM observer mutations, route changes, and general script lifecycle events."
+			}
+		]
 	}, () => {});
 	defineModule("settings", null, initSettingsPage);
 	Settings.migrate();

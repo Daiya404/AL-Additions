@@ -18,6 +18,7 @@ import './modules/anisongs';
 import './modules/tierLabels';
 import './modules/compareView';
 import './modules/sync';
+import './modules/devMode';
 
 defineModule('settings', null, initSettingsPage);
 

@@ -1,6 +1,6 @@
 import { defineFeature } from '../core/registry';
 import { unsafeWindow } from 'vite-plugin-monkey/dist/client';
-import { store as gmStore } from '../utils/helpers';
+import { store as gmStore, logDebug } from '../utils/helpers';
 
 defineFeature(
   {
@@ -1098,6 +1098,7 @@ defineFeature(
           const storedTax = loadStoredTaxonomy();
           if (storedTax && now - storedTax.time < TAXONOMY_TTL) {
             stats.cacheHits++;
+            logDebug('[FASTLOAD] Cache HIT (24h localStorage): GenreCollection & MediaTagCollection');
             const HeadersCtor = win.Headers || Headers;
             const ResponseCtor = win.Response || Response;
             return Promise.resolve(
@@ -1112,12 +1113,21 @@ defineFeature(
 
         if (cached && cached.time >= freshFloor && now - cached.time < ttl) {
           stats.cacheHits++;
+          logDebug(
+            '[FASTLOAD] Cache HIT (RAM):',
+            isMediaListQuery(parsed) ? 'MediaListCollection' : 'GraphQL query',
+            `${Math.round((now - cached.time) / 1000)}s old`
+          );
           return Promise.resolve(toResponse(cached.snap));
         }
 
         const flying = inflight.get(key);
         if (flying) {
           stats.deduped++;
+          logDebug(
+            '[FASTLOAD] Attached to in-flight request:',
+            isMediaListQuery(parsed) ? 'MediaListCollection' : 'GraphQL query'
+          );
           return abortable(
             flying.then(
               (snap) => toResponse(snap),
@@ -1129,16 +1139,20 @@ defineFeature(
 
         const myEpoch = epoch;
         const stale = cached && now - cached.time < CFG.gqlStaleTtl ? cached.snap : null;
+        const opName = parsed.operationName || (isMediaListQuery(parsed) ? 'MediaListCollection' : 'query');
+        logDebug('[FASTLOAD] Cache MISS (network fetch):', opName, 'key:', key);
         const original = nativeFetch(input, init);
 
         const snapshot = original.then(async (res: Response) => {
           note429(res);
           if (res.status !== 200) {
+            logDebug('[FASTLOAD] Response not 200:', res.status, opName);
             throw new Error('not cacheable');
           }
           const copy = res.clone();
           const buf = await copy.arrayBuffer();
           if (hasGraphQLErrors(buf)) {
+            logDebug('[FASTLOAD] Response had GraphQL errors:', opName);
             throw new Error('graphql errors');
           }
           return {
@@ -1157,6 +1171,7 @@ defineFeature(
             if (inflight.get(key) === snapshot) inflight.delete(key);
             if (epoch === myEpoch) {
               put(key, snap);
+              logDebug('[FASTLOAD] Cached in RAM:', opName, `${Math.round(snap.buf.byteLength / 1024)} KB`);
             }
             extractUserMappings(snap.buf);
             if (isTaxonomyQuery(parsed) && snap.status === 200) {
@@ -1216,7 +1231,6 @@ defineFeature(
         return cachedFetch(job, input, init, (init as any)?.__alfl === 'replay');
       };
 
-      /* ---- Worker RPC layer: AniList runs its GraphQL client in a web worker ---- */
       const rpcCache = new Map<string, { time: number; msg: any }>();
       const rpcInflight = new Map<string, {
         promise: Promise<any>;
@@ -1339,6 +1353,7 @@ defineFeature(
         const p = pMap.get(id);
         if (!p) return;
         pMap.delete(id);
+        logDebug('[FASTLOAD RPC] IN', id, Object.keys(d));
         if (d.result) {
           extractUsersFromRpcResult(d.result);
         }
@@ -1357,6 +1372,7 @@ defineFeature(
       function prefetchWorkerList(type: 'ANIME' | 'MANGA', userId: number, userName?: string) {
         const url = findWorkerUrl();
         if (!url || !WorkerCtor) {
+          logDebug('[FASTLOAD RPC] Prefetch skipped: worker script unknown');
           return;
         }
         if (!userId && userName) {
@@ -1373,6 +1389,7 @@ defineFeature(
           } catch {}
         }
         if (!tpl) {
+          logDebug('[FASTLOAD RPC] Prefetch skipped: no list template yet');
           return;
         }
         const vars: any = { ...(tpl.vars || {}), type };
@@ -1409,7 +1426,8 @@ defineFeature(
         let w: Worker;
         try {
           w = new WorkerCtor(url, workerOpts);
-        } catch {
+        } catch (err) {
+          logDebug('[FASTLOAD RPC] Prefetch worker failed to start', err);
           return;
         }
         const id = `alfl_prefetch_${type}_${now}`;
@@ -1439,6 +1457,7 @@ defineFeature(
           attempt(() => w.terminate());
         };
         const timer = setTimeout(() => {
+          logDebug('[FASTLOAD RPC] Prefetch timed out', type);
           finish();
         }, 30_000);
 
@@ -1476,6 +1495,7 @@ defineFeature(
               }
               while (rpcCache.size > RPC_MAX_ENTRIES) rpcCache.delete(rpcCache.keys().next().value as string);
             });
+            logDebug('[FASTLOAD RPC] Prefetch cached', type, Object.keys(d));
             for (const k of [key, ...possibleKeys]) {
               const f = rpcInflight.get(k);
               if (f) {
@@ -1484,6 +1504,7 @@ defineFeature(
               }
             }
           } else {
+            logDebug('[FASTLOAD RPC] Prefetch failed', d.error);
             for (const k of [key, ...possibleKeys]) {
               const f = rpcInflight.get(k);
               if (f) {
@@ -1496,7 +1517,8 @@ defineFeature(
           attempt(() => w.terminate());
         });
 
-        w.addEventListener('error', () => {
+        w.addEventListener('error', (e: any) => {
+          logDebug('[FASTLOAD RPC] Prefetch worker error', e?.message);
           attempt(() => {
             win.localStorage.removeItem('alfl:workerUrl');
             gmStore.del('alfl:workerUrl');
@@ -1505,6 +1527,7 @@ defineFeature(
           finish();
         });
 
+        logDebug('[FASTLOAD RPC] Prefetch dispatching', type, vars);
         w.postMessage({ type: 'RPC', id, method: 'fetch', params });
       }
 
@@ -1547,6 +1570,7 @@ defineFeature(
         }
 
         if (isAnotherUserPage) {
+          logDebug('[FASTLOAD RPC] Auto-prefetching for target user:', otherUser, 'subRoute:', subRoute);
           if (subRoute !== 'animelist') {
             setTimeout(() => {
               prefetchWorkerList('ANIME', otherUserId, otherUser);
@@ -1604,6 +1628,7 @@ defineFeature(
                   gmStore.set('alfl:workerUrl', workerUrl);
                 });
                 workerOpts = options;
+                logDebug('[FASTLOAD RPC] Page worker created:', urlStr);
               }
               if (!watched.has(instance)) {
                 watched.add(instance);
@@ -1665,6 +1690,7 @@ defineFeature(
                 pMap.set(id, { key: null, mutation: true });
               } else if (!isVolatile(q)) {
                 const key = rpcKey(data.params);
+                const label = String(q.query).replace(/\s+/g, ' ').slice(0, 50);
                 let hit: any = null;
                 let flying: any = null;
 
@@ -1716,6 +1742,7 @@ defineFeature(
 
                 if (hit) {
                   stats.cacheHits++;
+                  logDebug('[FASTLOAD RPC] HIT', label, `${Math.round((Date.now() - hit.time) / 1000)}s old`);
                   const worker = this;
                   const reply = { ...clone(hit.msg), id: data.id };
                   const MessageEventCtor = win.MessageEvent || MessageEvent;
@@ -1725,10 +1752,12 @@ defineFeature(
 
                 if (flying) {
                   stats.deduped++;
+                  logDebug('[FASTLOAD RPC] Attached to in-flight prefetch:', label);
                   const worker = this;
                   const replyId = data.id;
                   flying.promise.then(
                     (msg: any) => {
+                      logDebug('[FASTLOAD RPC] In-flight prefetch delivered to page:', label);
                       const reply = { ...clone(msg), id: replyId };
                       const MessageEventCtor = win.MessageEvent || MessageEvent;
                       setTimeout(() => worker.dispatchEvent(new MessageEventCtor('message', { data: reply })), 0);
@@ -1740,6 +1769,7 @@ defineFeature(
                   return;
                 }
 
+                logDebug('[FASTLOAD RPC] MISS', label, JSON.stringify(q.variables).slice(0, 80));
                 let pMap = workerPending.get(this);
                 if (!pMap) {
                   pMap = new Map();
@@ -1834,6 +1864,7 @@ defineFeature(
           stamps.push(Date.now());
           sent++;
           attempt(() => {
+            logDebug('[FASTLOAD] Replay/Prefetch dispatching for:', route.shape, 'vars:', parsed.variables);
             win
               .fetch(request.url, {
                 method: 'POST',
@@ -1924,6 +1955,7 @@ defineFeature(
         if (sent) {
           prefetched.set(key, now);
           stats.prefetched += sent;
+          logDebug('[FASTLOAD] Prefetch sent for:', route.shape, route.id);
         }
       }
 

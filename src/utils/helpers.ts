@@ -1,4 +1,4 @@
-import { GM_getValue, GM_setValue, GM_deleteValue, GM_xmlhttpRequest } from 'vite-plugin-monkey/dist/client';
+import { GM_getValue, GM_setValue, GM_deleteValue, GM_xmlhttpRequest, unsafeWindow } from 'vite-plugin-monkey/dist/client';
 
 export const HOST = location.hostname;
 
@@ -97,6 +97,52 @@ export const store = {
   set: <T>(k: string, v: T): void => GM_setValue(k, v),
   del: (k: string): void => GM_deleteValue(k)
 };
+
+export type DebugModule = 'fastLoad' | 'sync' | 'compareView' | 'mediaInfo' | 'tierLabels' | 'general';
+
+const MODULE_SETTING_MAP: Record<string, string> = {
+  fastLoad: 'ala_setting_debugFastLoad',
+  sync: 'ala_setting_debugSync',
+  compareView: 'ala_setting_debugCompareView',
+  mediaInfo: 'ala_setting_debugMediaInfo',
+  tierLabels: 'ala_setting_debugTierLabels',
+  general: 'ala_setting_debugGeneral'
+};
+
+export function isDebug(module?: DebugModule | string): boolean {
+  try {
+    const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+    if (win.__ALA_DEBUG__ || win.__ALFL_DEBUG__) return true;
+
+    const devMode = store.get('ala_setting_devModeEnabled', false);
+    if (!devMode) return false;
+
+    if (!module) return true;
+
+    const settingKey = MODULE_SETTING_MAP[module];
+    if (settingKey) {
+      const def = module === 'fastLoad';
+      return store.get(settingKey, def);
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function logDebug(moduleOrTag: string, ...args: any[]): void {
+  let mod: string | undefined;
+  if (/^\[(?:FASTLOAD|ALFL)/i.test(moduleOrTag)) mod = 'fastLoad';
+  else if (/^\[SYNC/i.test(moduleOrTag)) mod = 'sync';
+  else if (/^\[COMPARE/i.test(moduleOrTag)) mod = 'compareView';
+  else if (/^\[MEDIAINFO/i.test(moduleOrTag)) mod = 'mediaInfo';
+  else if (/^\[TIER/i.test(moduleOrTag)) mod = 'tierLabels';
+  else if (/^\[CORE|OBSERVER/i.test(moduleOrTag)) mod = 'general';
+
+  if (!isDebug(mod)) return;
+  console.debug(moduleOrTag, ...args);
+}
 
 export function jsonGet<T>(key: string, fallback: T): T {
   try {
