@@ -7,6 +7,7 @@ import { AniList } from '../api/anilist';
 import { Core } from '../core/observer';
 import { maybeAutoSync } from '../modules/sync/engine';
 import { createBackup, downloadBackupFile, importBackup, readFileAsBytes } from './backup';
+import { promptPasswordModal } from './passwordModal';
 import type { SettingRow, RegisteredFeature } from '../types';
 import { DEFAULT_TIERS, validateTiers, normalizeHexColor, type TierConfig } from '../utils/tiers';
 import { openOverridesModal } from '../modules/sync/overridesModal';
@@ -682,7 +683,14 @@ export function showPanel(): void {
   };
 
   panel.querySelector('#ala-btn-export')?.addEventListener('click', async () => {
-    const pwd = prompt('Optional: Set a password to encrypt your backup file.\n\nLeave blank for an unencrypted backup:', '');
+    const pwd = await promptPasswordModal({
+      title: 'Export Settings',
+      description: 'Optional: Set a password to encrypt your backup file. Leave blank for an unencrypted backup.',
+      submitText: 'Export',
+      allowEmpty: true,
+      confirm: true,
+      placeholder: 'Optional encryption password'
+    });
     if (pwd === null) return;
     try {
       setStatus('Generating backup…');
@@ -702,11 +710,14 @@ export function showPanel(): void {
     );
     if (!confirmed) return;
 
-    const pwd = prompt(
-      'Set a password to encrypt your credentials.\n\n' +
-      'A password is required when exporting credentials:',
-      ''
-    );
+    const pwd = await promptPasswordModal({
+      title: 'Export Credentials (Encrypted)',
+      description: 'A password is required to encrypt your credentials and protect your accounts.',
+      submitText: 'Encrypt & Export',
+      allowEmpty: false,
+      confirm: true,
+      placeholder: 'Choose an encryption password'
+    });
     if (pwd === null) return;
     if (!pwd.trim()) {
       setStatus('A password is required to export credentials.', true);
