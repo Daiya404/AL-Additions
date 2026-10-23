@@ -1,5 +1,6 @@
 import { RateLimiter } from '../utils/limiter';
 import { store, sleep, tryOr, memo, authError } from '../utils/helpers';
+import { unsafeWindow } from 'vite-plugin-monkey/dist/client';
 
 export interface ViewerInfo {
   id: number;
@@ -172,6 +173,8 @@ export const MediaData = (() => {
       { mediaId: Number(id), score: c.score, progress: c.progress, status: c.status, completedAt: c.completedAt }
     );
     const entry = data?.SaveMediaListEntry || null;
+    const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+    win.__ALFL_CLEAR__?.();
     const media = await get(id, type);
     if (media && entry) media.mediaListEntry = entry;
     return entry;
