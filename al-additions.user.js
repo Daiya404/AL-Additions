@@ -2071,7 +2071,242 @@
 			runSync(dueTypes);
 		} else if (retryAt > 0 && Date.now() >= retryAt) store.del("sync_retry_at");
 	}
+	var MODAL_CSS = `
+  #ala-pwd-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(5, 12, 20, 0.75);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 100005;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    box-sizing: border-box;
+  }
+  .ala-pwd-sheet {
+    width: 100%;
+    max-width: 420px;
+    background: rgb(var(--color-foreground, 31, 38, 49));
+    color: rgb(var(--color-text, 240, 243, 246));
+    border-radius: 10px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    animation: alaModalPop 0.15s ease-out;
+  }
+  @keyframes alaModalPop {
+    from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .ala-pwd-desc {
+    margin: 0 0 16px;
+    font-size: 13px;
+    color: rgb(var(--color-text-lighter, 146, 154, 166));
+    line-height: 1.45;
+  }
+  .ala-pwd-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .ala-pwd-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: rgb(var(--color-text-lighter, 146, 154, 166));
+  }
+  .ala-pwd-input-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+  }
+  .ala-pwd-field {
+    width: 100%;
+    height: 40px;
+    padding: 0 38px 0 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(var(--color-text-lighter, 146, 154, 166), 0.25);
+    background: rgb(var(--color-background, 15, 23, 42));
+    color: rgb(var(--color-text, 240, 243, 246));
+    font: inherit;
+    font-size: 14px;
+    box-sizing: border-box;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .ala-pwd-field:focus {
+    outline: none;
+    border-color: rgb(var(--color-blue, 61, 180, 242));
+    box-shadow: 0 0 0 2px rgba(var(--color-blue, 61, 180, 242), 0.25);
+  }
+  .ala-pwd-toggle {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: rgb(var(--color-text-lighter, 146, 154, 166));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+  }
+  .ala-pwd-toggle:hover {
+    color: rgb(var(--color-text, 240, 243, 246));
+    background: rgba(var(--color-text-lighter, 146, 154, 166), 0.12);
+  }
+  .ala-pwd-error {
+    margin-top: 12px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: rgba(var(--color-red, 224, 85, 85), 0.12);
+    border: 1px solid rgba(var(--color-red, 224, 85, 85), 0.3);
+    color: rgb(var(--color-red, 224, 85, 85));
+    font-size: 12px;
+    font-weight: 500;
+  }
+`;
+	var EYE_OPEN = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+	var EYE_OFF = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
+	function promptPasswordModal(options) {
+		return new Promise((resolve) => {
+			addStyle("ala-pwd-modal-style", MODAL_CSS);
+			const existing = document.getElementById("ala-pwd-backdrop");
+			if (existing) existing.remove();
+			const backdrop = document.createElement("div");
+			backdrop.id = "ala-pwd-backdrop";
+			backdrop.innerHTML = `
+      <div class="ala-sheet ala-pwd-sheet" role="dialog" aria-modal="true" aria-labelledby="ala-pwd-title">
+        <header class="ala-sheet-head">
+          <h2 id="ala-pwd-title">${esc(options.title)}</h2>
+          <button class="ala-icon-btn ala-pwd-btn-close" type="button" aria-label="Close">✕</button>
+        </header>
+        <div class="ala-sheet-body">
+          ${options.description ? `<p class="ala-pwd-desc">${esc(options.description)}</p>` : ""}
+          <div class="ala-pwd-group">
+            <label for="ala-pwd-input-main" class="ala-pwd-label">Password</label>
+            <div class="ala-pwd-input-wrap">
+              <input
+                id="ala-pwd-input-main"
+                class="ala-pwd-field"
+                type="password"
+                placeholder="${esc(options.placeholder || "Enter password")}"
+                autocomplete="${options.confirm ? "new-password" : "current-password"}"
+              />
+              <button type="button" class="ala-pwd-toggle" title="Show / Hide password" aria-label="Toggle password visibility">
+                ${EYE_OPEN}
+              </button>
+            </div>
+          </div>
+          ${options.confirm ? `
+            <div class="ala-pwd-group" style="margin-top:12px">
+              <label for="ala-pwd-input-confirm" class="ala-pwd-label">Confirm Password</label>
+              <div class="ala-pwd-input-wrap">
+                <input
+                  id="ala-pwd-input-confirm"
+                  class="ala-pwd-field"
+                  type="password"
+                  placeholder="Re-enter password"
+                  autocomplete="new-password"
+                />
+              </div>
+            </div>
+          ` : ""}
+          <div class="ala-pwd-error" id="ala-pwd-err" style="display:none"></div>
+        </div>
+        <footer class="ala-sheet-foot">
+          <button class="ala-btn ala-btn--primary" id="ala-pwd-btn-submit" type="button">
+            ${esc(options.submitText || "Submit")}
+          </button>
+          <button class="ala-btn" id="ala-pwd-btn-cancel" type="button">
+            ${esc(options.cancelText || "Cancel")}
+          </button>
+        </footer>
+      </div>
+    `;
+			document.body.appendChild(backdrop);
+			const input = backdrop.querySelector("#ala-pwd-input-main");
+			const confirmInput = backdrop.querySelector("#ala-pwd-input-confirm");
+			const toggleBtn = backdrop.querySelector(".ala-pwd-toggle");
+			const errBox = backdrop.querySelector("#ala-pwd-err");
+			const submitBtn = backdrop.querySelector("#ala-pwd-btn-submit");
+			const cancelBtn = backdrop.querySelector("#ala-pwd-btn-cancel");
+			const closeBtn = backdrop.querySelector(".ala-pwd-btn-close");
+			let isVisible = false;
+			const cleanup = () => {
+				document.removeEventListener("keydown", onKeyDown);
+				backdrop.remove();
+			};
+			const cancel = () => {
+				cleanup();
+				resolve(null);
+			};
+			const submit = () => {
+				const val = input.value;
+				if (!options.allowEmpty && !val.trim()) {
+					errBox.textContent = "Password cannot be empty.";
+					errBox.style.display = "block";
+					input.focus();
+					return;
+				}
+				if (options.confirm && confirmInput) {
+					if (val && val !== confirmInput.value) {
+						errBox.textContent = "Passwords do not match.";
+						errBox.style.display = "block";
+						confirmInput.focus();
+						return;
+					}
+				}
+				cleanup();
+				resolve(val);
+			};
+			toggleBtn.addEventListener("click", () => {
+				isVisible = !isVisible;
+				const type = isVisible ? "text" : "password";
+				input.type = type;
+				if (confirmInput) confirmInput.type = type;
+				toggleBtn.innerHTML = isVisible ? EYE_OFF : EYE_OPEN;
+				toggleBtn.title = isVisible ? "Hide password" : "Show password";
+			});
+			submitBtn.addEventListener("click", submit);
+			cancelBtn.addEventListener("click", cancel);
+			closeBtn.addEventListener("click", cancel);
+			backdrop.addEventListener("click", (e) => {
+				if (e.target === backdrop) cancel();
+			});
+			const onKeyDown = (e) => {
+				if (e.key === "Escape") {
+					e.preventDefault();
+					cancel();
+				} else if (e.key === "Enter") {
+					e.preventDefault();
+					submit();
+				}
+			};
+			document.addEventListener("keydown", onKeyDown);
+			setTimeout(() => input.focus(), 50);
+		});
+	}
 	var BACKUP_FILENAME = "al-additions.settings";
+	var MAGIC_PLAIN = new Uint8Array([
+		65,
+		76,
+		65,
+		83
+	]);
+	var MAGIC_ENCRYPTED = new Uint8Array([
+		65,
+		76,
+		65,
+		69
+	]);
 	var SENSITIVE_KEYS = [
 		"al_token",
 		"al_username",
@@ -2083,11 +2318,10 @@
 		"mal_expires_at"
 	];
 	var PBKDF2_ITERATIONS = 1e5;
-	function uint8ToBase64(bytes) {
-		let binary = "";
-		const len = bytes.byteLength;
-		for (let i = 0; i < len; i += 8192) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
-		return btoa(binary);
+	function matchesMagic(bytes, magic) {
+		if (bytes.length < magic.length) return false;
+		for (let i = 0; i < magic.length; i++) if (bytes[i] !== magic[i]) return false;
+		return true;
 	}
 	function base64ToUint8(b64) {
 		const binary = atob(b64.replace(/\s+/g, ""));
@@ -2108,21 +2342,6 @@
 			length: 256
 		}, false, ["encrypt", "decrypt"]);
 	}
-	async function encryptData(plaintext, password) {
-		const salt = window.crypto.getRandomValues(new Uint8Array(16));
-		const iv = window.crypto.getRandomValues(new Uint8Array(12));
-		const key = await deriveAesKey(password, salt);
-		const enc = new TextEncoder();
-		const ciphertextBuffer = await window.crypto.subtle.encrypt({
-			name: "AES-GCM",
-			iv
-		}, key, enc.encode(plaintext));
-		return {
-			salt: uint8ToBase64(salt),
-			iv: uint8ToBase64(iv),
-			ciphertext: uint8ToBase64(new Uint8Array(ciphertextBuffer))
-		};
-	}
 	async function decryptData(cryptoData, password) {
 		const salt = base64ToUint8(cryptoData.salt);
 		const iv = base64ToUint8(cryptoData.iv);
@@ -2134,11 +2353,15 @@
 		}, key, ciphertext);
 		return new TextDecoder().decode(decryptedBuffer);
 	}
-	async function compressGzip(data) {
+	async function compressDeflateRaw(data) {
 		const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
-		const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
+		const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate-raw"));
 		const buffer = await new Response(stream).arrayBuffer();
 		return new Uint8Array(buffer);
+	}
+	async function decompressDeflateRaw(data) {
+		const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+		return await new Response(stream).text();
 	}
 	async function decompressGzip(data) {
 		const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("gzip"));
@@ -2155,24 +2378,41 @@
 			const val = store.get(key, void 0);
 			if (val !== void 0 && val !== null) data[key] = val;
 		}
-		const exportedAt = Date.now();
-		let payload;
-		if (password && password.trim().length > 0) payload = {
+		const plainPayload = {
 			version: 1,
-			encrypted: true,
-			exportedAt,
-			crypto: await encryptData(JSON.stringify(data), password)
-		};
-		else payload = {
-			version: 1,
-			encrypted: false,
-			exportedAt,
+			exportedAt: Date.now(),
 			data
 		};
-		return compressGzip(JSON.stringify(payload));
+		const jsonBytes = new TextEncoder().encode(JSON.stringify(plainPayload));
+		const compressedBytes = await compressDeflateRaw(jsonBytes);
+		if (password && password.trim().length > 0) {
+			const salt = window.crypto.getRandomValues(new Uint8Array(16));
+			const iv = window.crypto.getRandomValues(new Uint8Array(12));
+			const key = await deriveAesKey(password, salt);
+			const ciphertextBuffer = await window.crypto.subtle.encrypt({
+				name: "AES-GCM",
+				iv
+			}, key, compressedBytes);
+			const ciphertext = new Uint8Array(ciphertextBuffer);
+			const out = new Uint8Array(33 + ciphertext.length);
+			out.set(MAGIC_ENCRYPTED, 0);
+			out[4] = 1;
+			out.set(salt, 5);
+			out.set(iv, 21);
+			out.set(ciphertext, 33);
+			logDebug("[CORE]", `Created encrypted backup (${out.length} bytes, compressed from ${jsonBytes.length} bytes)`);
+			return out;
+		} else {
+			const out = new Uint8Array(5 + compressedBytes.length);
+			out.set(MAGIC_PLAIN, 0);
+			out[4] = 1;
+			out.set(compressedBytes, 5);
+			logDebug("[CORE]", `Created plain backup (${out.length} bytes, compressed from ${jsonBytes.length} bytes)`);
+			return out;
+		}
 	}
 	function downloadBackupFile(bytes, filename = BACKUP_FILENAME) {
-		const blob = new Blob([bytes], { type: "application/gzip" });
+		const blob = new Blob([bytes], { type: "application/octet-stream" });
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement("a");
 		a.href = url;
@@ -2208,22 +2448,7 @@
 			secretsApplied
 		};
 	}
-	async function importBackup(fileInput) {
-		let bytes;
-		if (typeof fileInput === "string") bytes = new TextEncoder().encode(fileInput);
-		else bytes = fileInput;
-		if (!bytes || bytes.length === 0) throw new Error("Backup file is empty.");
-		let jsonText;
-		if (bytes.length >= 2 && bytes[0] === 31 && bytes[1] === 139) try {
-			jsonText = await decompressGzip(bytes);
-		} catch {
-			throw new Error("Corrupted or invalid GZIP backup file.");
-		}
-		else try {
-			jsonText = new TextDecoder().decode(bytes);
-		} catch {
-			throw new Error("Failed to decode backup file as UTF-8 text.");
-		}
+	async function handleLegacyJsonBackup(jsonText, promptPassword) {
 		let payload;
 		try {
 			payload = JSON.parse(jsonText);
@@ -2231,13 +2456,10 @@
 			throw new Error("Invalid backup file: corrupted JSON content.");
 		}
 		if (!payload || typeof payload !== "object") throw new Error("Invalid backup file: root must be an object.");
-		if (typeof payload.version !== "number") throw new Error("Invalid backup file: missing format version.");
-		if (payload.version !== 1) throw new Error(`Unsupported backup version: ${payload.version}. This version of AL Additions only supports version 1.`);
-		if (typeof payload.encrypted !== "boolean") throw new Error("Invalid backup file: missing encryption status.");
-		let data;
-		if (payload.encrypted) {
+		if (typeof payload.version === "number" && payload.version !== 1) throw new Error(`Unsupported backup version: ${payload.version}. This version of AL Additions only supports version 1.`);
+		if (payload.encrypted === true) {
 			if (!payload.crypto || typeof payload.crypto !== "object" || !payload.crypto.salt || !payload.crypto.iv || !payload.crypto.ciphertext) throw new Error("Encrypted backup is missing cryptographic data.");
-			const password = prompt("Enter password to decrypt your settings backup:");
+			const password = await promptPassword("Enter password to decrypt your settings backup:");
 			if (password === null) return {
 				applied: 0,
 				secretsApplied: 0,
@@ -2250,16 +2472,105 @@
 			} catch {
 				throw new Error("Incorrect password or corrupted backup file.");
 			}
+			let data;
 			try {
 				data = JSON.parse(decryptedText);
 			} catch {
 				throw new Error("Decrypted content is not valid JSON.");
 			}
-		} else {
-			if (!payload.data || typeof payload.data !== "object" || Array.isArray(payload.data)) throw new Error("Backup file is missing settings data.");
-			data = payload.data;
+			return applyVersion1Settings(data);
 		}
-		return applyVersion1Settings(data);
+		return applyVersion1Settings(payload.data && typeof payload.data === "object" ? payload.data : payload);
+	}
+	async function importBackup(fileInput, customPromptPassword) {
+		let bytes;
+		if (typeof fileInput === "string") bytes = new TextEncoder().encode(fileInput);
+		else bytes = fileInput;
+		if (!bytes || bytes.length === 0) throw new Error("Backup file is empty.");
+		const promptPassword = customPromptPassword || ((hint) => promptPasswordModal({
+			title: "Decrypt Settings Backup",
+			description: hint || "Enter your password to decrypt your settings backup:",
+			submitText: "Decrypt & Restore",
+			allowEmpty: false,
+			confirm: false,
+			placeholder: "Enter backup password"
+		}));
+		if (matchesMagic(bytes, MAGIC_ENCRYPTED)) {
+			if (bytes.length < 49) throw new Error("Invalid encrypted backup file: file is truncated.");
+			const version = bytes[4];
+			if (version !== 1) throw new Error(`Unsupported backup version: ${version}. This version of AL Additions only supports version 1.`);
+			const password = await promptPassword("Enter password to decrypt your settings backup:");
+			if (password === null) return {
+				applied: 0,
+				secretsApplied: 0,
+				cancelled: true
+			};
+			if (!password) throw new Error("Password cannot be empty.");
+			const salt = bytes.subarray(5, 21);
+			const iv = bytes.subarray(21, 33);
+			const ciphertext = bytes.subarray(33);
+			const key = await deriveAesKey(password, salt);
+			let decryptedBuffer;
+			try {
+				decryptedBuffer = await window.crypto.subtle.decrypt({
+					name: "AES-GCM",
+					iv
+				}, key, ciphertext);
+			} catch {
+				throw new Error("Incorrect password or corrupted backup file.");
+			}
+			let jsonText;
+			try {
+				jsonText = await decompressDeflateRaw(new Uint8Array(decryptedBuffer));
+			} catch {
+				throw new Error("Corrupted decrypted data: failed to decompress.");
+			}
+			let payload;
+			try {
+				payload = JSON.parse(jsonText);
+			} catch {
+				throw new Error("Decrypted content is not valid JSON.");
+			}
+			logDebug("[CORE]", "Imported encrypted binary backup successfully.");
+			return applyVersion1Settings(payload && typeof payload === "object" && payload.data ? payload.data : payload);
+		}
+		if (matchesMagic(bytes, MAGIC_PLAIN)) {
+			if (bytes.length < 5) throw new Error("Invalid backup file: file is truncated.");
+			const version = bytes[4];
+			if (version !== 1) throw new Error(`Unsupported backup version: ${version}. This version of AL Additions only supports version 1.`);
+			let jsonText;
+			try {
+				jsonText = await decompressDeflateRaw(bytes.subarray(5));
+			} catch {
+				throw new Error("Corrupted backup file: failed to decompress.");
+			}
+			let payload;
+			try {
+				payload = JSON.parse(jsonText);
+			} catch {
+				throw new Error("Corrupted backup file: invalid JSON content.");
+			}
+			logDebug("[CORE]", "Imported plain binary backup successfully.");
+			return applyVersion1Settings(payload && typeof payload === "object" && payload.data ? payload.data : payload);
+		}
+		if (bytes.length >= 2 && bytes[0] === 31 && bytes[1] === 139) {
+			let jsonText;
+			try {
+				jsonText = await decompressGzip(bytes);
+			} catch {
+				throw new Error("Corrupted or invalid GZIP backup file.");
+			}
+			logDebug("[CORE]", "Imported legacy GZIP backup.");
+			return handleLegacyJsonBackup(jsonText, promptPassword);
+		}
+		let jsonText;
+		try {
+			jsonText = new TextDecoder().decode(bytes);
+		} catch {
+			throw new Error("Failed to decode backup file as UTF-8 text.");
+		}
+		logDebug("[CORE]", "Imported legacy JSON/text backup.");
+		return handleLegacyJsonBackup(jsonText, promptPassword);
 	}
 	async function readFileAsBytes(file) {
 		if (typeof file.arrayBuffer === "function") return new Uint8Array(await file.arrayBuffer());
@@ -3924,7 +4235,14 @@
 			return overrides;
 		};
 		panel.querySelector("#ala-btn-export")?.addEventListener("click", async () => {
-			const pwd = prompt("Optional: Set a password to encrypt your backup file.\n\nLeave blank for an unencrypted backup:", "");
+			const pwd = await promptPasswordModal({
+				title: "Export Settings",
+				description: "Optional: Set a password to encrypt your backup file. Leave blank for an unencrypted backup.",
+				submitText: "Export",
+				allowEmpty: true,
+				confirm: true,
+				placeholder: "Optional encryption password"
+			});
 			if (pwd === null) return;
 			try {
 				setStatus("Generating backup…");
@@ -3936,7 +4254,14 @@
 		});
 		panel.querySelector("#ala-btn-export-secrets")?.addEventListener("click", async () => {
 			if (!confirm("⚠️ Warning: This export includes your AniList and MyAnimeList authentication credentials.\n\nAnyone with access to this file will have full access to your connected accounts.\n\nDo you want to continue?")) return;
-			const pwd = prompt("Set a password to encrypt your credentials.\n\nA password is required when exporting credentials:", "");
+			const pwd = await promptPasswordModal({
+				title: "Export Credentials (Encrypted)",
+				description: "A password is required to encrypt your credentials and protect your accounts.",
+				submitText: "Encrypt & Export",
+				allowEmpty: false,
+				confirm: true,
+				placeholder: "Choose an encryption password"
+			});
 			if (pwd === null) return;
 			if (!pwd.trim()) {
 				setStatus("A password is required to export credentials.", true);
