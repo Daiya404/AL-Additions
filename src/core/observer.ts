@@ -1,4 +1,4 @@
-import { safe } from '../utils/helpers';
+import { safe, logDebug } from '../utils/helpers';
 import { unsafeWindow } from 'vite-plugin-monkey/dist/client';
 
 export const Core = (() => {
@@ -19,6 +19,7 @@ export const Core = (() => {
   function notifyNav(): void {
     if (muted || location.href === lastHref) return;
     lastHref = location.href;
+    logDebug('[CORE]', 'Navigation detected:', location.pathname + location.search);
     fire(navCbs);
   }
 
@@ -55,6 +56,7 @@ export const Core = (() => {
           flushTimer = 0;
           const batch = queued;
           queued = [];
+          logDebug('[OBSERVER]', `Flushing mutation batch: ${batch.length} record(s) to ${bodyCbs.length} listener(s)`);
           fire(bodyCbs, batch);
         }, 50);
       }

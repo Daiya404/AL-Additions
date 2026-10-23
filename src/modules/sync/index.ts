@@ -10,6 +10,7 @@ import { initDeletionInterceptor } from './deletionInterceptor';
 
 const ALL_KEYS = [
   ...SENSITIVE_KEYS,
+  'al_token_auth',
   'sync_lock_heartbeat',
   'sync_onboarded',
   'sync_retry_at',

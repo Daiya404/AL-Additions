@@ -1,5 +1,5 @@
 import { Settings } from '../settings/settings';
-import { HOST } from '../utils/helpers';
+import { HOST, logDebug } from '../utils/helpers';
 import type { ModuleDef, FeatureMeta } from '../types';
 
 export const modules: ModuleDef[] = [];
@@ -23,6 +23,7 @@ export function startModules(early: boolean): void {
   for (const m of modules) {
     if (m.early !== early || !m.hosts.includes(HOST)) continue;
     if (m.setting && !Settings.get(m.setting)) continue;
+    logDebug('[CORE]', `Initializing module "${m.name}" (early=${early})`);
     try {
       Promise.resolve(m.init()).catch((e) => console.error('[AL-Additions]', m.name, e));
     } catch (e) {

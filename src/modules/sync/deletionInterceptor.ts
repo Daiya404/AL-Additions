@@ -2,6 +2,7 @@ import { unsafeWindow } from 'vite-plugin-monkey/dist/client';
 import { Settings } from '../../settings/settings';
 import { mediaRoute } from '../../utils/dom';
 import { log } from '../../api/mal';
+import { logDebug } from '../../utils/helpers';
 import { stores, addPendingDelete, removePendingDelete } from './state';
 import { SyncMediaType, typeLabel } from './types';
 import { getOverride } from './overrides';
@@ -76,58 +77,58 @@ export function initDeletionInterceptor(): void {
   if (location.hostname !== 'anilist.co') return;
   installed = true;
 
-  const targetWindows = [window, typeof unsafeWindow !== 'undefined' ? unsafeWindow : null].filter(Boolean) as any[];
+  const page = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+  const origFetch = page.fetch;
+  if (typeof origFetch !== 'function') return;
 
-  for (const win of targetWindows) {
-    const origFetch = win.fetch;
-    if (typeof origFetch !== 'function') continue;
+  page.fetch = async function (input: any, init?: RequestInit) {
+    const url = typeof input === 'string' ? input : input?.url || '';
+    const isGraphQL = typeof url === 'string' && (url.includes('graphql.anilist.co') || url.includes('/graphql'));
 
-    win.fetch = async function (input: any, init?: RequestInit) {
-      const url = typeof input === 'string' ? input : input?.url || '';
-      const isGraphQL = typeof url === 'string' && url.includes('graphql.anilist.co');
+    let queryStr = '';
+    let variables: any = null;
 
-      let queryStr = '';
-      let variables: any = null;
+    if (isGraphQL && init?.body) {
+      try {
+        const bodyStr = typeof init.body === 'string' ? init.body : '';
+        if (bodyStr) {
+          const parsed = JSON.parse(bodyStr);
+          queryStr = parsed.query || parsed.operationName || '';
+          variables = parsed.variables || null;
+        }
+      } catch (_) {}
+    }
 
-      if (isGraphQL && init?.body) {
-        try {
-          const bodyStr = typeof init.body === 'string' ? init.body : '';
-          if (bodyStr) {
-            const parsed = JSON.parse(bodyStr);
-            queryStr = parsed.query || parsed.operationName || '';
-            variables = parsed.variables || null;
-          }
-        } catch (_) {}
-      }
-
-      if (queryStr.includes('DeleteMediaListEntry')) {
-        if (Settings.get('syncMode') === 'exact') {
-          const candidate = activeCandidate || extractDialogMedia(document.body);
-          if (candidate) {
-            addPendingDelete({
-              mediaId: candidate.mediaId,
-              malId: candidate.malId,
-              type: candidate.type,
-              title: candidate.title,
-              deletedAt: Date.now()
-            });
-            activeCandidate = null;
-            log(`${typeLabel(candidate.type)}: queued "${candidate.title}" for deletion on MAL (Exact Match).`, 'info');
-          }
+    if (queryStr.includes('DeleteMediaListEntry')) {
+      logDebug('[SYNC]', 'DeleteMediaListEntry intercepted for variables:', variables);
+      if (Settings.get('syncMode') === 'exact') {
+        const candidate = activeCandidate || extractDialogMedia(document.body);
+        if (candidate) {
+          addPendingDelete({
+            mediaId: candidate.mediaId,
+            malId: candidate.malId,
+            type: candidate.type,
+            title: candidate.title,
+            deletedAt: Date.now()
+          });
+          logDebug('[SYNC]', 'Queued pending deletion for exact match:', candidate);
+          activeCandidate = null;
+          log(`${typeLabel(candidate.type)}: queued "${candidate.title}" for deletion on MAL (Exact Match).`, 'info');
         }
       }
+    }
 
-      const res = await origFetch.apply(this, arguments as any);
+    const res = await origFetch.call(page, input, init);
 
-      if (queryStr.includes('SaveMediaListEntry') && variables?.mediaId) {
-        const mediaId = Number(variables.mediaId);
-        removePendingDelete(mediaId, 'ANIME');
-        removePendingDelete(mediaId, 'MANGA');
-      }
+    if (queryStr.includes('SaveMediaListEntry') && variables?.mediaId) {
+      const mediaId = Number(variables.mediaId);
+      logDebug('[SYNC]', 'SaveMediaListEntry intercepted, un-queuing any pending deletion for mediaId:', mediaId);
+      removePendingDelete(mediaId, 'ANIME');
+      removePendingDelete(mediaId, 'MANGA');
+    }
 
-      return res;
-    };
-  }
+    return res;
+  };
 
   document.addEventListener(
     'click',
