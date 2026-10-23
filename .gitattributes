@@ -1,0 +1,29 @@
+# Global line-ending enforcement
+* text eol=lf
+
+# Collapse compiled bundles and noisy lockfiles
+al-additions.user.js    linguist-generated=true
+package-lock.json       linguist-generated=true
+
+# Contextual diff headers for code reviews
+*.ts                    diff=typescript
+*.mjs                   diff=javascript
+
+# Binary safety net
+*.png                   binary
+*.jpg                   binary
+*.jpeg                  binary
+*.gif                   binary
+*.webp                  binary
+*.ico                   binary
+*.woff                  binary
+*.woff2                 binary
+
+# Strip internal tooling from downloaded release archives
+.github/                export-ignore
+.vscode/                export-ignore
+scripts/                export-ignore
+.gitattributes          export-ignore
+.gitignore              export-ignore
+tsconfig.json           export-ignore
+vite.config.ts          export-ignore
