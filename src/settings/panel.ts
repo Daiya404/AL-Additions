@@ -5,6 +5,7 @@ import { debounce, store, esc, tryOr } from '../utils/helpers';
 import { alConnect, malConnect, clearAniListAuth, clearMalAuth } from '../api/mal';
 import { AniList } from '../api/anilist';
 import { Core } from '../core/observer';
+import { STANDALONE, STANDALONE_IDS_LIST, detectStandalone, type StandaloneId } from '../utils/standalone';
 import { maybeAutoSync } from '../modules/sync/engine';
 import { createBackup, downloadBackupFile, importBackup, readFileAsBytes } from './backup';
 import { promptPasswordModal } from './passwordModal';
@@ -63,6 +64,7 @@ const CSS = `
   .ala-child-option{margin-left:8px}
   .ala-child-option .ala-collapsible-inner{border-left:2px solid rgba(var(--color-blue),.25);padding-left:10px}
   .ala-child-option .ala-row{min-height:44px;padding:6px 0}
+  .ala-standalone-note{margin:0 14px 12px;padding:8px 10px;border-radius:4px;border-left:3px solid rgb(var(--color-orange,255,152,0));background:rgba(var(--color-orange,255,152,0),.12);color:rgb(var(--color-text));font-size:12px;line-height:1.45}
 
   #ala-settings-panel input[type=number],#ala-settings-panel input[type=text],#ala-settings-panel select{width:170px;height:36px;padding:0 10px;border:1px solid rgba(var(--color-text-lighter),.22);border-radius:4px;background:rgb(var(--color-foreground));color:rgb(var(--color-text));font:inherit;font-size:13px}
   #ala-settings-panel input:disabled,#ala-settings-panel select:disabled{cursor:not-allowed}
@@ -73,6 +75,8 @@ const CSS = `
   .ala-slider:before{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .15s}
   .ala-switch input:checked+.ala-slider{background:rgb(var(--color-blue))}
   .ala-switch input:checked+.ala-slider:before{transform:translateX(18px)}
+  .ala-switch input:disabled{cursor:not-allowed}
+  .ala-switch input:disabled+.ala-slider{opacity:.5}
   .ala-switch input:focus-visible+.ala-slider{outline:2px solid rgb(var(--color-blue));outline-offset:2px}
 
   .ala-btn{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:0 18px;border:1px solid rgba(var(--color-text-lighter),.25);border-radius:4px;background:transparent;color:rgb(var(--color-text));font:inherit;font-size:13px;cursor:pointer}
@@ -504,6 +508,34 @@ function openTierEditor(inputEl: HTMLInputElement): void {
   renderTable(tiers);
 }
 
+function standaloneNote(id: StandaloneId): string {
+  return `<b>Standalone ${STANDALONE[id].name} detected.</b> This feature is now built into AL Additions, so you no longer need the separate script. The built-in version is switched off while the standalone script is installed. Your setting is kept and applies again once you uninstall it.`;
+}
+
+function showStandaloneNotes(panel: HTMLElement, syncFeature: (card: HTMLElement) => void): void {
+  for (const id of STANDALONE_IDS_LIST) {
+    void detectStandalone(id).then((found) => {
+      if (!panel.isConnected) return;
+      const card = panel.querySelector<HTMLElement>(`.ala-feature[data-feature="${id}"]`);
+      if (!card) return;
+      card.querySelector('.ala-standalone-note')?.remove();
+      if (!found) return;
+      const toggle = card.querySelector<HTMLInputElement>('.ala-row--main input[type="checkbox"][data-key]');
+      if (toggle) {
+        toggle.dataset.standaloneLocked = '1';
+        toggle.checked = false;
+        toggle.disabled = true;
+        syncFeature(card);
+      }
+      const note = document.createElement('div');
+      note.className = 'ala-standalone-note';
+      note.setAttribute('role', 'note');
+      note.innerHTML = standaloneNote(id);
+      card.querySelector('.ala-row--main')?.insertAdjacentElement('afterend', note);
+    });
+  }
+}
+
 export function closePanel(): void {
   const b = document.getElementById('ala-settings-backdrop') as (HTMLElement & { _onKey?: (e: KeyboardEvent) => void; _onFocus?: () => void }) | null;
   if (!b) return;
@@ -585,6 +617,7 @@ export function showPanel(): void {
       const r = ROWS[el.dataset.key!];
       if (r) {
         if (r.key === OVERRIDES_SETTING_KEY) return;
+        if (el.dataset.standaloneLocked) return;
         Settings.set(r.key, TYPES[r.type].read(el));
       }
     });
@@ -597,6 +630,7 @@ export function showPanel(): void {
       const r = ROWS[el.dataset.key!];
       if (r) {
         if (r.key === OVERRIDES_SETTING_KEY) return;
+        if (el.dataset.standaloneLocked) return;
         TYPES[r.type].write(el, r.def);
       }
     });
@@ -676,7 +710,7 @@ export function showPanel(): void {
           overrides[r.key] = getManualOverrides();
           return;
         }
-        overrides[r.key] = TYPES[r.type].read(el);
+        overrides[r.key] = el.dataset.standaloneLocked ? Settings.get(r.key) : TYPES[r.type].read(el);
       }
     });
     return overrides;
@@ -782,6 +816,7 @@ export function showPanel(): void {
   document.documentElement.style.overflow = 'hidden';
   document.body.appendChild(backdrop);
   panel.focus();
+  showStandaloneNotes(panel, syncFeature);
 }
 
 export function ensureLauncher(): void {

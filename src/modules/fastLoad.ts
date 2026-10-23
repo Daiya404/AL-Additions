@@ -1,6 +1,7 @@
 import { defineFeature } from '../core/registry';
 import { unsafeWindow } from 'vite-plugin-monkey/dist/client';
 import { store as gmStore, logDebug } from '../utils/helpers';
+import { markBuiltIn } from '../utils/standalone';
 
 defineFeature(
   {
@@ -15,8 +16,28 @@ defineFeature(
   () => {
     const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
     if (win.top !== win.self) return;
-    if (win.__ANILIST_FAST_LOAD__ || win.__ANILIST_FAST_LOAD_V4__) return;
-    win.__ANILIST_FAST_LOAD__ = '0.4.1';
+    if (win.__ANILIST_FAST_LOAD__ || win.__ANILIST_FAST_LOAD_V4__) {
+      console.warn(
+        '[AL-Additions] Built-in Fast Load skipped: the standalone AniList Fast Load script is already running. Uninstall it to use the built-in version.'
+      );
+      return;
+    }
+    // Own flag on purpose: the standalone script must still be able to start after us, and we step aside
+    // (see yielded() below) as soon as it announces itself with one of its flags.
+    win.__ALA_FAST_LOAD__ = '0.4.1';
+    markBuiltIn('fastLoad');
+
+    let yieldedToStandalone = false;
+    const yielded = (): boolean => {
+      if (yieldedToStandalone) return true;
+      if (win.__ANILIST_FAST_LOAD__ || win.__ANILIST_FAST_LOAD_V4__) {
+        yieldedToStandalone = true;
+        console.warn(
+          '[AL-Additions] Built-in Fast Load paused: the standalone AniList Fast Load script is installed. Uninstall it to use the built-in version.'
+        );
+      }
+      return yieldedToStandalone;
+    };
 
     const CFG = {
       lazyMedia: false,
@@ -1202,6 +1223,7 @@ defineFeature(
       }
 
       win.fetch = async function fetch(input: any, init?: RequestInit) {
+        if (yielded()) return nativeFetch(input, init);
         let job = null;
         try {
           job = await classify(input, init);
@@ -1540,7 +1562,7 @@ defineFeature(
       }
 
       function autoPrefetchListsForCurrentRoute() {
-        if (!CFG.prefetch) return;
+        if (!CFG.prefetch || yielded()) return;
         const now = Date.now();
         if (doc.hidden || now < pausedUntil || (navigator as any).connection?.saveData) return;
 
@@ -1648,7 +1670,7 @@ defineFeature(
         const origPost = W.prototype.postMessage;
         W.prototype.postMessage = function (this: Worker, data: any, ...rest: any[]) {
           try {
-            if (isRpcFetch(data)) {
+            if (!yielded() && isRpcFetch(data)) {
               const id = String(data.id || '');
               if (id.startsWith('alfl_prefetch_')) {
                 return origPost.apply(this, [data, ...rest] as any);
@@ -1841,6 +1863,7 @@ defineFeature(
       }
 
       function replayRoute(known: any, route: any) {
+        if (yielded()) return 0;
         let sent = 0;
         for (const request of known.reqs) {
           let parsed;
@@ -1900,6 +1923,7 @@ defineFeature(
       if (!CFG.prefetch) return;
 
       function prefetchFor(anchor: HTMLAnchorElement) {
+        if (yielded()) return;
         const now = Date.now();
         if (doc.hidden || now < pausedUntil || (navigator as any).connection?.saveData) return;
 
@@ -1995,4 +2019,3 @@ defineFeature(
     if (CFG.rowSkipping) attempt(installRowSkipping);
   }
 );
-
