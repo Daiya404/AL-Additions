@@ -3,6 +3,7 @@ import { Core } from '../core/observer';
 import { Settings, PREFIX } from '../settings/settings';
 import { addStyle } from '../utils/dom';
 import { store, logDebug } from '../utils/helpers';
+import { PROBE_ATTR, detectStandalone } from '../utils/standalone';
 import { DEFAULT_TIERS, getTier, validateTiers, type TierConfig } from '../utils/tiers';
 
 export { DEFAULT_TIERS, getTier, validateTiers, type TierConfig };
@@ -206,6 +207,7 @@ defineFeature(
       isPercentage = false,
       isBlockView = false
     ): void {
+      if (el.hasAttribute(PROBE_ATTR)) return;
       if (el.dataset.tierModified) {
         // Re-process when the page re-rendered the cell (our badge is gone) or its score attribute changed.
         const attrNow = el.getAttribute('score');
@@ -340,14 +342,22 @@ defineFeature(
       processTop100Elements(tiers, colorScore);
     }
 
+    // Yield to the standalone AniList Tier Labels script when it is installed.
+    // The last probe result is remembered so a normal page load never waits on the probe.
+    const HINT_KEY = 'ala_standalone_seen_tierLabels';
+    let paused = !!store.get<boolean>(HINT_KEY, false);
+    const runScan = (): void => {
+      if (!paused) applyTierLabels();
+    };
+
     Core.ready(() => {
-      applyTierLabels();
+      runScan();
       Core.onNavigate(() => {
         // Clear cached compare formats on navigation
         document.querySelectorAll<HTMLElement & { _colFormats?: any }>('.compare').forEach((c) => {
           delete c._colFormats;
         });
-        applyTierLabels();
+        runScan();
       });
       let scanQueued = false;
       Core.onBodyMutation(() => {
@@ -355,8 +365,20 @@ defineFeature(
         scanQueued = true;
         setTimeout(() => {
           scanQueued = false;
-          applyTierLabels();
+          runScan();
         }, 100);
+      });
+
+      void detectStandalone('tierLabels').then((found) => {
+        store.set(HINT_KEY, found);
+        const wasPaused = paused;
+        paused = found;
+        if (found && !wasPaused) {
+          console.warn(
+            '[AL-Additions] Built-in Tier Labels paused: the standalone AniList Tier Labels script is installed. Uninstall it to use the built-in version.'
+          );
+        }
+        if (!found && wasPaused) runScan();
       });
     });
   }

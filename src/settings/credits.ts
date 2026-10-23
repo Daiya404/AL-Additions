@@ -11,11 +11,17 @@ export const CREDITS: CreditItem[] = [
   {
     name: 'Daiya',
     url: 'https://github.com/Daiya404',
-    note: 'Combining, fixing and maintaining this script. Everything not credited below, such as the Keyframe Staff List button, the List Score & Progress Editor, and AniList Fast Load, is original work.',
+    note: 'Combining, fixing and maintaining this script, and the standalone script check for Fast Load and Tier Labels. Everything not credited below, such as the Keyframe Staff List button, the List Score & Progress Editor, and AniList Fast Load, is original work.',
     works: [
       ['AL-Additions on GitHub', 'https://github.com/Daiya404/AL-Additions'],
       ['AniList Fast Load on GitHub', 'https://github.com/Daiya404/AL-Fast-Load']
     ]
+  },
+  {
+    name: 'MatiX221',
+    url: 'https://github.com/MatiX221',
+    note: 'The API limit fix idea, modularising the script, general bug fixes, AniList Fast Load and Tier Labels integration and improvements, Compare View improvements, manual sync mappings, and the backup and restore feature.',
+    works: [['MatiX221/AL-Additions', 'https://github.com/MatiX221/AL-Additions']]
   },
   {
     name: 'Plennhar',
@@ -55,12 +61,6 @@ export const CREDITS: CreditItem[] = [
     url: 'https://github.com/MALSync',
     note: 'Inspiration for the MyAnimeList sync, and for the episode/chapter and score embedding.',
     works: [['MALSync on GitHub', 'https://github.com/MALSync/MALSync']]
-  },
-  {
-    name: 'MatiX221',
-    url: 'https://github.com/MatiX221',
-    note: 'The API limit fix idea, and a refactor that modularises the code.',
-    works: [['MatiX221/AL-Additions', 'https://github.com/MatiX221/AL-Additions']]
   },
   {
     name: 'ercarp',

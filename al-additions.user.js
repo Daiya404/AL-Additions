@@ -454,8 +454,14 @@
 		{
 			name: "Daiya",
 			url: "https://github.com/Daiya404",
-			note: "Combining, fixing and maintaining this script. Everything not credited below, such as the Keyframe Staff List button, the List Score & Progress Editor, and AniList Fast Load, is original work.",
+			note: "Combining, fixing and maintaining this script, and the standalone script check for Fast Load and Tier Labels. Everything not credited below, such as the Keyframe Staff List button, the List Score & Progress Editor, and AniList Fast Load, is original work.",
 			works: [["AL-Additions on GitHub", "https://github.com/Daiya404/AL-Additions"], ["AniList Fast Load on GitHub", "https://github.com/Daiya404/AL-Fast-Load"]]
+		},
+		{
+			name: "MatiX221",
+			url: "https://github.com/MatiX221",
+			note: "The API limit fix idea, modularising the script, general bug fixes, AniList Fast Load and Tier Labels integration and improvements, Compare View improvements, manual sync mappings, and the backup and restore feature.",
+			works: [["MatiX221/AL-Additions", "https://github.com/MatiX221/AL-Additions"]]
 		},
 		{
 			name: "Plennhar",
@@ -492,12 +498,6 @@
 			url: "https://github.com/MALSync",
 			note: "Inspiration for the MyAnimeList sync, and for the episode/chapter and score embedding.",
 			works: [["MALSync on GitHub", "https://github.com/MALSync/MALSync"]]
-		},
-		{
-			name: "MatiX221",
-			url: "https://github.com/MatiX221",
-			note: "The API limit fix idea, and a refactor that modularises the code.",
-			works: [["MatiX221/AL-Additions", "https://github.com/MatiX221/AL-Additions"]]
 		},
 		{
 			name: "ercarp",
@@ -1153,6 +1153,59 @@
 			}
 		}
 		return 0;
+	}
+	var STANDALONE = {
+		fastLoad: {
+			name: "AniList Fast Load",
+			settingKey: "fastLoadEnabled"
+		},
+		tierLabels: {
+			name: "AniList Tier Labels",
+			settingKey: "tierLabelsEnabled"
+		}
+	};
+	var STANDALONE_IDS_LIST = Object.keys(STANDALONE);
+	var PROBE_ATTR = "data-ala-probe";
+	var builtInRunning = new Set();
+	var markBuiltIn = (id) => {
+		builtInRunning.add(id);
+	};
+	var pageWin = () => typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+	function detectFastLoad() {
+		const w = pageWin();
+		return !!(w.__ANILIST_FAST_LOAD__ || w.__ANILIST_FAST_LOAD_V4__) && !builtInRunning.has("fastLoad");
+	}
+	async function probeTierLabels(timeoutMs = 600) {
+		if (!document.body) return false;
+		const probe = document.createElement("div");
+		probe.className = "score";
+		probe.hidden = true;
+		probe.setAttribute("score", "9");
+		probe.setAttribute(PROBE_ATTR, "1");
+		probe.textContent = "9";
+		document.body.appendChild(probe);
+		try {
+			const end = Date.now() + timeoutMs;
+			while (Date.now() < end) {
+				await sleep(50);
+				if (probe.hasAttribute("data-tier-modified")) return true;
+			}
+			return false;
+		} finally {
+			probe.remove();
+		}
+	}
+	var CACHE_MS = 3e4;
+	var cache = new Map();
+	function detectStandalone(id) {
+		const hit = cache.get(id);
+		if (hit && Date.now() - hit.at < CACHE_MS) return hit.result;
+		const result = (id === "fastLoad" ? Promise.resolve(detectFastLoad()) : probeTierLabels()).catch(() => false);
+		cache.set(id, {
+			at: Date.now(),
+			result
+		});
+		return result;
 	}
 	var TYPES = ["ANIME", "MANGA"];
 	var typeLabel = (t) => t === "ANIME" ? "Anime" : "Manga";
@@ -3693,6 +3746,7 @@
   .ala-child-option{margin-left:8px}
   .ala-child-option .ala-collapsible-inner{border-left:2px solid rgba(var(--color-blue),.25);padding-left:10px}
   .ala-child-option .ala-row{min-height:44px;padding:6px 0}
+  .ala-standalone-note{margin:0 14px 12px;padding:8px 10px;border-radius:4px;border-left:3px solid rgb(var(--color-orange,255,152,0));background:rgba(var(--color-orange,255,152,0),.12);color:rgb(var(--color-text));font-size:12px;line-height:1.45}
 
   #ala-settings-panel input[type=number],#ala-settings-panel input[type=text],#ala-settings-panel select{width:170px;height:36px;padding:0 10px;border:1px solid rgba(var(--color-text-lighter),.22);border-radius:4px;background:rgb(var(--color-foreground));color:rgb(var(--color-text));font:inherit;font-size:13px}
   #ala-settings-panel input:disabled,#ala-settings-panel select:disabled{cursor:not-allowed}
@@ -3703,6 +3757,8 @@
   .ala-slider:before{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .15s}
   .ala-switch input:checked+.ala-slider{background:rgb(var(--color-blue))}
   .ala-switch input:checked+.ala-slider:before{transform:translateX(18px)}
+  .ala-switch input:disabled{cursor:not-allowed}
+  .ala-switch input:disabled+.ala-slider{opacity:.5}
   .ala-switch input:focus-visible+.ala-slider{outline:2px solid rgb(var(--color-blue));outline-offset:2px}
 
   .ala-btn{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:0 18px;border:1px solid rgba(var(--color-text-lighter),.25);border-radius:4px;background:transparent;color:rgb(var(--color-text));font:inherit;font-size:13px;cursor:pointer}
@@ -4082,6 +4138,30 @@
 		});
 		renderTable(tiers);
 	}
+	function standaloneNote(id) {
+		return `<b>Standalone ${STANDALONE[id].name} detected.</b> This feature is now built into AL Additions, so you no longer need the separate script. The built-in version is switched off while the standalone script is installed. Your setting is kept and applies again once you uninstall it.`;
+	}
+	function showStandaloneNotes(panel, syncFeature) {
+		for (const id of STANDALONE_IDS_LIST) detectStandalone(id).then((found) => {
+			if (!panel.isConnected) return;
+			const card = panel.querySelector(`.ala-feature[data-feature="${id}"]`);
+			if (!card) return;
+			card.querySelector(".ala-standalone-note")?.remove();
+			if (!found) return;
+			const toggle = card.querySelector(".ala-row--main input[type=\"checkbox\"][data-key]");
+			if (toggle) {
+				toggle.dataset.standaloneLocked = "1";
+				toggle.checked = false;
+				toggle.disabled = true;
+				syncFeature(card);
+			}
+			const note = document.createElement("div");
+			note.className = "ala-standalone-note";
+			note.setAttribute("role", "note");
+			note.innerHTML = standaloneNote(id);
+			card.querySelector(".ala-row--main")?.insertAdjacentElement("afterend", note);
+		});
+	}
 	function closePanel() {
 		const b = document.getElementById("ala-settings-backdrop");
 		if (!b) return;
@@ -4151,6 +4231,7 @@
 				const r = ROWS[el.dataset.key];
 				if (r) {
 					if (r.key === "syncManualOverrides") return;
+					if (el.dataset.standaloneLocked) return;
 					Settings.set(r.key, TYPES$1[r.type].read(el));
 				}
 			});
@@ -4162,6 +4243,7 @@
 				const r = ROWS[el.dataset.key];
 				if (r) {
 					if (r.key === "syncManualOverrides") return;
+					if (el.dataset.standaloneLocked) return;
 					TYPES$1[r.type].write(el, r.def);
 				}
 			});
@@ -4229,7 +4311,7 @@
 						overrides[r.key] = getManualOverrides();
 						return;
 					}
-					overrides[r.key] = TYPES$1[r.type].read(el);
+					overrides[r.key] = el.dataset.standaloneLocked ? Settings.get(r.key) : TYPES$1[r.type].read(el);
 				}
 			});
 			return overrides;
@@ -4318,6 +4400,7 @@
 		document.documentElement.style.overflow = "hidden";
 		document.body.appendChild(backdrop);
 		panel.focus();
+		showStandaloneNotes(panel, syncFeature);
 	}
 	function ensureLauncher() {
 		if (document.getElementById("ala-settings-mobile-launcher")) return;
@@ -4407,8 +4490,21 @@
 	}, () => {
 		const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
 		if (win.top !== win.self) return;
-		if (win.__ANILIST_FAST_LOAD__ || win.__ANILIST_FAST_LOAD_V4__) return;
-		win.__ANILIST_FAST_LOAD__ = "0.4.1";
+		if (win.__ANILIST_FAST_LOAD__ || win.__ANILIST_FAST_LOAD_V4__) {
+			console.warn("[AL-Additions] Built-in Fast Load skipped: the standalone AniList Fast Load script is already running. Uninstall it to use the built-in version.");
+			return;
+		}
+		win.__ALA_FAST_LOAD__ = "0.4.1";
+		markBuiltIn("fastLoad");
+		let yieldedToStandalone = false;
+		const yielded = () => {
+			if (yieldedToStandalone) return true;
+			if (win.__ANILIST_FAST_LOAD__ || win.__ANILIST_FAST_LOAD_V4__) {
+				yieldedToStandalone = true;
+				console.warn("[AL-Additions] Built-in Fast Load paused: the standalone AniList Fast Load script is installed. Uninstall it to use the built-in version.");
+			}
+			return yieldedToStandalone;
+		};
 		const CFG = {
 			lazyMedia: false,
 			rowSkipping: false,
@@ -5400,6 +5496,7 @@
 				});
 			}
 			win.fetch = async function fetch(input, init) {
+				if (yielded()) return nativeFetch(input, init);
 				let job = null;
 				try {
 					job = await classify(input, init);
@@ -5703,7 +5800,7 @@
 				}, delay);
 			}
 			function autoPrefetchListsForCurrentRoute() {
-				if (!CFG.prefetch) return;
+				if (!CFG.prefetch || yielded()) return;
 				const now = Date.now();
 				if (doc.hidden || now < pausedUntil || navigator.connection?.saveData) return;
 				const path = win.location.pathname;
@@ -5787,7 +5884,7 @@
 				const origPost = W.prototype.postMessage;
 				W.prototype.postMessage = function(data, ...rest) {
 					try {
-						if (isRpcFetch(data)) {
+						if (!yielded() && isRpcFetch(data)) {
 							const id = String(data.id || "");
 							if (id.startsWith("alfl_prefetch_")) return origPost.apply(this, [data, ...rest]);
 							if (!watched.has(this)) {
@@ -5967,6 +6064,7 @@
 				return null;
 			}
 			function replayRoute(known, route) {
+				if (yielded()) return 0;
 				let sent = 0;
 				for (const request of known.reqs) {
 					let parsed;
@@ -6017,6 +6115,7 @@
 			} else if (CFG.prefetch) loadRoutes();
 			if (!CFG.prefetch) return;
 			function prefetchFor(anchor) {
+				if (yielded()) return;
 				const now = Date.now();
 				if (doc.hidden || now < pausedUntil || navigator.connection?.saveData) return;
 				let url;
@@ -7625,6 +7724,7 @@
 			}
 		}
 		function processScoreElement(el, tiers, colorScore, isPercentage = false, isBlockView = false) {
+			if (el.hasAttribute("data-ala-probe")) return;
 			if (el.dataset.tierModified) {
 				const attrNow = el.getAttribute("score");
 				const changed = attrNow !== null && attrNow !== el.dataset.tierSource;
@@ -7708,13 +7808,18 @@
 			});
 			processTop100Elements(tiers, colorScore);
 		}
+		const HINT_KEY = "ala_standalone_seen_tierLabels";
+		let paused = !!store.get(HINT_KEY, false);
+		const runScan = () => {
+			if (!paused) applyTierLabels();
+		};
 		Core.ready(() => {
-			applyTierLabels();
+			runScan();
 			Core.onNavigate(() => {
 				document.querySelectorAll(".compare").forEach((c) => {
 					delete c._colFormats;
 				});
-				applyTierLabels();
+				runScan();
 			});
 			let scanQueued = false;
 			Core.onBodyMutation(() => {
@@ -7722,8 +7827,15 @@
 				scanQueued = true;
 				setTimeout(() => {
 					scanQueued = false;
-					applyTierLabels();
+					runScan();
 				}, 100);
+			});
+			detectStandalone("tierLabels").then((found) => {
+				store.set(HINT_KEY, found);
+				const wasPaused = paused;
+				paused = found;
+				if (found && !wasPaused) console.warn("[AL-Additions] Built-in Tier Labels paused: the standalone AniList Tier Labels script is installed. Uninstall it to use the built-in version.");
+				if (!found && wasPaused) runScan();
 			});
 		});
 	});
