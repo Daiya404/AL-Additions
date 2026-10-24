@@ -6,6 +6,9 @@
 - **Title Matching:** Improved title scoring using whole-word boundary checks and Jaccard token similarity, preventing base franchise titles from improperly outscoring specific sequel or sub-arc entries.
 - **Sync Overrides:** Added an "Import / Export" tab to the Manual Mappings modal with a raw JSON editor, schema validation, one-click clipboard copying, and options to either replace or merge mappings.
 - **Sync Overrides:** Fixed long media titles causing unwanted horizontal scrolling in the Overrides & Sync Audit modals by enforcing ellipsis truncation and min-width constraints, with full titles accessible via hover tooltips.
+- **Anime Themes & Songs:** Added customizable search shortcut icons next to OP/ED theme songs with deep links to YouTube, Spotify, Apple Music, AniPlaylist, and more.
+- **Anime Themes & Songs:** Introduced a template-based URL search engine supporting extensive metadata tags (`{title}`, `{artist}`, `{anime}`, native Japanese titles, release year, season, and theme codes like `{theme}`).
+- **Anime Themes & Songs:** Added a dedicated configuration modal with active shortcut reordering, custom preset creation, raw JSON import/export.
 
 ## 0.8.1
 

@@ -14,7 +14,7 @@ import './modules/nyaa';
 import './modules/keyframe';
 import './modules/mediaInfo';
 import './modules/airingDots';
-import './modules/anisongs';
+import './modules/anisongs/anisongs';
 import './modules/tierLabels';
 import './modules/compareView';
 import './modules/sync';
