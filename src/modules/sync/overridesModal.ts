@@ -19,7 +19,7 @@ addStyle(
   .ala-ov-sheet :focus-visible{outline:2px solid rgb(var(--color-blue));outline-offset:2px}
   .ala-ov-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid rgba(var(--color-text-lighter),.14)}
   .ala-ov-head h2{margin:0;font-size:18px;font-weight:600}
-  .ala-ov-body{flex:1 1 auto;min-height:0;padding:16px 20px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-gutter:stable}
+  .ala-ov-body {flex:1 1 auto;min-height:0;padding:16px 20px;overflow-y: auto;overflow-x:hidden;-webkit-overflow-scrolling: touch;overscroll-behavior: contain;scrollbar-gutter: stable;}
   .ala-ov-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:12px 20px;border-top:1px solid rgba(var(--color-text-lighter),.14)}
 
   .ala-ov-tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid rgba(var(--color-text-lighter),.14);padding-bottom:10px}
@@ -54,12 +54,12 @@ addStyle(
   .ala-ov-chip{padding:3px 8px;border:1px solid rgba(var(--color-text-lighter),.2);border-radius:12px;background:transparent;color:rgb(var(--color-text-lighter));font-size:11px;cursor:pointer;transition:all .15s}
   .ala-ov-chip.is-active{background:rgba(var(--color-blue),.2);border-color:rgb(var(--color-blue));color:rgb(var(--color-blue));font-weight:600}
 
-  .ala-ov-list{display:grid;gap:8px}
-  .ala-ov-item{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:6px;background:rgb(var(--color-background));transition:background .15s}
+  .ala-ov-list{display:grid;gap:8px;min-width:0;}
+  .ala-ov-item{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:6px;background:rgb(var(--color-background));transition:background .15s;min-width:0;max-width: 100%;}
   .ala-ov-item:hover{background:rgba(var(--color-text-lighter),.08)}
   .ala-ov-item-cover{width:36px;height:48px;border-radius:3px;object-fit:cover;background:rgba(var(--color-text-lighter),.2);flex-shrink:0}
   .ala-ov-item-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
-  .ala-ov-item-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:inherit;text-decoration:none}
+  .ala-ov-item-title{display: block;width: 100%;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:inherit;text-decoration:none}
   .ala-ov-item-title:hover{color:rgb(var(--color-blue))}
   .ala-ov-item-meta{display:flex;gap:8px;align-items:center;font-size:11px;color:rgb(var(--color-text-lighter));flex-wrap:wrap}
   .ala-ov-item-meta a{color:rgb(var(--color-blue));text-decoration:none}
@@ -745,7 +745,7 @@ export function openOverridesModal(): void {
         <div class="ala-ov-item" data-id="${id}">
           ${o.cover ? `<img class="ala-ov-item-cover" src="${o.cover}" alt="">` : `<div class="ala-ov-item-cover"></div>`}
           <div class="ala-ov-item-info">
-            <a class="ala-ov-item-title" href="${alUrl}" target="_blank" rel="noopener">${o.title}</a>
+            <a class="ala-ov-item-title" href="${alUrl}" target="_blank" rel="noopener" title="${o.title}">${o.title}</a>
             <div class="ala-ov-item-meta">
               <span class="ala-ov-badge ${o.type === 'MANGA' ? 'ala-ov-badge--manga' : ''}">${o.type}</span>
               <span>AniList ID: <b>${id}</b></span>
@@ -866,7 +866,7 @@ export function openOverridesModal(): void {
         <div class="ala-ov-item" data-id="${mediaId}">
           ${cover ? `<img class="ala-ov-item-cover" src="${cover}" alt="">` : `<div class="ala-ov-item-cover"></div>`}
           <div class="ala-ov-item-info">
-            <a class="ala-ov-item-title" href="https://anilist.co/${type.toLowerCase()}/${mediaId}" target="_blank" rel="noopener">${title}</a>
+            <a class="ala-ov-item-title" href="https://anilist.co/${type.toLowerCase()}/${mediaId}" target="_blank" rel="noopener" title="${title}">${title}</a>
             <div class="ala-ov-item-meta">
               <span class="ala-ov-badge ${type === 'MANGA' ? 'ala-ov-badge--manga' : ''}">${type}</span>
               <span>AniList ID: <b>${mediaId}</b></span>
@@ -977,7 +977,7 @@ export function openOverridesModal(): void {
         (item) => `
         <div class="ala-ov-item" data-mal-id="${item.malId}">
           <div class="ala-ov-item-info">
-            <a class="ala-ov-item-title" href="https://myanimelist.net/${item.type.toLowerCase()}/${item.malId}" target="_blank" rel="noopener">${item.title}</a>
+            <a class="ala-ov-item-title" href="https://myanimelist.net/${item.type.toLowerCase()}/${item.malId}" target="_blank" rel="noopener" title="${item.title}">${item.title}</a>
             <div class="ala-ov-item-meta">
               <span class="ala-ov-badge ${item.type === 'MANGA' ? 'ala-ov-badge--manga' : ''}">${item.type}</span>
               <span>MAL ID: <b>${item.malId}</b></span>

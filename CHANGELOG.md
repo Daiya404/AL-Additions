@@ -4,6 +4,7 @@
 
 - **Title Matching:** Fixed punctuation stripping to properly handle semicolons, slashes, and hyphens, ensuring titles like _Steins;Gate_ and _Fate/stay night_ match consistently across sources.
 - **Title Matching:** Improved title scoring using whole-word boundary checks and Jaccard token similarity, preventing base franchise titles from improperly outscoring specific sequel or sub-arc entries.
+- **Sync Overrides:** Fixed long media titles causing unwanted horizontal scrolling in the Overrides & Sync Audit modals by enforcing ellipsis truncation and min-width constraints, with full titles accessible via hover tooltips.
 
 ## 0.8.1
 
