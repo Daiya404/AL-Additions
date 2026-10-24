@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AL Additions
 // @namespace    daiya.al-additions-v3
-// @version      0.8.1
+// @version      0.8.2
 // @author       Daiya
 // @description  A userscript that adds extra tools to AniList, including a one-way AniList → MyAnimeList sync, a score and progress editor, airing indicators, OP/ED songs and quick links to other sites.
 // @license      GPL-3.0-or-later
@@ -627,22 +627,29 @@
 			if (this.persistKey) safe(() => store.set(this.persistKey, this.until), "persist cooldown");
 		}
 	};
-	var normTitle = (s) => String(s || "").toLowerCase().replace(/[[\](){},.:!?_"'’“”]/g, " ").replace(/\b(the|a|an)\b/g, " ").replace(/\s+/g, " ").trim();
+	var normTitle = (s) => String(s || "").toLowerCase().normalize("NFKC").replace(/[’‘'`]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\b(the|a|an)\b/g, " ").replace(/\s+/g, " ").trim();
 	var strictTitle = (s) => String(s || "").toLowerCase().normalize("NFKC").replace(/[’‘'`]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ");
 	function titleScore(a, b) {
 		const x = normTitle(a);
 		const y = normTitle(b);
 		if (!x || !y) return 0;
 		if (x === y) return 100;
-		if (x.includes(y) || y.includes(x)) {
-			const ratio = Math.min(x.length, y.length) / Math.max(x.length, y.length);
-			return Math.round(50 + ratio * 35);
-		}
-		const setA = new Set(x.split(" "));
-		const setB = new Set(y.split(" "));
+		const wordsA = x.split(" ").filter(Boolean);
+		const wordsB = y.split(" ").filter(Boolean);
+		const setA = new Set(wordsA);
+		const setB = new Set(wordsB);
 		let common = 0;
 		for (const w of setA) if (setB.has(w)) common++;
-		return Math.round(common / Math.max(setA.size, setB.size) * 70);
+		const totalUnique = new Set([...wordsA, ...wordsB]).size;
+		const wordScore = totalUnique > 0 ? common / totalUnique * 100 : 0;
+		const strA = ` ${x} `;
+		const strB = ` ${y} `;
+		if (strA.includes(strB) || strB.includes(strA)) {
+			const lenRatio = Math.min(x.length, y.length) / Math.max(x.length, y.length);
+			const subScore = Math.round(60 + lenRatio * 35);
+			return Math.max(Math.round(wordScore), subScore);
+		}
+		return Math.round(wordScore);
 	}
 	function bestMatch(list, title, getTitle, min = 70) {
 		let best = null;

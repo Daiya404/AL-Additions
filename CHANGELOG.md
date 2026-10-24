@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.2
+
+- **Title Matching:** Fixed punctuation stripping to properly handle semicolons, slashes, and hyphens, ensuring titles like _Steins;Gate_ and _Fate/stay night_ match consistently across sources.
+- **Title Matching:** Improved title scoring using whole-word boundary checks and Jaccard token similarity, preventing base franchise titles from improperly outscoring specific sequel or sub-arc entries.
+
 ## 0.8.1
 
 - **Compare View:** Fixed status filter not hiding rows due to a CSS specificity conflict with `.compare .entry { display: flex !important; }`, switching to an `.ala-hidden` class with `!important` and ensuring classes are cleaned up on teardown.
