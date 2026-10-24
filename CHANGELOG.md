@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1
+
+- **Compare View:** Fixed status filter not hiding rows due to a CSS specificity conflict with `.compare .entry { display: flex !important; }`, switching to an `.ala-hidden` class with `!important` and ensuring classes are cleaned up on teardown.
+- **Compare View:** Increased automatic list loading safety cap to 100 pages (up to ~3,000 entries).
+
 ## 0.8.0
 
 ### Major changes

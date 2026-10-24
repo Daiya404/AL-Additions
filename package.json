@@ -1,6 +1,6 @@
 {
     "name": "al-additions",
-    "version": "0.8.0",
+    "version": "0.8.1",
     "description": "A userscript that adds extra tools to AniList, including a one-way AniList → MyAnimeList sync, a score and progress editor, airing indicators, OP/ED songs and quick links to other sites.",
     "main": "al-additions.user.js",
     "type": "module",
