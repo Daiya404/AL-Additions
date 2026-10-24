@@ -1,5 +1,5 @@
 import { RateLimiter } from '../utils/limiter';
-import { store, sleep, tryOr, memo, authError } from '../utils/helpers';
+import { store, sleep, authError, logDebug } from '../utils/helpers';
 import { unsafeWindow } from 'vite-plugin-monkey/dist/client';
 
 export interface ViewerInfo {
@@ -16,10 +16,13 @@ export interface MediaEntry {
     userPreferred?: string;
     english?: string;
     romaji?: string;
+    native?: string;
   };
   episodes: number | null;
   chapters: number | null;
   status: string;
+  season?: string;
+  seasonYear?: number;
   nextAiringEpisode?: {
     episode: number;
   };
@@ -35,9 +38,187 @@ export interface MediaEntry {
   };
 }
 
+export interface MediaListEntryItem {
+  id: number;
+  mediaId: number;
+  status: string;
+  score: number;
+  progress: number;
+  progressVolumes?: number;
+  repeat?: number;
+  priority?: number;
+  notes?: string;
+  customLists?: Record<string, boolean>;
+  startedAt?: { year?: number; month?: number; day?: number };
+  completedAt?: { year?: number; month?: number; day?: number };
+  media?: {
+    id: number;
+    idMal: number | null;
+    format?: string;
+    episodes?: number | null;
+    chapters?: number | null;
+    status?: string;
+    title?: {
+      userPreferred?: string;
+      english?: string;
+      romaji?: string;
+      native?: string;
+    };
+  };
+}
+
+export interface MediaListGroup {
+  name: string;
+  isCustomList: boolean;
+  status: string | null;
+  entries: MediaListEntryItem[];
+}
+
+export interface MediaListCollectionData {
+  hasNextChunk?: boolean;
+  user?: {
+    id: number;
+    name: string;
+  };
+  lists: MediaListGroup[];
+}
+
+export interface MediaListResult {
+  collection: MediaListCollectionData;
+  lists: MediaListGroup[];
+  allEntries: MediaListEntryItem[];
+  user?: { id: number; name: string };
+}
+
+export interface QueryOptions {
+  retries?: number;
+  forceFresh?: boolean;
+}
+
+interface EntityMeta {
+  entityKey: string;
+  isSuperset: boolean;
+  requiredFields: Set<string>;
+}
+
+const KNOWN_LIST_FIELDS = [
+  'mediaId', 'id', 'score', 'status', 'progress', 'progressVolumes',
+  'notes', 'startedAt', 'completedAt', 'repeat', 'priority', 'private',
+  'hiddenFromStatusLists', 'customLists', 'advancedScores', 'updatedAt',
+  'media', 'title', 'coverImage', 'format', 'episodes', 'volumes',
+  'chapters', 'averageScore', 'popularity', 'genres', 'tags', 'bannerImage'
+];
+
+const KNOWN_MEDIA_FIELDS = [
+  'id', 'idMal', 'type', 'title', 'format', 'episodes', 'chapters', 'status',
+  'mediaListEntry', 'season', 'seasonYear', 'nextAiringEpisode', 'synonyms',
+  'isAdult', 'genres', 'tags', 'bannerImage', 'coverImage', 'description'
+];
+
+function parseEntityMeta(query: string, vars: Record<string, any>): EntityMeta | null {
+  const clean = query.replace(/#[^\n\r]*/g, ' ').replace(/\s+/g, ' ');
+
+  if (/\bMediaListCollection\b/i.test(clean)) {
+    const type = (vars.type || 'ANIME').toUpperCase();
+    const who = vars.userId || (vars.userName ? String(vars.userName).toLowerCase() : 'me');
+    const chunkPart = vars.chunk != null ? `:${vars.chunk}` : '';
+    const fieldCount = (clean.match(/[{,]\s*([a-zA-Z0-9_]+)/g) || []).length;
+    const isSuperset = fieldCount > 12;
+
+    const requiredFields = new Set<string>();
+    for (const f of KNOWN_LIST_FIELDS) {
+      if (new RegExp(`\\b${f}\\b`).test(clean)) requiredFields.add(f);
+    }
+
+    return {
+      entityKey: `MediaListCollection:${type}:${who}${chunkPart}`,
+      isSuperset,
+      requiredFields
+    };
+  }
+
+  const mediaMatch = clean.match(/\bMedia\s*\(\s*id\s*:\s*\$([a-zA-Z0-9_]+)/i);
+  if (mediaMatch && vars[mediaMatch[1]]) {
+    const id = vars[mediaMatch[1]];
+    const fieldCount = (clean.match(/[{,]\s*([a-zA-Z0-9_]+)/g) || []).length;
+    const requiredFields = new Set<string>();
+    for (const f of KNOWN_MEDIA_FIELDS) {
+      if (new RegExp(`\\b${f}\\b`).test(clean)) requiredFields.add(f);
+    }
+
+    return {
+      entityKey: `Media:${id}`,
+      isSuperset: fieldCount > 10,
+      requiredFields
+    };
+  }
+
+  if (/\bViewer\b/i.test(clean)) {
+    return {
+      entityKey: 'Viewer',
+      isSuperset: clean.includes('mediaListOptions'),
+      requiredFields: new Set(['id', 'name'])
+    };
+  }
+
+  return null;
+}
+
+function isSubsetOf(subset: Set<string>, superset: Set<string>): boolean {
+  for (const item of subset) {
+    if (!superset.has(item)) return false;
+  }
+  return true;
+}
+
 export const AniList = (() => {
-  const API = 'https://graphql.anilist.co';
   const limiter = new RateLimiter({ rate: 25, max: 90, burst: 1, persistKey: 'ala_anilist_api_resume_at' });
+
+  interface CachedRecord {
+    time: number;
+    data: any;
+    isSuperset: boolean;
+    fields: Set<string>;
+  }
+
+  interface InflightEntity {
+    promise: Promise<any>;
+    isSuperset: boolean;
+    fields: Set<string>;
+  }
+
+  const entityCache = new Map<string, CachedRecord>();
+  const inflightExact = new Map<string, Promise<any>>();
+  const inflightEntities = new Map<string, InflightEntity>();
+  const ENTITY_TTL = 3 * 60_000;
+
+  function getCsrfToken(): string | null {
+    const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+    if (typeof win.al_token === 'string' && win.al_token) return win.al_token;
+    try {
+      const meta = win.document?.querySelector('meta[name="csrf-token"]');
+      if (meta?.content) return meta.content;
+    } catch (_) {}
+    try {
+      const scripts = win.document?.querySelectorAll('head script') || [];
+      for (const s of scripts) {
+        const m = s.textContent?.match(/window\.al_token\s*=\s*['"]([^'"]+)['"]/);
+        if (m && m[1]) return m[1];
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function isBrowserLoggedIn(): boolean {
+    if (store.get('al_token', null)) return true;
+    const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+    const nuxtUser = win.__NUXT__?.state?.auth?.user || win.__NUXT__?.state?.user;
+    if (nuxtUser?.id) return true;
+    const doc = win.document || document;
+    if (doc?.querySelector?.('nav a[href^="/user/"], .nav-wrap a[href^="/user/"], .user-wrap .avatar')) return true;
+    if (doc?.querySelector?.('nav a[href="/login"], .nav a[href="/login"]')) return false;
+    return Boolean(Number(store.get('al_user_id', 0)) > 0 && store.get('al_username', null));
+  }
 
   const header = (res: Response | undefined, name: string): string | null => {
     try {
@@ -63,33 +244,63 @@ export const AniList = (() => {
     if (remaining != null && Number(remaining) <= 1) limiter.limit(resetDelay(res));
   }
 
-  async function query<T = any>(q: string, variables: Record<string, any> = {}, retries = 3): Promise<T> {
-    const token = store.get<string | null>('al_token', null);
+  async function executeNetworkRequest<T>(
+    q: string,
+    variables: Record<string, any>,
+    retries: number,
+    forceFresh = false
+  ): Promise<T> {
+    const oauthToken = store.get<string | null>('al_token', null);
+    const csrfToken = getCsrfToken();
+    const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+    const fetchFn = (typeof win.fetch === 'function' ? win.fetch : fetch).bind(win);
     const backoff = () => sleep(1500 * (4 - retries));
-    let res: Response | undefined;
+
+    const isInternal = !oauthToken && Boolean(csrfToken) && isBrowserLoggedIn();
+    const endpoint = isInternal
+      ? `${win.location.origin || 'https://anilist.co'}/graphql`
+      : 'https://graphql.anilist.co';
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      ...(forceFresh ? { 'Cache-Control': 'no-cache' } : {})
+    };
+
+    if (oauthToken) {
+      headers.Authorization = `Bearer ${oauthToken}`;
+    } else if (isInternal && csrfToken) {
+      headers['X-CSRF-TOKEN'] = csrfToken;
+    }
+
+    let res: Response;
+
     try {
       await limiter.acquire();
-      res = await fetch(API, {
+      res = await fetchFn(endpoint, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
-        },
+        headers,
+        cache: forceFresh ? 'no-store' : undefined,
+        credentials: isInternal ? 'include' : 'same-origin',
         body: JSON.stringify({ query: q, variables })
       });
     } catch (e: any) {
       if (retries > 0) {
         await backoff();
-        return query<T>(q, variables, retries - 1);
+        return executeNetworkRequest<T>(q, variables, retries - 1, forceFresh);
       }
       throw new Error(`AniList network error: ${e?.message || e}`);
     }
 
     handle(res);
+
+    if (!res) {
+      throw new Error('AniList network error: empty response');
+    }
+
     if ((res.status === 429 || res.status >= 500) && retries > 0) {
       if (res.status >= 500) await backoff();
-      return query<T>(q, variables, retries - 1);
+      return executeNetworkRequest<T>(q, variables, retries - 1, forceFresh);
     }
 
     let json: any = null;
@@ -98,12 +309,172 @@ export const AniList = (() => {
     } catch (_) {}
 
     const message = json?.errors?.length ? json.errors.map((e: any) => e.message).join('; ') : '';
-    if (res.status === 401 || (token && /invalid token|unauthenticated|unauthorized/i.test(message))) {
-      throw authError('AniList', 'AniList rejected the access token — reconnect AniList.');
+    if (res.status === 401 || (oauthToken && /invalid token|unauthenticated|unauthorized/i.test(message))) {
+      throw authError('AniList', 'AniList session unauthenticated — please log in or reconnect AniList.');
     }
     if (message) throw new Error(message);
     if (!res.ok || !json) throw new Error(`AniList API HTTP ${res.status}`);
     return json.data as T;
+  }
+
+  async function query<T = any>(
+    q: string,
+    variables: Record<string, any> = {},
+    optionsOrRetries?: number | QueryOptions
+  ): Promise<T> {
+    const opts: QueryOptions =
+      typeof optionsOrRetries === 'number'
+        ? { retries: optionsOrRetries }
+        : optionsOrRetries || {};
+    const retries = opts.retries ?? 3;
+    const isMutation = /\bmutation\b/i.test(q);
+
+    if (isMutation) {
+      invalidate();
+      return executeNetworkRequest<T>(q, variables, retries);
+    }
+
+    const meta = parseEntityMeta(q, variables);
+    const now = Date.now();
+    const exactKey = `${q}\u0001${JSON.stringify(variables)}`;
+
+    if (!opts.forceFresh && meta) {
+      const cached = entityCache.get(meta.entityKey);
+      if (cached && now - cached.time < ENTITY_TTL && isSubsetOf(meta.requiredFields, cached.fields)) {
+        logDebug('[ANILIST API] 🎯 Cache HIT via Subset matching:', meta.entityKey);
+        return cached.data as T;
+      }
+    }
+
+    if (meta && !opts.forceFresh) {
+      const flyingEntity = inflightEntities.get(meta.entityKey);
+      if (flyingEntity && isSubsetOf(meta.requiredFields, flyingEntity.fields)) {
+        logDebug('[ANILIST API] 🔗 Attached to in-flight Superset request:', meta.entityKey);
+        return flyingEntity.promise as Promise<T>;
+      }
+    }
+
+    const flyingExact = inflightExact.get(exactKey);
+    if (flyingExact && !opts.forceFresh) {
+      return flyingExact as Promise<T>;
+    }
+
+    const networkPromise = executeNetworkRequest<T>(q, variables, retries, opts.forceFresh)
+      .then((data) => {
+        if (meta && data) {
+          entityCache.set(meta.entityKey, {
+            time: Date.now(),
+            data,
+            isSuperset: meta.isSuperset,
+            fields: meta.requiredFields
+          });
+        }
+        return data;
+      })
+      .finally(() => {
+        inflightExact.delete(exactKey);
+        if (meta && inflightEntities.get(meta.entityKey)?.promise === networkPromise) {
+          inflightEntities.delete(meta.entityKey);
+        }
+      });
+
+    inflightExact.set(exactKey, networkPromise);
+    if (meta) {
+      const existing = inflightEntities.get(meta.entityKey);
+      if (!existing || (!existing.isSuperset && meta.isSuperset)) {
+        inflightEntities.set(meta.entityKey, {
+          promise: networkPromise,
+          isSuperset: meta.isSuperset,
+          fields: meta.requiredFields
+        });
+      }
+    }
+
+    return networkPromise;
+  }
+
+  async function getMediaList(
+    target: number | string,
+    type: 'ANIME' | 'MANGA' = 'ANIME',
+    options?: { forceFresh?: boolean; userId?: number; userName?: string }
+  ): Promise<MediaListResult> {
+    const isId = typeof target === 'number' || /^\d+$/.test(String(target));
+    const userId = options?.userId || (isId ? Number(target) : undefined);
+    const userName = options?.userName || (!isId ? String(target).trim() : undefined);
+
+    const singleQuery = `query ($userId: Int, $userName: String, $type: MediaType) {
+      MediaListCollection(userId: $userId, userName: $userName, type: $type) {
+        user { id name }
+        lists {
+          name
+          isCustomList
+          status
+          entries {
+            id
+            mediaId
+            status
+            score
+            progress
+            progressVolumes
+            repeat
+            priority
+            notes
+            customLists
+            startedAt { year month day }
+            completedAt { year month day }
+            media {
+              id
+              idMal
+              format
+              episodes
+              chapters
+              status
+              title { userPreferred english romaji native }
+            }
+          }
+        }
+      }
+    }`;
+
+    const queryVars = {
+      userId: userId || undefined,
+      userName: userId ? undefined : (userName || undefined),
+      type
+    };
+
+    const data = await query<{ MediaListCollection: MediaListCollectionData }>(
+      singleQuery,
+      queryVars,
+      { forceFresh: options?.forceFresh }
+    );
+
+    const mlc = data?.MediaListCollection;
+    if (!mlc || !Array.isArray(mlc.lists)) {
+      throw new Error('Unexpected MediaListCollection response shape');
+    }
+
+    const mergedCollection: MediaListCollectionData = {
+      user: mlc.user,
+      lists: mlc.lists || []
+    };
+
+    const seenEntryIds = new Set<number>();
+    const allEntries: MediaListEntryItem[] = [];
+    for (const list of mergedCollection.lists) {
+      for (const entry of list.entries || []) {
+        if (!seenEntryIds.has(entry.id)) {
+          seenEntryIds.add(entry.id);
+          allEntries.push(entry);
+        }
+      }
+    }
+
+    return {
+      collection: mergedCollection,
+      lists: mergedCollection.lists,
+      allEntries,
+      user: mergedCollection.user
+    };
   }
 
   async function viewer(): Promise<ViewerInfo | null> {
@@ -111,16 +482,20 @@ export const AniList = (() => {
     const fmt = store.get<string | null>('al_score_format', null);
     const id = Number(store.get('al_user_id', 0));
     if (name && fmt && id) return { id, name, scoreFormat: fmt };
-    if (!store.get('al_token', null)) return null;
+    if (!hasAuth()) return null;
 
-    const d = await query<{ Viewer: { id: number; name: string; mediaListOptions: { scoreFormat: string } } }>(
+    const d = await query<{ Viewer: { id: number; name: string; mediaListOptions: { scoreFormat: string } } | null }>(
       'query { Viewer { id name mediaListOptions { scoreFormat } } }',
       {}
-    );
-    store.set('al_user_id', d.Viewer.id);
-    store.set('al_username', d.Viewer.name);
-    store.set('al_score_format', d.Viewer.mediaListOptions.scoreFormat);
-    return { id: d.Viewer.id, name: d.Viewer.name, scoreFormat: d.Viewer.mediaListOptions.scoreFormat };
+    ).catch(() => null);
+
+    if (d?.Viewer) {
+      store.set('al_user_id', d.Viewer.id);
+      store.set('al_username', d.Viewer.name);
+      store.set('al_score_format', d.Viewer.mediaListOptions.scoreFormat);
+      return { id: d.Viewer.id, name: d.Viewer.name, scoreFormat: d.Viewer.mediaListOptions.scoreFormat };
+    }
+    return null;
   }
 
   const clearViewer = (): void => {
@@ -129,35 +504,72 @@ export const AniList = (() => {
     store.del('al_score_format');
   };
 
+  const invalidate = (entityKeyPrefix?: string): void => {
+    if (!entityKeyPrefix) {
+      entityCache.clear();
+      inflightEntities.clear();
+    } else {
+      for (const k of entityCache.keys()) {
+        if (k.startsWith(entityKeyPrefix)) entityCache.delete(k);
+      }
+      for (const k of inflightEntities.keys()) {
+        if (k.startsWith(entityKeyPrefix)) inflightEntities.delete(k);
+      }
+    }
+
+    const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+    win.__ALFL_CLEAR__?.();
+  };
+
+  const invalidateMediaList = (target?: number | string, type?: 'ANIME' | 'MANGA'): void => {
+    if (!target) return invalidate('MediaListCollection');
+    const t = type ? type.toUpperCase() : '';
+    const prefix = t ? `MediaListCollection:${t}:${String(target).toLowerCase()}` : `MediaListCollection:`;
+    invalidate(prefix);
+  };
+
+  const hasAuth = (): boolean => Boolean(store.get('al_token', null) || (getCsrfToken() && isBrowserLoggedIn()));
   const resumeAt = (): number => limiter.resumeAt;
 
-  return { query, viewer, clearViewer, resumeAt };
+  return {
+    query,
+    getMediaList,
+    viewer,
+    clearViewer,
+    invalidate,
+    invalidateMediaList,
+    hasAuth,
+    hasOwnAuth: () => Boolean(store.get<string | null>('al_token', null)),
+    resumeAt
+  };
 })();
 
 export const MediaData = (() => {
-  const fetchMedia = memo(
-    async (id: number, type: 'ANIME' | 'MANGA'): Promise<MediaEntry | null> => {
-      const data = await tryOr(() =>
-        AniList.query<{ Media: MediaEntry }>(
-          `query($id:Int,$type:MediaType){ Media(id:$id,type:$type){
-            id idMal format title { userPreferred english romaji }
-            episodes chapters status nextAiringEpisode { episode }
-            mediaListEntry { score progress status completedAt { year month day } }
-          } }`,
-          { id, type }
-        )
+  async function get(
+    id: number | string,
+    type: 'ANIME' | 'MANGA',
+    opts?: { throwAuth?: boolean }
+  ): Promise<MediaEntry | null> {
+    try {
+      const data = await AniList.query<{ Media: MediaEntry }>(
+        `query($id:Int,$type:MediaType){ Media(id:$id,type:$type){
+          id idMal format title { userPreferred english romaji native }
+          episodes chapters status season seasonYear nextAiringEpisode { episode }
+          mediaListEntry { score progress status completedAt { year month day } }
+        } }`,
+        { id: Number(id), type }
       );
       return data?.Media || null;
-    },
-    { keepNull: false, ttl: 60000 }
-  );
-
-  const get = (id: number | string, type: 'ANIME' | 'MANGA'): Promise<MediaEntry | null> =>
-    fetchMedia(`${type}:${id}`, Number(id), type);
+    } catch (e: any) {
+      if (opts?.throwAuth && e?.auth) throw e;
+      logDebug('[MEDIA DATA] fetch failed:', e?.message || e);
+      return null;
+    }
+  }
 
   async function save(
     id: number | string,
-    type: 'ANIME' | 'MANGA',
+    _type: 'ANIME' | 'MANGA',
     c: {
       score?: number;
       progress?: number;
@@ -173,10 +585,9 @@ export const MediaData = (() => {
       { mediaId: Number(id), score: c.score, progress: c.progress, status: c.status, completedAt: c.completedAt }
     );
     const entry = data?.SaveMediaListEntry || null;
-    const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
-    win.__ALFL_CLEAR__?.();
-    const media = await get(id, type);
-    if (media && entry) media.mediaListEntry = entry;
+
+    AniList.invalidate(`Media:${id}`);
+    AniList.invalidateMediaList();
     return entry;
   }
 

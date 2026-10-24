@@ -47,7 +47,7 @@ describe('FastLoad: GraphQL Performance & Cache Engine', () => {
 
   describe('Module Initialization & Global Flags', () => {
     it('registers FastLoad version flag and internal inspection hooks', () => {
-      expect((window as any).__ALA_FAST_LOAD__).toBe('0.4.1');
+      expect((window as any).__ALA_FAST_LOAD__).toBe('0.4.3');
       expect((window as any).__ALFL_STATS__).toBeDefined();
       expect(typeof (window as any).__ALFL_CLEAR__).toBe('function');
     });

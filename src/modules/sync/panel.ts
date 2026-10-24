@@ -363,7 +363,7 @@ function isOwnList(): boolean {
   const owner = decodeName(location.pathname.match(OWNER_RE)?.[1] || '');
   if (!owner) return false;
   const me = store.get<string | null>('al_username', null) || navUser();
-  if (!me && store.get('al_token', null) && !selfLookup) {
+  if (!me && AniList.hasAuth() && !selfLookup) {
     selfLookup = true;
     tryOr(() => AniList.viewer()).then(() => mountSoon());
   }

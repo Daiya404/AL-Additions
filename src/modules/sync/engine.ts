@@ -77,7 +77,7 @@ export async function alFetchIncremental(userId: number, type: SyncMediaType, si
   const out: AniListSyncEntry[] = [];
   for (let page = 1; page <= 400; page++) {
     checkCancel();
-    const p = (await AniList.query(q, { userId, type, page }))?.Page;
+    const p = (await AniList.query(q, { userId, type, page }, { forceFresh: true }))?.Page;
     let stop = false;
     for (const row of p?.mediaList || []) {
       if ((Number(row.updatedAt) || 0) < since) {
@@ -98,7 +98,7 @@ export async function alFetchAll(userId: number, type: SyncMediaType): Promise<A
   const seen = new Set<number>();
   for (let chunk = 1; chunk <= 100; chunk++) {
     checkCancel();
-    const c = (await AniList.query(q, { userId, type, chunk, perChunk: 500 }))?.MediaListCollection;
+    const c = (await AniList.query(q, { userId, type, chunk, perChunk: 500 }, { forceFresh: true }))?.MediaListCollection;
     for (const list of c?.lists || []) {
       for (const row of list.entries || []) {
         const e = toEntry(row, row.media);
@@ -147,7 +147,7 @@ export async function pushJob(
           ? `retrying with ${cappedKeys
               .map(
                 (k) =>
-                  `${k .replace('num_watched_episodes', 'episode count') .replace('num_chapters_read', 'chapter count') .replace('num_volumes_read', 'volume count')} capped to ${alt[k]} (MAL's listed total)`
+                  `${k.replace('num_watched_episodes', 'episode count').replace('num_chapters_read', 'chapter count').replace('num_volumes_read', 'volume count')} capped to ${alt[k]} (MAL's listed total)`
               )
               .join(', ')}`
           : removedDates
