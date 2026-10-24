@@ -3,7 +3,14 @@ import { addStyle } from '../../utils/dom';
 import { malFetchList, malDeleteEntry } from '../../api/mal';
 import { stores } from './state';
 import { alFetchAll } from './engine';
-import { getManualOverrides, setOverride, removeOverride, refreshStaleOverrides, saveManualOverrides } from './overrides';
+import {
+  getManualOverrides,
+  setOverride,
+  removeOverride,
+  refreshStaleOverrides,
+  saveManualOverrides,
+  importOverrides
+} from './overrides';
 import { SyncMediaType } from './types';
 
 const MODAL_ID = 'ala-overrides-backdrop';
@@ -19,7 +26,7 @@ addStyle(
   .ala-ov-sheet :focus-visible{outline:2px solid rgb(var(--color-blue));outline-offset:2px}
   .ala-ov-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid rgba(var(--color-text-lighter),.14)}
   .ala-ov-head h2{margin:0;font-size:18px;font-weight:600}
-  .ala-ov-body{flex:1 1 auto;min-height:0;padding:16px 20px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-gutter:stable}
+  .ala-ov-body {flex:1 1 auto;min-height:0;padding:16px 20px;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-gutter:stable;}
   .ala-ov-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:12px 20px;border-top:1px solid rgba(var(--color-text-lighter),.14)}
 
   .ala-ov-tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid rgba(var(--color-text-lighter),.14);padding-bottom:10px}
@@ -33,6 +40,13 @@ addStyle(
   .ala-ov-field label{font-size:12px;color:rgb(var(--color-text-lighter))}
   .ala-ov-input{width:100%;height:36px;padding:0 10px;border:1px solid rgba(var(--color-text-lighter),.22);border-radius:4px;background:rgb(var(--color-foreground));color:rgb(var(--color-text));font:inherit;font-size:13px}
   .ala-ov-input:focus{outline:none;border-color:rgb(var(--color-blue))}
+
+  .ala-ov-textarea{width:100%;height:320px;padding:10px;border:1px solid rgba(var(--color-text-lighter),.22);border-radius:4px;background:rgb(var(--color-foreground));color:rgb(var(--color-text));font-family:monospace,Consolas,Courier,monospace;font-size:12px;line-height:1.4;resize:vertical;tab-size:2}
+  .ala-ov-textarea:focus{outline:none;border-color:rgb(var(--color-blue))}
+
+  .ala-ov-status{padding:8px 12px;border-radius:4px;font-size:12px;margin-top:10px;display:none}
+  .ala-ov-status--success{background:rgba(var(--color-green,70,211,105),.15);color:rgb(var(--color-green,70,211,105));border:1px solid rgba(var(--color-green,70,211,105),.3)}
+  .ala-ov-status--error{background:rgba(var(--color-red,235,87,87),.15);color:rgb(var(--color-red,235,87,87));border:1px solid rgba(var(--color-red,235,87,87),.3)}
 
   .ala-ov-preview{display:flex;gap:12px;align-items:center;padding:10px;margin:8px 0 12px;border-radius:6px;background:rgba(var(--color-text-lighter),.06);min-height:56px}
   .ala-ov-preview-cover{width:40px;height:54px;border-radius:3px;object-fit:cover;background:rgba(var(--color-text-lighter),.2)}
@@ -54,12 +68,12 @@ addStyle(
   .ala-ov-chip{padding:3px 8px;border:1px solid rgba(var(--color-text-lighter),.2);border-radius:12px;background:transparent;color:rgb(var(--color-text-lighter));font-size:11px;cursor:pointer;transition:all .15s}
   .ala-ov-chip.is-active{background:rgba(var(--color-blue),.2);border-color:rgb(var(--color-blue));color:rgb(var(--color-blue));font-weight:600}
 
-  .ala-ov-list{display:grid;gap:8px}
-  .ala-ov-item{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:6px;background:rgb(var(--color-background));transition:background .15s}
+  .ala-ov-list{display:grid;gap:8px;min-width:0;}
+  .ala-ov-item{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:6px;background:rgb(var(--color-background));transition:background .15s;min-width:0;max-width:100%;}
   .ala-ov-item:hover{background:rgba(var(--color-text-lighter),.08)}
   .ala-ov-item-cover{width:36px;height:48px;border-radius:3px;object-fit:cover;background:rgba(var(--color-text-lighter),.2);flex-shrink:0}
   .ala-ov-item-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
-  .ala-ov-item-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:inherit;text-decoration:none}
+  .ala-ov-item-title{display:block;width:100%;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:inherit;text-decoration:none}
   .ala-ov-item-title:hover{color:rgb(var(--color-blue))}
   .ala-ov-item-meta{display:flex;gap:8px;align-items:center;font-size:11px;color:rgb(var(--color-text-lighter));flex-wrap:wrap}
   .ala-ov-item-meta a{color:rgb(var(--color-blue));text-decoration:none}
@@ -175,9 +189,6 @@ async function batchFetchUnmatchedMeta(ids: number[]): Promise<void> {
   }
 }
 
-/**
- * Focused quick edit modal opened directly from anime / manga pages.
- */
 export async function openQuickOverrideModal(mediaId: number, mediaType: SyncMediaType = 'ANIME'): Promise<void> {
   const existing = document.getElementById(QUICK_MODAL_ID);
   if (existing) existing.remove();
@@ -316,9 +327,6 @@ export async function openQuickOverrideModal(mediaId: number, mediaType: SyncMed
   });
 }
 
-/**
- * Full Manual Mappings & Sync Audit modal opened from Settings.
- */
 export function openOverridesModal(): void {
   const existing = document.getElementById(MODAL_ID);
   if (existing) existing.remove();
@@ -339,9 +347,9 @@ export function openOverridesModal(): void {
         <div class="ala-ov-tabs">
           <button class="ala-ov-tab is-active" data-tab="overrides" type="button">Overrides & Ignored</button>
           <button class="ala-ov-tab" data-tab="audit" type="button">Sync Audit</button>
+          <button class="ala-ov-tab" data-tab="json" type="button">Import / Export</button>
         </div>
 
-        <!-- Tab 1: Overrides -->
         <div id="ala-ov-view-overrides">
           <div class="ala-ov-form-box">
             <h3 class="ala-ov-form-title" id="ala-ov-form-heading">Add or Edit Override</h3>
@@ -386,7 +394,6 @@ export function openOverridesModal(): void {
           <div id="ala-ov-list" class="ala-ov-list"></div>
         </div>
 
-        <!-- Tab 2: Audit -->
         <div id="ala-ov-view-audit" style="display:none">
           <div class="ala-ov-audit-section">
             <h3 class="ala-ov-audit-title">Unmatched AniList Entries</h3>
@@ -421,6 +428,26 @@ export function openOverridesModal(): void {
             <div id="ala-ov-audit-orphans" class="ala-ov-list"></div>
           </div>
         </div>
+
+        <div id="ala-ov-view-json" style="display:none">
+          <div class="ala-ov-form-box">
+            <h3 class="ala-ov-form-title">Raw JSON Overrides</h3>
+            <p style="font-size:12px;color:rgb(var(--color-text-lighter));margin:0 0 10px">
+              View, copy, or batch edit your manual AniList-to-MAL mappings and ignored entries in JSON format.
+            </p>
+            <div class="ala-ov-field">
+              <label for="ala-ov-json-textarea">Configuration JSON</label>
+              <textarea id="ala-ov-json-textarea" class="ala-ov-textarea" spellcheck="false" placeholder="{}"></textarea>
+            </div>
+            <div id="ala-ov-json-status" class="ala-ov-status"></div>
+            <div class="ala-ov-form-actions">
+              <button type="button" class="ala-btn ala-btn--primary" id="ala-ov-btn-json-save">Save & Replace</button>
+              <button type="button" class="ala-btn" id="ala-ov-btn-json-merge" title="Merge imported entries into current overrides">Merge with Current</button>
+              <button type="button" class="ala-btn" id="ala-ov-btn-json-copy">Copy to Clipboard</button>
+              <button type="button" class="ala-btn" id="ala-ov-btn-json-reset" style="margin-left:auto">Reset</button>
+            </div>
+          </div>
+        </div>
       </div>
       <footer class="ala-ov-foot">
         <button class="ala-btn ala-btn--primary ala-ov-close" type="button">Done</button>
@@ -430,26 +457,27 @@ export function openOverridesModal(): void {
 
   document.body.appendChild(backdrop);
 
-  // Close actions
   const close = () => backdrop.remove();
   backdrop.querySelectorAll('.ala-ov-close').forEach((btn) => btn.addEventListener('click', close));
   backdrop.addEventListener('click', (e) => {
     if (e.target === backdrop) close();
   });
 
-  // Tab switching
   const tabs = backdrop.querySelectorAll<HTMLButtonElement>('.ala-ov-tab');
   const viewOverrides = backdrop.querySelector('#ala-ov-view-overrides') as HTMLElement;
   const viewAudit = backdrop.querySelector('#ala-ov-view-audit') as HTMLElement;
+  const viewJson = backdrop.querySelector('#ala-ov-view-json') as HTMLElement;
 
   tabs.forEach((t) => {
     t.addEventListener('click', () => {
       tabs.forEach((o) => o.classList.toggle('is-active', o === t));
-      const isAudit = t.dataset.tab === 'audit';
-      viewOverrides.style.display = isAudit ? 'none' : 'block';
-      viewAudit.style.display = isAudit ? 'block' : 'none';
-      if (isAudit) renderAudit();
-      else renderList();
+      const target = t.dataset.tab;
+      viewOverrides.style.display = target === 'overrides' ? 'block' : 'none';
+      viewAudit.style.display = target === 'audit' ? 'block' : 'none';
+      viewJson.style.display = target === 'json' ? 'block' : 'none';
+      if (target === 'audit') renderAudit();
+      else if (target === 'overrides') renderList();
+      else if (target === 'json') renderJsonView();
     });
   });
 
@@ -745,7 +773,7 @@ export function openOverridesModal(): void {
         <div class="ala-ov-item" data-id="${id}">
           ${o.cover ? `<img class="ala-ov-item-cover" src="${o.cover}" alt="">` : `<div class="ala-ov-item-cover"></div>`}
           <div class="ala-ov-item-info">
-            <a class="ala-ov-item-title" href="${alUrl}" target="_blank" rel="noopener">${o.title}</a>
+            <a class="ala-ov-item-title" href="${alUrl}" target="_blank" rel="noopener" title="${o.title}">${o.title}</a>
             <div class="ala-ov-item-meta">
               <span class="ala-ov-badge ${o.type === 'MANGA' ? 'ala-ov-badge--manga' : ''}">${o.type}</span>
               <span>AniList ID: <b>${id}</b></span>
@@ -866,7 +894,7 @@ export function openOverridesModal(): void {
         <div class="ala-ov-item" data-id="${mediaId}">
           ${cover ? `<img class="ala-ov-item-cover" src="${cover}" alt="">` : `<div class="ala-ov-item-cover"></div>`}
           <div class="ala-ov-item-info">
-            <a class="ala-ov-item-title" href="https://anilist.co/${type.toLowerCase()}/${mediaId}" target="_blank" rel="noopener">${title}</a>
+            <a class="ala-ov-item-title" href="https://anilist.co/${type.toLowerCase()}/${mediaId}" target="_blank" rel="noopener" title="${title}">${title}</a>
             <div class="ala-ov-item-meta">
               <span class="ala-ov-badge ${type === 'MANGA' ? 'ala-ov-badge--manga' : ''}">${type}</span>
               <span>AniList ID: <b>${mediaId}</b></span>
@@ -977,7 +1005,7 @@ export function openOverridesModal(): void {
         (item) => `
         <div class="ala-ov-item" data-mal-id="${item.malId}">
           <div class="ala-ov-item-info">
-            <a class="ala-ov-item-title" href="https://myanimelist.net/${item.type.toLowerCase()}/${item.malId}" target="_blank" rel="noopener">${item.title}</a>
+            <a class="ala-ov-item-title" href="https://myanimelist.net/${item.type.toLowerCase()}/${item.malId}" target="_blank" rel="noopener" title="${item.title}">${item.title}</a>
             <div class="ala-ov-item-meta">
               <span class="ala-ov-badge ${item.type === 'MANGA' ? 'ala-ov-badge--manga' : ''}">${item.type}</span>
               <span>MAL ID: <b>${item.malId}</b></span>
@@ -1085,6 +1113,69 @@ export function openOverridesModal(): void {
     }
   });
 
-  // Initial load
+  const jsonTextarea = backdrop.querySelector('#ala-ov-json-textarea') as HTMLTextAreaElement;
+  const jsonStatus = backdrop.querySelector('#ala-ov-json-status') as HTMLElement;
+  const jsonSaveBtn = backdrop.querySelector('#ala-ov-btn-json-save') as HTMLButtonElement;
+  const jsonMergeBtn = backdrop.querySelector('#ala-ov-btn-json-merge') as HTMLButtonElement;
+  const jsonCopyBtn = backdrop.querySelector('#ala-ov-btn-json-copy') as HTMLButtonElement;
+  const jsonResetBtn = backdrop.querySelector('#ala-ov-btn-json-reset') as HTMLButtonElement;
+
+  function renderJsonView() {
+    const current = getManualOverrides();
+    jsonTextarea.value = JSON.stringify(current, null, 2);
+    jsonStatus.style.display = 'none';
+  }
+
+  jsonCopyBtn?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(jsonTextarea.value);
+      const prev = jsonCopyBtn.textContent;
+      jsonCopyBtn.textContent = 'Copied!';
+      setTimeout(() => {
+        jsonCopyBtn.textContent = prev;
+      }, 1500);
+    } catch (_) {
+      jsonTextarea.select();
+      document.execCommand('copy');
+      const prev = jsonCopyBtn.textContent;
+      jsonCopyBtn.textContent = 'Copied!';
+      setTimeout(() => {
+        jsonCopyBtn.textContent = prev;
+      }, 1500);
+    }
+  });
+
+  jsonResetBtn?.addEventListener('click', renderJsonView);
+
+  jsonSaveBtn?.addEventListener('click', () => {
+    const res = importOverrides(jsonTextarea.value, 'replace');
+    if (!res.success) {
+      jsonStatus.className = 'ala-ov-status ala-ov-status--error';
+      jsonStatus.textContent = res.error || 'Failed to parse JSON';
+      jsonStatus.style.display = 'block';
+      return;
+    }
+    jsonStatus.className = 'ala-ov-status ala-ov-status--success';
+    jsonStatus.textContent = `Successfully saved ${res.count ?? 0} overrides!`;
+    jsonStatus.style.display = 'block';
+    renderList();
+  });
+
+  jsonMergeBtn?.addEventListener('click', () => {
+    const res = importOverrides(jsonTextarea.value, 'merge');
+    if (!res.success) {
+      jsonStatus.className = 'ala-ov-status ala-ov-status--error';
+      jsonStatus.textContent = res.error || 'Failed to parse JSON';
+      jsonStatus.style.display = 'block';
+      return;
+    }
+    const current = getManualOverrides();
+    jsonStatus.className = 'ala-ov-status ala-ov-status--success';
+    jsonStatus.textContent = `Successfully merged ${res.count ?? 0} overrides! (Total: ${Object.keys(current).length})`;
+    jsonStatus.style.display = 'block';
+    jsonTextarea.value = JSON.stringify(current, null, 2);
+    renderList();
+  });
+
   renderList();
 }

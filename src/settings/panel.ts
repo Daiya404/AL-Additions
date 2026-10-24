@@ -13,6 +13,7 @@ import type { SettingRow, RegisteredFeature } from '../types';
 import { DEFAULT_TIERS, validateTiers, normalizeHexColor, type TierConfig } from '../utils/tiers';
 import { openOverridesModal } from '../modules/sync/overridesModal';
 import { OVERRIDES_SETTING_KEY, getManualOverrides } from '../modules/sync/overrides';
+import { openAniSongsModal } from '../modules/anisongs/anisongModal';
 
 const SECTIONS = ['Sync', 'AniList Enhancements', 'External Links, Downloads & Mappings', 'Advanced'];
 
@@ -803,6 +804,12 @@ export function showPanel(): void {
   panel.querySelector('#ala-btn-edit-syncManualOverrides')?.addEventListener('click', (e) => {
     e.preventDefault();
     openOverridesModal();
+  });
+
+  panel.querySelector('#ala-btn-edit-aniSongsProviders')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    const inputEl = panel.querySelector<HTMLInputElement>('input[data-key="aniSongsProviders"]');
+    if (inputEl) openAniSongsModal(inputEl);
   });
 
   const onFocus = () => {

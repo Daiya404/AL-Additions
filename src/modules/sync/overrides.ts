@@ -66,6 +66,82 @@ export function getEffectiveMalId(mediaId: number, defaultMalId?: number | null)
   return defaultMalId && defaultMalId > 0 ? defaultMalId : null;
 }
 
+export function validateOverrides(raw: unknown): {
+  valid: boolean;
+  overrides?: ManualOverrideStore;
+  error?: string;
+} {
+  let data: any = raw;
+  if (typeof data === 'string') {
+    const trimmed = data.trim();
+    if (!trimmed) return { valid: true, overrides: {} };
+    try {
+      data = JSON.parse(trimmed);
+    } catch (e: any) {
+      return { valid: false, error: `Invalid JSON syntax: ${e.message}` };
+    }
+  }
+
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return {
+      valid: false,
+      error: 'Overrides must be a JSON object mapping AniList media IDs to override records.'
+    };
+  }
+
+  const result: ManualOverrideStore = {};
+  for (const [key, val] of Object.entries(data)) {
+    const id = Number(key);
+    if (!id || id <= 0 || !Number.isInteger(id)) {
+      return {
+        valid: false,
+        error: `Invalid AniList media ID key "${key}". Keys must be positive integers.`
+      };
+    }
+    if (!val || typeof val !== 'object' || Array.isArray(val)) {
+      return { valid: false, error: `Invalid entry for media ID ${id}: expected an object.` };
+    }
+    const o = val as any;
+    if (typeof o.malId !== 'number' || o.malId < 0 || !Number.isInteger(o.malId)) {
+      return {
+        valid: false,
+        error: `Invalid malId for media ID ${id}: must be a non-negative integer (0 for AniList-only).`
+      };
+    }
+    const typeStr = String(o.type || 'ANIME').toUpperCase();
+    if (typeStr !== 'ANIME' && typeStr !== 'MANGA') {
+      return { valid: false, error: `Invalid type for media ID ${id}: must be "ANIME" or "MANGA".` };
+    }
+
+    const entry: ManualOverride = {
+      malId: o.malId,
+      type: typeStr as SyncMediaType,
+      title: typeof o.title === 'string' && o.title.trim() ? o.title.trim() : `Media #${id}`,
+      updatedAt: typeof o.updatedAt === 'number' && o.updatedAt > 0 ? o.updatedAt : Date.now()
+    };
+    if (typeof o.cover === 'string' && o.cover.trim()) {
+      entry.cover = o.cover.trim();
+    }
+
+    result[String(id)] = entry;
+  }
+
+  return { valid: true, overrides: result };
+}
+
+export function importOverrides(
+  raw: unknown,
+  mode: 'replace' | 'merge' = 'replace'
+): { success: boolean; count?: number; error?: string } {
+  const check = validateOverrides(raw);
+  if (!check.valid || !check.overrides) {
+    return { success: false, error: check.error || 'Validation failed' };
+  }
+  const next = mode === 'merge' ? { ...getManualOverrides(), ...check.overrides } : check.overrides;
+  saveManualOverrides(next);
+  return { success: true, count: Object.keys(check.overrides).length };
+}
+
 const STALE_MS = 24 * 3600 * 1000;
 let refreshing = false;
 
