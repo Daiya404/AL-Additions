@@ -2,7 +2,7 @@
 
 AL Additions is a userscript that adds practical tools to [AniList](https://anilist.co/): list editing, airing indicators, OP/ED themes, quick links, score-tier labels, compare-view improvements, performance optimisations, and a one-way **AniList → MyAnimeList sync**.
 
-- **Version:** 0.8.0 ([changelog](./CHANGELOG.md))
+- **Version:** 0.8.1 ([changelog](./CHANGELOG.md))
 - **License:** GPL-3.0-or-later
 - **Author:** [Daiya](https://github.com/Daiya404)
 - **Runs on:** [AniList](https://anilist.co/) and [MyAnimeList](https://myanimelist.net/) (MAL is used for account connection and syncing)
