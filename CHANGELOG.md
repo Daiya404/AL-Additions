@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.2
+
+- **Title Matching:** Fixed punctuation stripping to properly handle semicolons, slashes, and hyphens, ensuring titles like _Steins;Gate_ and _Fate/stay night_ match consistently across sources.
+- **Title Matching:** Improved title scoring using whole-word boundary checks and Jaccard token similarity, preventing base franchise titles from improperly outscoring specific sequel or sub-arc entries.
+- **Sync Overrides:** Added an "Import / Export" tab to the Manual Mappings modal with a raw JSON editor, schema validation, one-click clipboard copying, and options to either replace or merge mappings.
+- **Sync Overrides:** Fixed long media titles causing unwanted horizontal scrolling in the Overrides & Sync Audit modals by enforcing ellipsis truncation and min-width constraints, with full titles accessible via hover tooltips.
+- **Anime Themes & Songs:** Added customizable search shortcut icons next to OP/ED theme songs with deep links to YouTube, Spotify, Apple Music, AniPlaylist, and more.
+- **Anime Themes & Songs:** Introduced a template-based URL search engine supporting extensive metadata tags (`{title}`, `{artist}`, `{anime}`, native Japanese titles, release year, season, and theme codes like `{theme}`).
+- **Anime Themes & Songs:** Added a dedicated configuration modal with active shortcut reordering, custom preset creation, raw JSON import/export.
+
 ## 0.8.1
 
 - **Compare View:** Fixed status filter not hiding rows due to a CSS specificity conflict with `.compare .entry { display: flex !important; }`, switching to an `.ala-hidden` class with `!important` and ensuring classes are cleaned up on teardown.
