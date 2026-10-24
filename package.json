@@ -7,6 +7,9 @@
     "scripts": {
         "dev": "vite",
         "watch": "vite build --watch",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:coverage": "vitest run --coverage",
         "build": "tsc && vite build && node -e \"require('fs').copyFileSync('dist/al-additions.user.js', 'al-additions.user.js')\"",
         "bump": "node scripts/bump.mjs"
     },
@@ -22,8 +25,12 @@
     },
     "homepage": "https://github.com/Daiya404/AL-Additions#readme",
     "devDependencies": {
+        "@types/node": "^26.6.5",
+        "@vitest/coverage-v8": "^5.0.5",
+        "jsdom": "^29.1.1",
         "typescript": "^7.0.2",
         "vite": "^8.3.4",
-        "vite-plugin-monkey": "^8.1.1"
+        "vite-plugin-monkey": "^8.1.1",
+        "vitest": "^5.0.5"
     }
 }

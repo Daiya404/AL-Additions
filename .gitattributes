@@ -20,6 +20,7 @@ package-lock.json       linguist-generated=true
 *.woff2                 binary
 
 # Strip internal tooling from downloaded release archives
+__tests__/              export-ignore
 .github/                export-ignore
 .vscode/                export-ignore
 scripts/                export-ignore
@@ -27,3 +28,4 @@ scripts/                export-ignore
 .gitignore              export-ignore
 tsconfig.json           export-ignore
 vite.config.ts          export-ignore
+vitest.config.ts        export-ignore
