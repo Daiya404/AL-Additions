@@ -248,6 +248,9 @@ defineFeature(
         display: flex !important;
         align-items: stretch !important;
       }
+      .compare .entry.ala-hidden {
+        display: none !important;
+      }
       .compare .entry > div {
         flex: 1 1 0% !important;
         min-width: 0 !important;
@@ -486,7 +489,10 @@ defineFeature(
       for (const el of entries) {
         const d = getEntryData(el);
         const show = activeStatuses.has(d.yourStatus) && activeStatuses.has(d.otherStatus);
-        el.style.display = show ? '' : 'none';
+
+        el.classList.toggle('ala-hidden', !show);
+        el.style.display = '';
+
         if (show) visibleCount++;
       }
       logDebug('[COMPARE]', 'Filter applied:', { activeStatuses: [...activeStatuses], visibleCount, total: entries.length });
@@ -591,7 +597,7 @@ defineFeature(
 
       try {
         let iterations = 0;
-        const MAX_PAGES = 60; // Up to ~1800 entries safety cap
+        const MAX_PAGES = 100; // Up to ~3000 entries safety cap
 
         while (!abortState.abort && isComparePage() && iterations < MAX_PAGES) {
           iterations++;
@@ -689,6 +695,10 @@ defineFeature(
         el.classList.remove('ala-compare-page-container');
       });
 
+      document.querySelectorAll('.compare .entry.ala-hidden').forEach((el) => {
+        el.classList.remove('ala-hidden');
+      });
+
       const header = document.querySelector<HTMLElement>('.entry.header');
       if (header) {
         delete (header as any)._alaHeaderBound;
@@ -735,13 +745,11 @@ defineFeature(
 
       const compareRoot = header.closest<HTMLElement>('.compare') || listContainer;
 
-      // Ensure container has compare page styling
       const container = compareRoot.closest<HTMLElement>('.content.container') || compareRoot.parentElement;
       if (container) {
         container.classList.add('ala-compare-page-container');
       }
 
-      // Wrap compare table with sidebar if not already wrapped
       let wrap = document.getElementById('ala-compare-wrap');
       let sidebar = document.getElementById('ala-compare-sidebar');
       if (!wrap || !wrap.contains(compareRoot)) {
@@ -763,7 +771,6 @@ defineFeature(
         main.appendChild(compareRoot);
       }
 
-      // Initialize sidebar card once
       if (sidebar && !sidebar.querySelector('.ala-compare-card')) {
         const isMobileScreen = window.innerWidth <= 850;
         sidebar.innerHTML = `
@@ -853,7 +860,6 @@ defineFeature(
         updateStatusCounts(sidebar, entries);
       }
 
-      // Initialize sort header bindings once
       if (!(header as any)._alaHeaderBound) {
         (header as any)._alaHeaderBound = true;
 
@@ -882,7 +888,6 @@ defineFeature(
       applyFilter(listContainer, entries);
       applySort(listContainer, entries, activeSortCol, activeSortDir);
 
-      // Trigger auto-loading all remaining pages if not already started
       if (!isLoadingAll && sidebar) {
         autoLoadAllEntries(listContainer, sidebar);
       }

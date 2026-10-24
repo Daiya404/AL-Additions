@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AL Additions
 // @namespace    daiya.al-additions-v3
-// @version      0.8.0
+// @version      0.8.1
 // @author       Daiya
 // @description  A userscript that adds extra tools to AniList, including a one-way AniList → MyAnimeList sync, a score and progress editor, airing indicators, OP/ED songs and quick links to other sites.
 // @license      GPL-3.0-or-later
@@ -8064,6 +8064,9 @@
         display: flex !important;
         align-items: stretch !important;
       }
+      .compare .entry.ala-hidden {
+        display: none !important;
+      }
       .compare .entry > div {
         flex: 1 1 0% !important;
         min-width: 0 !important;
@@ -8267,7 +8270,8 @@
 			for (const el of entries) {
 				const d = getEntryData(el);
 				const show = activeStatuses.has(d.yourStatus) && activeStatuses.has(d.otherStatus);
-				el.style.display = show ? "" : "none";
+				el.classList.toggle("ala-hidden", !show);
+				el.style.display = "";
 				if (show) visibleCount++;
 			}
 			logDebug("[COMPARE]", "Filter applied:", {
@@ -8348,7 +8352,7 @@
 			loadAbortState = abortState;
 			try {
 				let iterations = 0;
-				const MAX_PAGES = 60;
+				const MAX_PAGES = 100;
 				while (!abortState.abort && isComparePage() && iterations < MAX_PAGES) {
 					iterations++;
 					const scrollerEl = document.querySelector(".scroller");
@@ -8416,6 +8420,9 @@
 			}
 			document.querySelectorAll(".ala-compare-page-container").forEach((el) => {
 				el.classList.remove("ala-compare-page-container");
+			});
+			document.querySelectorAll(".compare .entry.ala-hidden").forEach((el) => {
+				el.classList.remove("ala-hidden");
 			});
 			const header = document.querySelector(".entry.header");
 			if (header) {
