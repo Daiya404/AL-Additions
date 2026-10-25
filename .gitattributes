@@ -2,7 +2,7 @@
 * text eol=lf
 
 # Collapse compiled bundles and noisy lockfiles
-al-additions.user.js    linguist-generated=true
+al-additions.user.js    linguist-generated=true merge=union
 package-lock.json       linguist-generated=true
 
 # Contextual diff headers for code reviews

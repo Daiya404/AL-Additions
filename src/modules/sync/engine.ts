@@ -7,8 +7,7 @@ import {
   malLimiter,
   breaker,
   log,
-  clearMalAuth,
-  clearAniListAuth
+  clearMalAuth
 } from '../../api/mal';
 import { hooks } from '../../api/mal';
 import { store, tryOr, authError, logDebug } from '../../utils/helpers';
@@ -49,6 +48,8 @@ const BREAKER_MAX_TRIPS = 3;
 const RETRY_AFTER_FAILURE_MS = 10 * 60e3;
 export const LIST_PATH_RE = /^\/user\/[^/]+\/(anime|manga)list/;
 
+const onAniList = (): boolean => location.hostname === 'anilist.co';
+
 const ENTRY_FIELDS =
   'status score(format: POINT_100) progress progressVolumes repeat notes updatedAt startedAt { year month day } completedAt { year month day }';
 const MEDIA_FIELDS = 'id idMal startDate { year } synonyms title { userPreferred english romaji native }';
@@ -77,7 +78,7 @@ export async function alFetchIncremental(userId: number, type: SyncMediaType, si
   const out: AniListSyncEntry[] = [];
   for (let page = 1; page <= 400; page++) {
     checkCancel();
-    const p = (await AniList.query(q, { userId, type, page }))?.Page;
+    const p = (await AniList.query(q, { userId, type, page }, { forceFresh: true }))?.Page;
     let stop = false;
     for (const row of p?.mediaList || []) {
       if ((Number(row.updatedAt) || 0) < since) {
@@ -98,7 +99,7 @@ export async function alFetchAll(userId: number, type: SyncMediaType): Promise<A
   const seen = new Set<number>();
   for (let chunk = 1; chunk <= 100; chunk++) {
     checkCancel();
-    const c = (await AniList.query(q, { userId, type, chunk, perChunk: 500 }))?.MediaListCollection;
+    const c = (await AniList.query(q, { userId, type, chunk, perChunk: 500 }, { forceFresh: true }))?.MediaListCollection;
     for (const list of c?.lists || []) {
       for (const row of list.entries || []) {
         const e = toEntry(row, row.media);
@@ -147,7 +148,7 @@ export async function pushJob(
           ? `retrying with ${cappedKeys
               .map(
                 (k) =>
-                  `${k .replace('num_watched_episodes', 'episode count') .replace('num_chapters_read', 'chapter count') .replace('num_volumes_read', 'volume count')} capped to ${alt[k]} (MAL's listed total)`
+                  `${k.replace('num_watched_episodes', 'episode count').replace('num_chapters_read', 'chapter count').replace('num_volumes_read', 'volume count')} capped to ${alt[k]} (MAL's listed total)`
               )
               .join(', ')}`
           : removedDates
@@ -387,7 +388,7 @@ export async function confirmDecimalScores(): Promise<boolean> {
 }
 
 function handleAuthFailure(e: any): void {
-  if (e.auth === 'AniList') clearAniListAuth();
+  if (e.auth === 'AniList') AniList.clearViewer();
   else clearMalAuth();
   log(`⚠ ${e.message}`);
 }
@@ -395,7 +396,8 @@ function handleAuthFailure(e: any): void {
 export async function runSync(types: SyncMediaType[] = [...TYPES], opts: { full?: boolean } = {}): Promise<void> {
   logDebug('[SYNC]', 'runSync initiated for types:', types, 'options:', opts);
   if (syncStatus.syncing) return log('Sync already running.');
-  if (!store.get('al_token') || !store.get('mal_token')) return log('Connect both AniList and MAL first.');
+  if (!onAniList()) return log('Open AniList to run a sync — it needs your AniList login.', 'warn');
+  if (!AniList.hasAuth() || !store.get('mal_token')) return log('Connect both AniList and MAL first.');
   if (navigator.onLine === false) return log('You appear to be offline; sync skipped.');
   syncStatus.syncing = true;
   syncStatus.cancelled = false;
@@ -411,7 +413,7 @@ export async function runSync(types: SyncMediaType[] = [...TYPES], opts: { full?
   let allOk = false;
   try {
     const viewer = await AniList.viewer();
-    if (!viewer) throw authError('AniList', 'AniList is not connected.');
+    if (!viewer) throw authError('AniList', 'AniList is not logged in.');
     const me = await malWhoAmI();
     const account = `${viewer.id}:${me.id}`;
     const prev = store.get<string | null>('sync_account', null);
@@ -476,8 +478,8 @@ export async function fullResync(): Promise<void> {
 }
 
 export function maybeAutoSync(): void {
-  if (!Settings.get('syncEnabled') || syncStatus.syncing || Date.now() < syncStatus.autoSyncRetryAfter || navigator.onLine === false) return;
-  if (!store.get('al_token') || !store.get('mal_token')) return;
+  if (!onAniList() || !Settings.get('syncEnabled') || syncStatus.syncing || Date.now() < syncStatus.autoSyncRetryAfter || navigator.onLine === false) return;
+  if (!AniList.hasAuth() || !store.get('mal_token')) return;
 
   const retryAt = Number(store.get('sync_retry_at', 0)) || 0;
   if (retryAt > 0 && Date.now() < retryAt) return;

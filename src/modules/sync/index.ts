@@ -1,6 +1,6 @@
 import { GM_registerMenuCommand } from 'vite-plugin-monkey/dist/client';
 import { defineFeature } from '../../core/registry';
-import { clearMalAuth, clearAniListAuth, log } from '../../api/mal';
+import { clearMalAuth, log } from '../../api/mal';
 import { store, safe } from '../../utils/helpers';
 import { SENSITIVE_KEYS } from '../../settings/backup';
 import { TYPES } from './types';
@@ -10,6 +10,9 @@ import { initDeletionInterceptor } from './deletionInterceptor';
 
 const ALL_KEYS = [
   ...SENSITIVE_KEYS,
+  'al_username',
+  'al_user_id',
+  'al_score_format',
   'al_token_auth',
   'sync_lock_heartbeat',
   'sync_onboarded',
@@ -128,18 +131,15 @@ defineFeature(
       log('All stored data cleared.');
       renderPanel();
     });
-    GM_registerMenuCommand('🔵 AL→MAL Sync: Disconnect AniList', () => {
-      clearAniListAuth();
-      log('AniList disconnected.');
-      renderPanel();
-    });
     GM_registerMenuCommand('🟦 AL→MAL Sync: Disconnect MAL', () => {
       clearMalAuth();
       log('MAL disconnected.');
       renderPanel();
     });
 
-    initSyncPanel();
+    if (location.hostname === 'anilist.co') {
+      initSyncPanel();
+    }
   }
 );
 
