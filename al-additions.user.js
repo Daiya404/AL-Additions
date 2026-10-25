@@ -9015,9 +9015,9 @@
 			{
 				key: "tierLabelsAverageScore",
 				type: "toggle",
-				def: true,
-				title: "Show on Average & Mean scores",
-				help: "Display tier badge next to Average Score / Mean Score on profile and media pages."
+				def: false,
+				title: "Show on Weighted Score",
+				help: "Display tier badge next to the Weighted Score on media pages."
 			},
 			{
 				key: "tierLabels",
@@ -9228,7 +9228,7 @@
 			if (showAverage) document.querySelectorAll(".data-set").forEach((dataSet) => {
 				const label = dataSet.querySelector(".type");
 				const value = dataSet.querySelector(".value");
-				if (label && value && ((label.textContent || "").includes("Average Score") || (label.textContent || "").includes("Mean Score"))) processScoreElement(value, tiers, colorScore, true, false);
+				if (label && value && (label.textContent || "").includes("Weighted Score")) processScoreElement(value, tiers, colorScore, true, false);
 			});
 			processTop100Elements(tiers, colorScore);
 		}

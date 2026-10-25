@@ -34,9 +34,9 @@ defineFeature(
       {
         key: 'tierLabelsAverageScore',
         type: 'toggle',
-        def: true,
-        title: 'Show on Average & Mean scores',
-        help: 'Display tier badge next to Average Score / Mean Score on profile and media pages.'
+        def: false,
+        title: 'Show on Weighted Score',
+        help: 'Display tier badge next to the Weighted Score on media pages.'
       },
       {
         key: 'tierLabels',
@@ -323,16 +323,12 @@ defineFeature(
         processScoreElement(el, tiers, colorScore, false, true);
       });
 
-      // 3. Average & Mean score in data-sets
+      // 3. Weighted Score in data-sets (AniList replaced the average score with it)
       if (showAverage) {
         document.querySelectorAll<HTMLElement>('.data-set').forEach((dataSet) => {
           const label = dataSet.querySelector<HTMLElement>('.type');
           const value = dataSet.querySelector<HTMLElement>('.value');
-          if (
-            label &&
-            value &&
-            ((label.textContent || '').includes('Average Score') || (label.textContent || '').includes('Mean Score'))
-          ) {
+          if (label && value && (label.textContent || '').includes('Weighted Score')) {
             processScoreElement(value, tiers, colorScore, true, false);
           }
         });
