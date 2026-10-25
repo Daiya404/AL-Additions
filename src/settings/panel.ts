@@ -1,9 +1,8 @@
 import { Settings, TYPES, ROWS, features } from './settings';
 import { creditsHtml } from './credits';
 import { addStyle, findExactText, icon } from '../utils/dom';
-import { debounce, store, esc, tryOr } from '../utils/helpers';
+import { debounce, store, esc } from '../utils/helpers';
 import { malConnect, clearMalAuth } from '../api/mal';
-import { AniList } from '../api/anilist';
 import { Core } from '../core/observer';
 import { STANDALONE, STANDALONE_IDS_LIST, detectStandalone, type StandaloneId } from '../utils/standalone';
 import { maybeAutoSync } from '../modules/sync/engine';
@@ -173,23 +172,12 @@ const featureHtml = (f: RegisteredFeature): string => {
 };
 
 function accountsHtml(): string {
-  const alLoggedIn = AniList.hasAuth();
-  const alUser = store.get<string | null>('al_username', null);
   const malConnected = !!store.get('mal_token', null);
-
-  const alStatus = alLoggedIn ? (alUser ? `Logged in as <b>${esc(alUser)}</b>` : 'Active browser session') : 'Not logged in to AniList';
   const malStatus = malConnected ? 'Connected' : 'Not connected';
 
   return `<h3 class="ala-section-title">Connected Accounts</h3>
   <div class="ala-section">
     <div class="ala-row ala-account-row">
-      <span class="ala-text">
-        <span class="ala-title">AniList</span>
-        <span class="ala-help" id="ala-status-al">${alStatus}</span>
-      </span>
-      ${alLoggedIn ? `<span class="ala-help" style="font-weight:600;color:rgb(var(--color-green))">${icon('check', 12)} Active</span>` : `<a class="ala-btn ala-btn--primary" href="/login" target="_blank" style="text-decoration:none;">Log in</a>`}
-    </div>
-    <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
       <span class="ala-text">
         <span class="ala-title">MyAnimeList</span>
         <span class="ala-help" id="ala-status-mal">${malStatus}</span>
@@ -221,7 +209,7 @@ function backupRestoreHtml(): string {
           <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
             <span class="ala-text">
               <span class="ala-title">Export with Credentials</span>
-              <span class="ala-help">Include AniList and MyAnimeList tokens. A password is required.</span>
+              <span class="ala-help">Include MyAnimeList tokens. A password is required.</span>
             </span>
             <button type="button" class="ala-btn ala-btn--danger" id="ala-btn-export-secrets">Export with Secrets</button>
           </div>
@@ -666,27 +654,16 @@ export function showPanel(): void {
   document.addEventListener('keydown', backdrop._onKey);
 
   const updateAccountUI = () => {
-    const alStatus = panel.querySelector<HTMLElement>('#ala-status-al');
     const malBtn = panel.querySelector<HTMLButtonElement>('#ala-btn-mal');
     const malStatus = panel.querySelector<HTMLElement>('#ala-status-mal');
-
-    const alLoggedIn = AniList.hasAuth();
-    const alUser = store.get<string | null>('al_username', null);
     const malConnected = !!store.get('mal_token', null);
 
-    if (alStatus) {
-      alStatus.innerHTML = alLoggedIn ? (alUser ? `Logged in as <b>${esc(alUser)}</b>` : 'Active browser session') : 'Not logged in to AniList';
-    }
     if (malBtn && malStatus) {
       malBtn.textContent = malConnected ? 'Disconnect' : 'Connect to MAL';
       malBtn.className = `ala-btn ${malConnected ? 'ala-btn--danger' : 'ala-btn--primary'}`;
       malStatus.textContent = malConnected ? 'Connected' : 'Not connected';
     }
   };
-
-  if (AniList.hasAuth() && !store.get('al_username', null)) {
-    tryOr(() => AniList.viewer()).then(() => updateAccountUI());
-  }
 
   panel.querySelector('#ala-btn-mal')?.addEventListener('click', () => {
     const malConnected = !!store.get('mal_token', null);
@@ -739,8 +716,8 @@ export function showPanel(): void {
 
   panel.querySelector('#ala-btn-export-secrets')?.addEventListener('click', async () => {
     const confirmed = confirm(
-      '⚠️ Warning: This export includes your AniList and MyAnimeList authentication credentials.\n\n' +
-      'Anyone with access to this file will have full access to your connected accounts.\n\n' +
+      '⚠️ Warning: This export includes your MyAnimeList authentication credentials.\n\n' +
+      'Anyone with access to this file will have full access to your connected MyAnimeList account.\n\n' +
       'Do you want to continue?'
     );
     if (!confirmed) return;
