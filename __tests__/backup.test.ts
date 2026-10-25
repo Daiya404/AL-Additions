@@ -3,6 +3,7 @@ import '../src/modules/tagFilter';
 import '../src/modules/sync';
 import {
   createBackup,
+  createRawBackup,
   importBackup,
   MAGIC_PLAIN,
   MAGIC_ENCRYPTED,
@@ -139,5 +140,39 @@ describe('Settings Backup & Crypto Engine', () => {
     const result = await importBackup(legacyJson);
     expect(result.applied).toBeGreaterThan(0);
     expect(store.get('al_token', null)).toBeNull();
+  });
+
+  it('exports unminified raw JSON with all settings and credentials without requiring a password', async () => {
+    Settings.set('tagPercentage', 88);
+    store.set('mal_token', 'dev_raw_mal_token');
+    store.set('al_username', 'DevUser');
+
+    const rawJson = createRawBackup({ tagPercentage: 88 });
+
+    // Verify it is formatted / unminified JSON with indentation and newlines
+    expect(rawJson).toContain('\n');
+    expect(rawJson).toContain('  "version": 1');
+    expect(rawJson).toContain('"tagPercentage": 88');
+    expect(rawJson).toContain('"mal_token": "dev_raw_mal_token"');
+    expect(rawJson).toContain('"al_username": "DevUser"');
+
+    // Parse verify
+    const parsed = JSON.parse(rawJson);
+    expect(parsed.version).toBe(1);
+    expect(parsed.data.tagPercentage).toBe(88);
+    expect(parsed.data.mal_token).toBe('dev_raw_mal_token');
+    expect(parsed.data.al_username).toBe('DevUser');
+
+    // Verify importBackup can restore it directly without password
+    Settings.set('tagPercentage', 10);
+    store.del('mal_token');
+    store.del('al_username');
+
+    const result = await importBackup(rawJson);
+    expect(result.applied).toBeGreaterThan(0);
+    expect(result.secretsApplied).toBeGreaterThan(0);
+    expect(Settings.get('tagPercentage')).toBe(88);
+    expect(store.get('mal_token', null)).toBe('dev_raw_mal_token');
+    expect(store.get('al_username', null)).toBe('DevUser');
   });
 });

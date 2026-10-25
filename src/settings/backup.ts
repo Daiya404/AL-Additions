@@ -215,6 +215,31 @@ export async function createBackup(
   }
 }
 
+export function createRawBackup(overrides?: Record<string, any>): string {
+  const data: Record<string, any> = {};
+
+  for (const r of Object.values(ROWS)) {
+    const rawVal = overrides && r.key in overrides ? overrides[r.key] : store.get(PREFIX + r.key, r.def);
+    data[r.key] = rawVal;
+  }
+
+  for (const key of SENSITIVE_KEYS) {
+    const val = store.get(key, undefined);
+    if (val !== undefined && val !== null) {
+      data[key] = val;
+    }
+  }
+
+  const exportedAt = Date.now();
+  const plainPayload = {
+    version: BACKUP_VERSION,
+    exportedAt,
+    data
+  };
+
+  return JSON.stringify(plainPayload, null, 2);
+}
+
 export function downloadBackupFile(bytes: Uint8Array, filename = BACKUP_FILENAME): void {
   const blob = new Blob([bytes as unknown as BufferSource], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);

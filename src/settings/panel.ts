@@ -7,7 +7,7 @@ import { AniList } from '../api/anilist';
 import { Core } from '../core/observer';
 import { STANDALONE, STANDALONE_IDS_LIST, detectStandalone, type StandaloneId } from '../utils/standalone';
 import { maybeAutoSync } from '../modules/sync/engine';
-import { createBackup, downloadBackupFile, importBackup, readFileAsBytes } from './backup';
+import { createBackup, createRawBackup, downloadBackupFile, importBackup, readFileAsBytes } from './backup';
 import { promptPasswordModal } from './passwordModal';
 import type { SettingRow, RegisteredFeature } from '../types';
 import { DEFAULT_TIERS, validateTiers, normalizeHexColor, type TierConfig } from '../utils/tiers';
@@ -202,6 +202,7 @@ function accountsHtml(): string {
 }
 
 function backupRestoreHtml(): string {
+  const isDev = !!Settings.get('devModeEnabled');
   return `<details class="ala-section-dropdown" data-section="backup" open>
     <summary class="ala-section-summary">
       <span class="ala-section-title">Backup &amp; Restore</span>
@@ -223,6 +224,13 @@ function backupRestoreHtml(): string {
               <span class="ala-help">Include AniList and MyAnimeList tokens. A password is required.</span>
             </span>
             <button type="button" class="ala-btn ala-btn--danger" id="ala-btn-export-secrets">Export with Secrets</button>
+          </div>
+          <div class="ala-row ala-account-row" id="ala-row-export-raw" style="border-top:1px solid rgba(var(--color-text-lighter),.12);${isDev ? '' : 'display:none;'}">
+            <span class="ala-text">
+              <span class="ala-title">Export Raw JSON</span>
+              <span class="ala-help">Export unminified raw JSON including all settings and credentials without encryption (for testing/verification).</span>
+            </span>
+            <button type="button" class="ala-btn ala-btn--danger" id="ala-btn-export-raw">Export Raw JSON</button>
           </div>
           <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
             <span class="ala-text">
@@ -603,12 +611,22 @@ export function showPanel(): void {
     });
   };
 
+  const devRow = panel.querySelector<HTMLElement>('#ala-row-export-raw');
+  const syncDevBackupVisibility = () => {
+    if (!devRow) return;
+    const devToggle = panel.querySelector<HTMLInputElement>('input[data-key="devModeEnabled"]');
+    const isDevOn = devToggle ? devToggle.checked : !!Settings.get('devModeEnabled');
+    devRow.style.display = isDevOn ? '' : 'none';
+  };
+
   panel.querySelectorAll<HTMLElement>('.ala-feature').forEach(syncFeature);
+  syncDevBackupVisibility();
   initDropdownAnimations(panel);
   panel.addEventListener('change', (e) => {
     const target = e.target as HTMLElement | null;
     const card = target?.closest<HTMLElement>('.ala-feature');
     if (card) syncFeature(card);
+    syncDevBackupVisibility();
   });
 
   panel.querySelector('.ala-save')?.addEventListener('click', () => {
@@ -634,6 +652,7 @@ export function showPanel(): void {
       }
     });
     panel.querySelectorAll<HTMLElement>('.ala-feature').forEach(syncFeature);
+    syncDevBackupVisibility();
     setStatus('Defaults restored. Press Save to apply them.');
   });
 
@@ -744,6 +763,18 @@ export function showPanel(): void {
       const envelope = await createBackup(true, pwd, getPanelOverrides());
       downloadBackupFile(envelope);
       setStatus('Settings and credentials exported successfully.');
+    } catch (e: any) {
+      setStatus('Export failed: ' + (e.message || e), true);
+    }
+  });
+
+  panel.querySelector('#ala-btn-export-raw')?.addEventListener('click', () => {
+    try {
+      setStatus('Generating raw backup…');
+      const rawJson = createRawBackup(getPanelOverrides());
+      const bytes = new TextEncoder().encode(rawJson);
+      downloadBackupFile(bytes);
+      setStatus('Raw JSON settings exported successfully.');
     } catch (e: any) {
       setStatus('Export failed: ' + (e.message || e), true);
     }
