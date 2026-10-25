@@ -424,6 +424,7 @@
 	}
 	function migrate() {
 		safe(() => {
+			store$1.del("al_token");
 			for (const r of Object.values(ROWS)) {
 				if (store$1.get("ala_setting_" + r.key, void 0) !== void 0) continue;
 				for (const name of r.legacy) {
@@ -663,408 +664,6 @@
 		}
 		return best && bestScore >= min ? best : null;
 	}
-	var KNOWN_LIST_FIELDS = [
-		"mediaId",
-		"id",
-		"score",
-		"status",
-		"progress",
-		"progressVolumes",
-		"notes",
-		"startedAt",
-		"completedAt",
-		"repeat",
-		"priority",
-		"private",
-		"hiddenFromStatusLists",
-		"customLists",
-		"advancedScores",
-		"updatedAt",
-		"media",
-		"title",
-		"coverImage",
-		"format",
-		"episodes",
-		"volumes",
-		"chapters",
-		"averageScore",
-		"popularity",
-		"genres",
-		"tags",
-		"bannerImage"
-	];
-	var KNOWN_MEDIA_FIELDS = [
-		"id",
-		"idMal",
-		"type",
-		"title",
-		"format",
-		"episodes",
-		"chapters",
-		"status",
-		"mediaListEntry",
-		"season",
-		"seasonYear",
-		"nextAiringEpisode",
-		"synonyms",
-		"isAdult",
-		"genres",
-		"tags",
-		"bannerImage",
-		"coverImage",
-		"description"
-	];
-	function parseEntityMeta(query, vars) {
-		const clean = query.replace(/#[^\n\r]*/g, " ").replace(/\s+/g, " ");
-		if (/\bMediaListCollection\b/i.test(clean)) {
-			const type = (vars.type || "ANIME").toUpperCase();
-			const who = vars.userId || (vars.userName ? String(vars.userName).toLowerCase() : "me");
-			const chunkPart = vars.chunk != null ? `:${vars.chunk}` : "";
-			const isSuperset = (clean.match(/[{,]\s*([a-zA-Z0-9_]+)/g) || []).length > 12;
-			const requiredFields = new Set();
-			for (const f of KNOWN_LIST_FIELDS) if (new RegExp(`\\b${f}\\b`).test(clean)) requiredFields.add(f);
-			return {
-				entityKey: `MediaListCollection:${type}:${who}${chunkPart}`,
-				isSuperset,
-				requiredFields
-			};
-		}
-		const mediaMatch = clean.match(/\bMedia\s*\(\s*id\s*:\s*\$([a-zA-Z0-9_]+)/i);
-		if (mediaMatch && vars[mediaMatch[1]]) {
-			const id = vars[mediaMatch[1]];
-			const fieldCount = (clean.match(/[{,]\s*([a-zA-Z0-9_]+)/g) || []).length;
-			const requiredFields = new Set();
-			for (const f of KNOWN_MEDIA_FIELDS) if (new RegExp(`\\b${f}\\b`).test(clean)) requiredFields.add(f);
-			return {
-				entityKey: `Media:${id}`,
-				isSuperset: fieldCount > 10,
-				requiredFields
-			};
-		}
-		if (/\bViewer\b/i.test(clean)) return {
-			entityKey: "Viewer",
-			isSuperset: clean.includes("mediaListOptions"),
-			requiredFields: new Set(["id", "name"])
-		};
-		return null;
-	}
-	function isSubsetOf(subset, superset) {
-		for (const item of subset) if (!superset.has(item)) return false;
-		return true;
-	}
-	var AniList = (() => {
-		const limiter = new RateLimiter({
-			rate: 25,
-			max: 90,
-			burst: 1,
-			persistKey: "ala_anilist_api_resume_at"
-		});
-		const entityCache = new Map();
-		const inflightExact = new Map();
-		const inflightEntities = new Map();
-		const ENTITY_TTL = 18e4;
-		function getCsrfToken() {
-			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
-			if (typeof win.al_token === "string" && win.al_token) return win.al_token;
-			try {
-				const meta = win.document?.querySelector("meta[name=\"csrf-token\"]");
-				if (meta?.content) return meta.content;
-			} catch (_) {}
-			try {
-				const scripts = win.document?.querySelectorAll("head script") || [];
-				for (const s of scripts) {
-					const m = s.textContent?.match(/window\.al_token\s*=\s*['"]([^'"]+)['"]/);
-					if (m && m[1]) return m[1];
-				}
-			} catch (_) {}
-			return null;
-		}
-		function isBrowserLoggedIn() {
-			if (store$1.get("al_token", null)) return true;
-			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
-			if ((win.__NUXT__?.state?.auth?.user || win.__NUXT__?.state?.user)?.id) return true;
-			const doc = win.document || document;
-			if (doc?.querySelector?.("nav a[href^=\"/user/\"], .nav-wrap a[href^=\"/user/\"], .user-wrap .avatar")) return true;
-			if (doc?.querySelector?.("nav a[href=\"/login\"], .nav a[href=\"/login\"]")) return false;
-			return Boolean(Number(store$1.get("al_user_id", 0)) > 0 && store$1.get("al_username", null));
-		}
-		const header = (res, name) => {
-			try {
-				return res?.headers?.get?.(name) ?? null;
-			} catch (_) {
-				return null;
-			}
-		};
-		function resetDelay(res) {
-			const retry = Number(header(res, "Retry-After"));
-			if (retry > 0) return Math.min(retry * 1e3, 12e4);
-			const reset = Number(header(res, "X-RateLimit-Reset"));
-			if (reset > 0) return Math.min((reset > 0xe8d4a51000 ? reset : reset * 1e3) - Date.now(), 12e4);
-			return 0;
-		}
-		function handle(res) {
-			const advertised = Number(header(res, "X-RateLimit-Limit"));
-			if (advertised > 0) limiter.setRate(Math.floor(advertised * .85));
-			if (res?.status === 429) return limiter.limit(resetDelay(res) || 6e4);
-			const remaining = header(res, "X-RateLimit-Remaining");
-			if (remaining != null && Number(remaining) <= 1) limiter.limit(resetDelay(res));
-		}
-		async function executeNetworkRequest(q, variables, retries, forceFresh = false) {
-			const oauthToken = store$1.get("al_token", null);
-			const csrfToken = getCsrfToken();
-			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
-			const fetchFn = (typeof win.fetch === "function" ? win.fetch : fetch).bind(win);
-			const backoff = () => sleep(1500 * (4 - retries));
-			const isInternal = !oauthToken && Boolean(csrfToken) && isBrowserLoggedIn();
-			const endpoint = isInternal ? `${win.location.origin || "https://anilist.co"}/graphql` : "https://graphql.anilist.co";
-			const headers = {
-				"Content-Type": "application/json",
-				Accept: "application/json",
-				...forceFresh ? { "Cache-Control": "no-cache" } : {}
-			};
-			if (oauthToken) headers.Authorization = `Bearer ${oauthToken}`;
-			else if (isInternal && csrfToken) headers["X-CSRF-TOKEN"] = csrfToken;
-			let res;
-			try {
-				await limiter.acquire();
-				res = await fetchFn(endpoint, {
-					method: "POST",
-					headers,
-					cache: forceFresh ? "no-store" : void 0,
-					credentials: isInternal ? "include" : "same-origin",
-					body: JSON.stringify({
-						query: q,
-						variables
-					})
-				});
-			} catch (e) {
-				if (retries > 0) {
-					await backoff();
-					return executeNetworkRequest(q, variables, retries - 1, forceFresh);
-				}
-				throw new Error(`AniList network error: ${e?.message || e}`);
-			}
-			handle(res);
-			if (!res) throw new Error("AniList network error: empty response");
-			if ((res.status === 429 || res.status >= 500) && retries > 0) {
-				if (res.status >= 500) await backoff();
-				return executeNetworkRequest(q, variables, retries - 1, forceFresh);
-			}
-			let json = null;
-			try {
-				json = await res.json();
-			} catch (_) {}
-			const message = json?.errors?.length ? json.errors.map((e) => e.message).join("; ") : "";
-			if (res.status === 401 || oauthToken && /invalid token|unauthenticated|unauthorized/i.test(message)) throw authError("AniList", "AniList session unauthenticated — please log in or reconnect AniList.");
-			if (message) throw new Error(message);
-			if (!res.ok || !json) throw new Error(`AniList API HTTP ${res.status}`);
-			return json.data;
-		}
-		async function query(q, variables = {}, optionsOrRetries) {
-			const opts = typeof optionsOrRetries === "number" ? { retries: optionsOrRetries } : optionsOrRetries || {};
-			const retries = opts.retries ?? 3;
-			if (/\bmutation\b/i.test(q)) {
-				invalidate();
-				return executeNetworkRequest(q, variables, retries);
-			}
-			const meta = parseEntityMeta(q, variables);
-			const now = Date.now();
-			const exactKey = `${q}\u0001${JSON.stringify(variables)}`;
-			if (!opts.forceFresh && meta) {
-				const cached = entityCache.get(meta.entityKey);
-				if (cached && now - cached.time < ENTITY_TTL && isSubsetOf(meta.requiredFields, cached.fields)) {
-					logDebug("[ANILIST API] 🎯 Cache HIT via Subset matching:", meta.entityKey);
-					return cached.data;
-				}
-			}
-			if (meta && !opts.forceFresh) {
-				const flyingEntity = inflightEntities.get(meta.entityKey);
-				if (flyingEntity && isSubsetOf(meta.requiredFields, flyingEntity.fields)) {
-					logDebug("[ANILIST API] 🔗 Attached to in-flight Superset request:", meta.entityKey);
-					return flyingEntity.promise;
-				}
-			}
-			const flyingExact = inflightExact.get(exactKey);
-			if (flyingExact && !opts.forceFresh) return flyingExact;
-			const networkPromise = executeNetworkRequest(q, variables, retries, opts.forceFresh).then((data) => {
-				if (meta && data) entityCache.set(meta.entityKey, {
-					time: Date.now(),
-					data,
-					isSuperset: meta.isSuperset,
-					fields: meta.requiredFields
-				});
-				return data;
-			}).finally(() => {
-				inflightExact.delete(exactKey);
-				if (meta && inflightEntities.get(meta.entityKey)?.promise === networkPromise) inflightEntities.delete(meta.entityKey);
-			});
-			inflightExact.set(exactKey, networkPromise);
-			if (meta) {
-				const existing = inflightEntities.get(meta.entityKey);
-				if (!existing || !existing.isSuperset && meta.isSuperset) inflightEntities.set(meta.entityKey, {
-					promise: networkPromise,
-					isSuperset: meta.isSuperset,
-					fields: meta.requiredFields
-				});
-			}
-			return networkPromise;
-		}
-		async function getMediaList(target, type = "ANIME", options) {
-			const isId = typeof target === "number" || /^\d+$/.test(String(target));
-			const userId = options?.userId || (isId ? Number(target) : void 0);
-			const userName = options?.userName || (!isId ? String(target).trim() : void 0);
-			const mlc = (await query(`query ($userId: Int, $userName: String, $type: MediaType) {
-      MediaListCollection(userId: $userId, userName: $userName, type: $type) {
-        user { id name }
-        lists {
-          name
-          isCustomList
-          status
-          entries {
-            id
-            mediaId
-            status
-            score
-            progress
-            progressVolumes
-            repeat
-            priority
-            notes
-            customLists
-            startedAt { year month day }
-            completedAt { year month day }
-            media {
-              id
-              idMal
-              format
-              episodes
-              chapters
-              status
-              title { userPreferred english romaji native }
-            }
-          }
-        }
-      }
-    }`, {
-				userId: userId || void 0,
-				userName: userId ? void 0 : userName || void 0,
-				type
-			}, { forceFresh: options?.forceFresh }))?.MediaListCollection;
-			if (!mlc || !Array.isArray(mlc.lists)) throw new Error("Unexpected MediaListCollection response shape");
-			const mergedCollection = {
-				user: mlc.user,
-				lists: mlc.lists || []
-			};
-			const seenEntryIds = new Set();
-			const allEntries = [];
-			for (const list of mergedCollection.lists) for (const entry of list.entries || []) if (!seenEntryIds.has(entry.id)) {
-				seenEntryIds.add(entry.id);
-				allEntries.push(entry);
-			}
-			return {
-				collection: mergedCollection,
-				lists: mergedCollection.lists,
-				allEntries,
-				user: mergedCollection.user
-			};
-		}
-		async function viewer() {
-			const name = store$1.get("al_username", null);
-			const fmt = store$1.get("al_score_format", null);
-			const id = Number(store$1.get("al_user_id", 0));
-			if (name && fmt && id) return {
-				id,
-				name,
-				scoreFormat: fmt
-			};
-			if (!hasAuth()) return null;
-			const d = await query("query { Viewer { id name mediaListOptions { scoreFormat } } }", {}).catch(() => null);
-			if (d?.Viewer) {
-				store$1.set("al_user_id", d.Viewer.id);
-				store$1.set("al_username", d.Viewer.name);
-				store$1.set("al_score_format", d.Viewer.mediaListOptions.scoreFormat);
-				return {
-					id: d.Viewer.id,
-					name: d.Viewer.name,
-					scoreFormat: d.Viewer.mediaListOptions.scoreFormat
-				};
-			}
-			return null;
-		}
-		const clearViewer = () => {
-			store$1.del("al_username");
-			store$1.del("al_user_id");
-			store$1.del("al_score_format");
-		};
-		const invalidate = (entityKeyPrefix) => {
-			if (!entityKeyPrefix) {
-				entityCache.clear();
-				inflightEntities.clear();
-			} else {
-				for (const k of entityCache.keys()) if (k.startsWith(entityKeyPrefix)) entityCache.delete(k);
-				for (const k of inflightEntities.keys()) if (k.startsWith(entityKeyPrefix)) inflightEntities.delete(k);
-			}
-			(typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window).__ALFL_CLEAR__?.();
-		};
-		const invalidateMediaList = (target, type) => {
-			if (!target) return invalidate("MediaListCollection");
-			const t = type ? type.toUpperCase() : "";
-			const prefix = t ? `MediaListCollection:${t}:${String(target).toLowerCase()}` : `MediaListCollection:`;
-			invalidate(prefix);
-		};
-		const hasAuth = () => Boolean(store$1.get("al_token", null) || getCsrfToken() && isBrowserLoggedIn());
-		const resumeAt = () => limiter.resumeAt;
-		return {
-			query,
-			getMediaList,
-			viewer,
-			clearViewer,
-			invalidate,
-			invalidateMediaList,
-			hasAuth,
-			hasOwnAuth: () => Boolean(store$1.get("al_token", null)),
-			resumeAt
-		};
-	})();
-	var MediaData = (() => {
-		async function get(id, type, opts) {
-			try {
-				return (await AniList.query(`query($id:Int,$type:MediaType){ Media(id:$id,type:$type){
-          id idMal format title { userPreferred english romaji native }
-          episodes chapters status season seasonYear nextAiringEpisode { episode }
-          mediaListEntry { score progress status completedAt { year month day } }
-        } }`, {
-					id: Number(id),
-					type
-				}))?.Media || null;
-			} catch (e) {
-				if (opts?.throwAuth && e?.auth) throw e;
-				logDebug("[MEDIA DATA] fetch failed:", e?.message || e);
-				return null;
-			}
-		}
-		async function save(id, _type, c) {
-			const entry = (await AniList.query(`mutation($mediaId:Int!,$score:Float,$progress:Int,$status:MediaListStatus,$completedAt:FuzzyDateInput){
-        SaveMediaListEntry(mediaId:$mediaId,score:$score,progress:$progress,status:$status,completedAt:$completedAt){
-          score progress status completedAt { year month day }
-        } }`, {
-				mediaId: Number(id),
-				score: c.score,
-				progress: c.progress,
-				status: c.status,
-				completedAt: c.completedAt
-			}))?.SaveMediaListEntry || null;
-			AniList.invalidate(`Media:${id}`);
-			AniList.invalidateMediaList();
-			return entry;
-		}
-		return {
-			get,
-			save
-		};
-	})();
-	var AL_AUTH_URL = "https://anilist.co/api/v2/oauth/authorize";
-	var AL_CLIENT_ID = "50247";
 	var MAL_AUTH_URL = "https://myanimelist.net/v1/oauth2/authorize";
 	var MAL_TOKEN_URL = "https://myanimelist.net/v1/oauth2/token";
 	var MAL_API = "https://api.myanimelist.net/v2";
@@ -1115,10 +714,6 @@
 			"mal_refresh_token",
 			"mal_expires_at"
 		].forEach((k) => store$1.del(k));
-	};
-	var clearAniListAuth = () => {
-		store$1.del("al_token");
-		AniList.clearViewer();
 	};
 	async function malTokenRequest(params) {
 		const body = new URLSearchParams({
@@ -1175,35 +770,14 @@
 		});
 		return malRefresh;
 	}
-	function alConnect() {
-		openTab(`${AL_AUTH_URL}?client_id=${encodeURIComponent(AL_CLIENT_ID)}&response_type=token`);
-		log("Opened AniList authorization in a new tab. Finish connecting there, then return to your list.");
-	}
 	function malConnect() {
 		const verifier = randomString(96);
 		store$1.set("mal_code_verifier", verifier);
 		openTab(`${MAL_AUTH_URL}?response_type=code&client_id=${encodeURIComponent(MAL_CLIENT_ID)}&code_challenge=${encodeURIComponent(verifier)}&code_challenge_method=plain&redirect_uri=${encodeURIComponent(MAL_REDIRECT)}`);
 		log("Opened MAL authorization in a new tab. Finish connecting there, then return to your list.");
 	}
-	function saveAniListToken(token) {
-		store$1.set("al_token", token);
-		AniList.clearViewer();
-	}
 	function captureCredentials() {
-		const HOST = location.hostname;
-		if (HOST === "anilist.co" && location.hash) {
-			const params = new URLSearchParams(location.hash.substring(1));
-			const token = params.get("access_token");
-			const err = params.get("error");
-			if (token || err) {
-				history.replaceState(null, "", location.pathname + location.search);
-				if (token) {
-					saveAniListToken(token);
-					toast("AniList connected! You can close this tab.", false, true);
-				} else toast(`AniList auth failed: ${err}. Check the app's redirect URL matches https://anilist.co/ exactly.`, true);
-			}
-		}
-		if (HOST === "myanimelist.net") {
+		if (location.hostname === "myanimelist.net") {
 			const code = new URLSearchParams(location.search).get("code");
 			if (!code || !store$1.get("mal_code_verifier")) return;
 			exchangeMalCode(code).then(() => {
@@ -1423,6 +997,404 @@
 		}
 		return 0;
 	}
+	var KNOWN_LIST_FIELDS = [
+		"mediaId",
+		"id",
+		"score",
+		"status",
+		"progress",
+		"progressVolumes",
+		"notes",
+		"startedAt",
+		"completedAt",
+		"repeat",
+		"priority",
+		"private",
+		"hiddenFromStatusLists",
+		"customLists",
+		"advancedScores",
+		"updatedAt",
+		"media",
+		"title",
+		"coverImage",
+		"format",
+		"episodes",
+		"volumes",
+		"chapters",
+		"averageScore",
+		"popularity",
+		"genres",
+		"tags",
+		"bannerImage"
+	];
+	var KNOWN_MEDIA_FIELDS = [
+		"id",
+		"idMal",
+		"type",
+		"title",
+		"format",
+		"episodes",
+		"chapters",
+		"status",
+		"mediaListEntry",
+		"season",
+		"seasonYear",
+		"nextAiringEpisode",
+		"synonyms",
+		"isAdult",
+		"genres",
+		"tags",
+		"bannerImage",
+		"coverImage",
+		"description"
+	];
+	function parseEntityMeta(query, vars) {
+		const clean = query.replace(/#[^\n\r]*/g, " ").replace(/\s+/g, " ");
+		if (/\bMediaListCollection\b/i.test(clean)) {
+			const type = (vars.type || "ANIME").toUpperCase();
+			const who = vars.userId || (vars.userName ? String(vars.userName).toLowerCase() : "me");
+			const chunkPart = vars.chunk != null ? `:${vars.chunk}` : "";
+			const isSuperset = (clean.match(/[{,]\s*([a-zA-Z0-9_]+)/g) || []).length > 12;
+			const requiredFields = new Set();
+			for (const f of KNOWN_LIST_FIELDS) if (new RegExp(`\\b${f}\\b`).test(clean)) requiredFields.add(f);
+			return {
+				entityKey: `MediaListCollection:${type}:${who}${chunkPart}`,
+				isSuperset,
+				requiredFields
+			};
+		}
+		const mediaMatch = clean.match(/\bMedia\s*\(\s*id\s*:\s*\$([a-zA-Z0-9_]+)/i);
+		if (mediaMatch && vars[mediaMatch[1]]) {
+			const id = vars[mediaMatch[1]];
+			const fieldCount = (clean.match(/[{,]\s*([a-zA-Z0-9_]+)/g) || []).length;
+			const requiredFields = new Set();
+			for (const f of KNOWN_MEDIA_FIELDS) if (new RegExp(`\\b${f}\\b`).test(clean)) requiredFields.add(f);
+			return {
+				entityKey: `Media:${id}`,
+				isSuperset: fieldCount > 10,
+				requiredFields
+			};
+		}
+		if (/\bViewer\b/i.test(clean)) return {
+			entityKey: "Viewer",
+			isSuperset: clean.includes("mediaListOptions"),
+			requiredFields: new Set(["id", "name"])
+		};
+		return null;
+	}
+	function isSubsetOf(subset, superset) {
+		for (const item of subset) if (!superset.has(item)) return false;
+		return true;
+	}
+	var AniList = (() => {
+		const limiter = new RateLimiter({
+			rate: 25,
+			max: 90,
+			burst: 1,
+			persistKey: "ala_anilist_api_resume_at"
+		});
+		const entityCache = new Map();
+		const inflightExact = new Map();
+		const inflightEntities = new Map();
+		const ENTITY_TTL = 18e4;
+		function getCsrfToken() {
+			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+			if (typeof win.al_token === "string" && win.al_token) return win.al_token;
+			try {
+				const meta = win.document?.querySelector("meta[name=\"csrf-token\"]");
+				if (meta?.content) return meta.content;
+			} catch (_) {}
+			try {
+				const scripts = win.document?.querySelectorAll("head script") || [];
+				for (const s of scripts) {
+					const m = s.textContent?.match(/window\.al_token\s*=\s*['"]([^'"]+)['"]/);
+					if (m && m[1]) return m[1];
+				}
+			} catch (_) {}
+			return null;
+		}
+		function isBrowserLoggedIn() {
+			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+			if ((win.__NUXT__?.state?.auth?.user || win.__NUXT__?.state?.user)?.id) return true;
+			const doc = win.document || document;
+			if (doc?.querySelector?.("nav a[href^=\"/user/\"], .nav-wrap a[href^=\"/user/\"], .user-wrap .avatar")) return true;
+			if (doc?.querySelector?.("nav a[href=\"/login\"], .nav a[href=\"/login\"]")) return false;
+			return Boolean(Number(store$1.get("al_user_id", 0)) > 0 && store$1.get("al_username", null));
+		}
+		const header = (res, name) => {
+			try {
+				return res?.headers?.get?.(name) ?? null;
+			} catch (_) {
+				return null;
+			}
+		};
+		function resetDelay(res) {
+			const retry = Number(header(res, "Retry-After"));
+			if (retry > 0) return Math.min(retry * 1e3, 12e4);
+			const reset = Number(header(res, "X-RateLimit-Reset"));
+			if (reset > 0) return Math.min((reset > 0xe8d4a51000 ? reset : reset * 1e3) - Date.now(), 12e4);
+			return 0;
+		}
+		function handle(res) {
+			const advertised = Number(header(res, "X-RateLimit-Limit"));
+			if (advertised > 0) limiter.setRate(Math.floor(advertised * .85));
+			if (res?.status === 429) return limiter.limit(resetDelay(res) || 6e4);
+			const remaining = header(res, "X-RateLimit-Remaining");
+			if (remaining != null && Number(remaining) <= 1) limiter.limit(resetDelay(res));
+		}
+		async function executeNetworkRequest(q, variables, retries, forceFresh = false) {
+			const csrfToken = getCsrfToken();
+			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+			const fetchFn = (typeof win.fetch === "function" ? win.fetch : fetch).bind(win);
+			const backoff = () => sleep(1500 * (4 - retries));
+			const endpoint = `${win.location?.origin || "https://anilist.co"}/graphql`;
+			const headers = {
+				"Content-Type": "application/json",
+				Accept: "application/json",
+				...forceFresh ? { "Cache-Control": "no-cache" } : {}
+			};
+			if (csrfToken) headers["X-CSRF-TOKEN"] = csrfToken;
+			let res;
+			try {
+				await limiter.acquire();
+				res = await fetchFn(endpoint, {
+					method: "POST",
+					headers,
+					cache: forceFresh ? "no-store" : void 0,
+					credentials: "include",
+					body: JSON.stringify({
+						query: q,
+						variables
+					})
+				});
+			} catch (e) {
+				if (retries > 0) {
+					await backoff();
+					return executeNetworkRequest(q, variables, retries - 1, forceFresh);
+				}
+				throw new Error(`AniList network error: ${e?.message || e}`);
+			}
+			handle(res);
+			if (!res) throw new Error("AniList network error: empty response");
+			if ((res.status === 429 || res.status >= 500) && retries > 0) {
+				if (res.status >= 500) await backoff();
+				return executeNetworkRequest(q, variables, retries - 1, forceFresh);
+			}
+			let json = null;
+			try {
+				json = await res.json();
+			} catch (_) {}
+			const message = json?.errors?.length ? json.errors.map((e) => e.message).join("; ") : "";
+			if (res.status === 401 || /invalid token|unauthenticated|unauthorized/i.test(message)) {
+				clearViewer();
+				throw authError("AniList", "AniList session unauthenticated — please log in to AniList.");
+			}
+			if (message) throw new Error(message);
+			if (!res.ok || !json) throw new Error(`AniList API HTTP ${res.status}`);
+			return json.data;
+		}
+		async function query(q, variables = {}, optionsOrRetries) {
+			const opts = typeof optionsOrRetries === "number" ? { retries: optionsOrRetries } : optionsOrRetries || {};
+			const retries = opts.retries ?? 3;
+			if (/\bmutation\b/i.test(q)) {
+				invalidate();
+				return executeNetworkRequest(q, variables, retries);
+			}
+			const meta = parseEntityMeta(q, variables);
+			const now = Date.now();
+			const exactKey = `${q}\u0001${JSON.stringify(variables)}`;
+			if (!opts.forceFresh && meta) {
+				const cached = entityCache.get(meta.entityKey);
+				if (cached && now - cached.time < ENTITY_TTL && isSubsetOf(meta.requiredFields, cached.fields)) {
+					logDebug("[ANILIST API] 🎯 Cache HIT via Subset matching:", meta.entityKey);
+					return cached.data;
+				}
+			}
+			if (meta && !opts.forceFresh) {
+				const flyingEntity = inflightEntities.get(meta.entityKey);
+				if (flyingEntity && isSubsetOf(meta.requiredFields, flyingEntity.fields)) {
+					logDebug("[ANILIST API] 🔗 Attached to in-flight Superset request:", meta.entityKey);
+					return flyingEntity.promise;
+				}
+			}
+			const flyingExact = inflightExact.get(exactKey);
+			if (flyingExact && !opts.forceFresh) return flyingExact;
+			const networkPromise = executeNetworkRequest(q, variables, retries, opts.forceFresh).then((data) => {
+				if (meta && data) entityCache.set(meta.entityKey, {
+					time: Date.now(),
+					data,
+					isSuperset: meta.isSuperset,
+					fields: meta.requiredFields
+				});
+				return data;
+			}).finally(() => {
+				inflightExact.delete(exactKey);
+				if (meta && inflightEntities.get(meta.entityKey)?.promise === networkPromise) inflightEntities.delete(meta.entityKey);
+			});
+			inflightExact.set(exactKey, networkPromise);
+			if (meta) {
+				const existing = inflightEntities.get(meta.entityKey);
+				if (!existing || !existing.isSuperset && meta.isSuperset) inflightEntities.set(meta.entityKey, {
+					promise: networkPromise,
+					isSuperset: meta.isSuperset,
+					fields: meta.requiredFields
+				});
+			}
+			return networkPromise;
+		}
+		async function getMediaList(target, type = "ANIME", options) {
+			const isId = typeof target === "number" || /^\d+$/.test(String(target));
+			const userId = options?.userId || (isId ? Number(target) : void 0);
+			const userName = options?.userName || (!isId ? String(target).trim() : void 0);
+			const mlc = (await query(`query ($userId: Int, $userName: String, $type: MediaType) {
+      MediaListCollection(userId: $userId, userName: $userName, type: $type) {
+        user { id name }
+        lists {
+          name
+          isCustomList
+          status
+          entries {
+            id
+            mediaId
+            status
+            score
+            progress
+            progressVolumes
+            repeat
+            priority
+            notes
+            customLists
+            startedAt { year month day }
+            completedAt { year month day }
+            media {
+              id
+              idMal
+              format
+              episodes
+              chapters
+              status
+              title { userPreferred english romaji native }
+            }
+          }
+        }
+      }
+    }`, {
+				userId: userId || void 0,
+				userName: userId ? void 0 : userName || void 0,
+				type
+			}, { forceFresh: options?.forceFresh }))?.MediaListCollection;
+			if (!mlc || !Array.isArray(mlc.lists)) throw new Error("Unexpected MediaListCollection response shape");
+			const mergedCollection = {
+				user: mlc.user,
+				lists: mlc.lists || []
+			};
+			const seenEntryIds = new Set();
+			const allEntries = [];
+			for (const list of mergedCollection.lists) for (const entry of list.entries || []) if (!seenEntryIds.has(entry.id)) {
+				seenEntryIds.add(entry.id);
+				allEntries.push(entry);
+			}
+			return {
+				collection: mergedCollection,
+				lists: mergedCollection.lists,
+				allEntries,
+				user: mergedCollection.user
+			};
+		}
+		async function viewer() {
+			const name = store$1.get("al_username", null);
+			const fmt = store$1.get("al_score_format", null);
+			const id = Number(store$1.get("al_user_id", 0));
+			if (name && fmt && id) return {
+				id,
+				name,
+				scoreFormat: fmt
+			};
+			if (!hasAuth()) return null;
+			const d = await query("query { Viewer { id name mediaListOptions { scoreFormat } } }", {}).catch(() => null);
+			if (d?.Viewer) {
+				store$1.set("al_user_id", d.Viewer.id);
+				store$1.set("al_username", d.Viewer.name);
+				store$1.set("al_score_format", d.Viewer.mediaListOptions.scoreFormat);
+				return {
+					id: d.Viewer.id,
+					name: d.Viewer.name,
+					scoreFormat: d.Viewer.mediaListOptions.scoreFormat
+				};
+			}
+			return null;
+		}
+		const clearViewer = () => {
+			store$1.del("al_username");
+			store$1.del("al_user_id");
+			store$1.del("al_score_format");
+		};
+		const invalidate = (entityKeyPrefix) => {
+			if (!entityKeyPrefix) {
+				entityCache.clear();
+				inflightEntities.clear();
+			} else {
+				for (const k of entityCache.keys()) if (k.startsWith(entityKeyPrefix)) entityCache.delete(k);
+				for (const k of inflightEntities.keys()) if (k.startsWith(entityKeyPrefix)) inflightEntities.delete(k);
+			}
+			(typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window).__ALFL_CLEAR__?.();
+		};
+		const invalidateMediaList = (target, type) => {
+			if (!target) return invalidate("MediaListCollection");
+			const t = type ? type.toUpperCase() : "";
+			const prefix = t ? `MediaListCollection:${t}:${String(target).toLowerCase()}` : `MediaListCollection:`;
+			invalidate(prefix);
+		};
+		const hasAuth = () => isBrowserLoggedIn();
+		const resumeAt = () => limiter.resumeAt;
+		return {
+			query,
+			getMediaList,
+			viewer,
+			clearViewer,
+			invalidate,
+			invalidateMediaList,
+			hasAuth,
+			resumeAt
+		};
+	})();
+	var MediaData = (() => {
+		async function get(id, type, opts) {
+			try {
+				return (await AniList.query(`query($id:Int,$type:MediaType){ Media(id:$id,type:$type){
+          id idMal format title { userPreferred english romaji native }
+          episodes chapters status season seasonYear nextAiringEpisode { episode }
+          mediaListEntry { score progress status completedAt { year month day } }
+        } }`, {
+					id: Number(id),
+					type
+				}))?.Media || null;
+			} catch (e) {
+				if (opts?.throwAuth && e?.auth) throw e;
+				logDebug("[MEDIA DATA] fetch failed:", e?.message || e);
+				return null;
+			}
+		}
+		async function save(id, _type, c) {
+			const entry = (await AniList.query(`mutation($mediaId:Int!,$score:Float,$progress:Int,$status:MediaListStatus,$completedAt:FuzzyDateInput){
+        SaveMediaListEntry(mediaId:$mediaId,score:$score,progress:$progress,status:$status,completedAt:$completedAt){
+          score progress status completedAt { year month day }
+        } }`, {
+				mediaId: Number(id),
+				score: c.score,
+				progress: c.progress,
+				status: c.status,
+				completedAt: c.completedAt
+			}))?.SaveMediaListEntry || null;
+			AniList.invalidate(`Media:${id}`);
+			AniList.invalidateMediaList();
+			return entry;
+		}
+		return {
+			get,
+			save
+		};
+	})();
 	var STANDALONE = {
 		fastLoad: {
 			name: "AniList Fast Load",
@@ -2359,14 +2331,14 @@
 		}[mode]}.\n\nThis will affect the scores written to MAL during this first sync.\n\nContinue with the first sync?`);
 	}
 	function handleAuthFailure(e) {
-		if (e.auth === "AniList") clearAniListAuth();
+		if (e.auth === "AniList") AniList.clearViewer();
 		else clearMalAuth();
 		log(`⚠ ${e.message}`);
 	}
 	async function runSync(types = [...TYPES], opts = {}) {
 		logDebug("[SYNC]", "runSync initiated for types:", types, "options:", opts);
 		if (syncStatus.syncing) return log("Sync already running.");
-		if (!store$1.get("al_token") || !store$1.get("mal_token")) return log("Connect both AniList and MAL first.");
+		if (!AniList.hasAuth() || !store$1.get("mal_token")) return log("Connect both AniList and MAL first.");
 		if (navigator.onLine === false) return log("You appear to be offline; sync skipped.");
 		syncStatus.syncing = true;
 		syncStatus.cancelled = false;
@@ -2387,7 +2359,7 @@
 		let allOk = false;
 		try {
 			const viewer = await AniList.viewer();
-			if (!viewer) throw authError("AniList", "AniList is not connected.");
+			if (!viewer) throw authError("AniList", "AniList is not logged in.");
 			const me = await malWhoAmI();
 			const account = `${viewer.id}:${me.id}`;
 			const prev = store$1.get("sync_account", null);
@@ -2446,7 +2418,7 @@
 	}
 	function maybeAutoSync() {
 		if (!Settings.get("syncEnabled") || syncStatus.syncing || Date.now() < syncStatus.autoSyncRetryAfter || navigator.onLine === false) return;
-		if (!store$1.get("al_token") || !store$1.get("mal_token")) return;
+		if (!AniList.hasAuth() || !store$1.get("mal_token")) return;
 		const retryAt = Number(store$1.get("sync_retry_at", 0)) || 0;
 		if (retryAt > 0 && Date.now() < retryAt) return;
 		const dueTypes = [];
@@ -2701,7 +2673,6 @@
 		69
 	]);
 	var SENSITIVE_KEYS = [
-		"al_token",
 		"al_username",
 		"al_user_id",
 		"al_score_format",
@@ -2819,7 +2790,9 @@
 		if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Backup data is invalid or empty.");
 		let applied = 0;
 		let secretsApplied = 0;
+		store$1.del("al_token");
 		for (const [key, rawValue] of Object.entries(data)) {
+			if (key === "al_token") continue;
 			if (SENSITIVE_KEYS.includes(key)) {
 				if (rawValue !== void 0 && rawValue !== null) {
 					store$1.set(key, rawValue);
@@ -4855,24 +4828,24 @@
   </div>`;
 	};
 	function accountsHtml() {
-		const alConnected = !!store$1.get("al_token", null);
+		const alLoggedIn = AniList.hasAuth();
 		const alUser = store$1.get("al_username", null);
 		const malConnected = !!store$1.get("mal_token", null);
+		const alStatus = alLoggedIn ? alUser ? `Logged in as <b>${esc(alUser)}</b>` : "Active browser session" : "Not logged in to AniList";
+		const malStatus = malConnected ? "Connected" : "Not connected";
 		return `<h3 class="ala-section-title">Connected Accounts</h3>
   <div class="ala-section">
     <div class="ala-row ala-account-row">
       <span class="ala-text">
         <span class="ala-title">AniList</span>
-        <span class="ala-help" id="ala-status-al">${alConnected ? alUser ? `Connected as <b>${esc(alUser)}</b>` : "Connected" : "Not connected"}</span>
+        <span class="ala-help" id="ala-status-al">${alStatus}</span>
       </span>
-      <button type="button" class="ala-btn ${alConnected ? "ala-btn--danger" : "ala-btn--primary"}" id="ala-btn-al">
-        ${alConnected ? "Disconnect" : "Connect to AniList"}
-      </button>
+      ${alLoggedIn ? `<span class="ala-help" style="font-weight:600;color:rgb(var(--color-green))">${icon("check", 12)} Active</span>` : `<a class="ala-btn ala-btn--primary" href="/login" target="_blank" style="text-decoration:none;">Log in</a>`}
     </div>
     <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
       <span class="ala-text">
         <span class="ala-title">MyAnimeList</span>
-        <span class="ala-help" id="ala-status-mal">${malConnected ? "Connected" : "Not connected"}</span>
+        <span class="ala-help" id="ala-status-mal">${malStatus}</span>
       </span>
       <button type="button" class="ala-btn ${malConnected ? "ala-btn--danger" : "ala-btn--primary"}" id="ala-btn-mal">
         ${malConnected ? "Disconnect" : "Connect to MAL"}
@@ -5271,37 +5244,20 @@
 		};
 		document.addEventListener("keydown", backdrop._onKey);
 		const updateAccountUI = () => {
-			const alBtn = panel.querySelector("#ala-btn-al");
 			const alStatus = panel.querySelector("#ala-status-al");
 			const malBtn = panel.querySelector("#ala-btn-mal");
 			const malStatus = panel.querySelector("#ala-status-mal");
-			const alConnected = !!store$1.get("al_token", null);
+			const alLoggedIn = AniList.hasAuth();
 			const alUser = store$1.get("al_username", null);
 			const malConnected = !!store$1.get("mal_token", null);
-			if (alBtn && alStatus) {
-				alBtn.textContent = alConnected ? "Disconnect" : "Connect to AniList";
-				alBtn.className = `ala-btn ${alConnected ? "ala-btn--danger" : "ala-btn--primary"}`;
-				alStatus.innerHTML = alConnected ? alUser ? `Connected as <b>${esc(alUser)}</b>` : "Connected" : "Not connected";
-			}
+			if (alStatus) alStatus.innerHTML = alLoggedIn ? alUser ? `Logged in as <b>${esc(alUser)}</b>` : "Active browser session" : "Not logged in to AniList";
 			if (malBtn && malStatus) {
 				malBtn.textContent = malConnected ? "Disconnect" : "Connect to MAL";
 				malBtn.className = `ala-btn ${malConnected ? "ala-btn--danger" : "ala-btn--primary"}`;
 				malStatus.textContent = malConnected ? "Connected" : "Not connected";
 			}
 		};
-		if (store$1.get("al_token", null) && !store$1.get("al_username", null)) tryOr(() => AniList.viewer()).then(() => updateAccountUI());
-		panel.querySelector("#ala-btn-al")?.addEventListener("click", () => {
-			if (!!store$1.get("al_token", null)) {
-				if (confirm("Disconnect AniList? You will need to reconnect to use the List Score Editor or Sync.")) {
-					clearAniListAuth();
-					updateAccountUI();
-					setStatus("AniList disconnected.");
-				}
-			} else {
-				alConnect();
-				setStatus("Opened AniList authorization tab…");
-			}
-		});
+		if (AniList.hasAuth() && !store$1.get("al_username", null)) tryOr(() => AniList.viewer()).then(() => updateAccountUI());
 		panel.querySelector("#ala-btn-mal")?.addEventListener("click", () => {
 			if (!!store$1.get("mal_token", null)) {
 				if (confirm("Disconnect MyAnimeList? You will need to reconnect to use AniList → MAL Sync.")) {
@@ -7793,8 +7749,7 @@
 			const box = document.createElement("div");
 			box.id = ID;
 			box.dataset.mode = "connect";
-			box.innerHTML = `<div style="margin-bottom:10px;color:rgb(var(--color-text-lighter))">${reason === "rejected" ? "Couldn't use your AniList login here. Connect AniList to edit your score and progress." : "Connect AniList to edit your score and progress here."}</div><button class="ala-mi-save" type="button">Connect AniList</button>`;
-			box.querySelector("button").addEventListener("click", alConnect);
+			box.innerHTML = `<div style="margin-bottom:10px;color:rgb(var(--color-text-lighter))">${reason === "rejected" ? "Couldn't verify your AniList session. Log in to AniList to edit your score and progress." : "Log in to AniList to edit your score and progress here."}</div><a class="ala-mi-save" href="/login" style="display:inline-block;text-decoration:none;color:#fff;text-align:center;">Log in to AniList</a>`;
 			panel()?.remove();
 			spot.parent.insertBefore(box, spot.before);
 			shown = key;
@@ -9937,23 +9892,22 @@
 	});
 	function connItem(svc, connected) {
 		const name = svc === "al" ? "AniList" : "MyAnimeList";
-		const what = svc === "al" ? "access token" : "authorization code";
-		const manual = ui.manual && !connected ? `<div class="almal-manual"><input id="almal-${svc}-manual" type="text" placeholder="Paste ${svc === "al" ? "token" : "code"}" aria-label="${name} ${what}" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="almal-btn almal-btn--sm" data-act="${svc}-manual-save">Save</button></div>` : "";
+		const manual = svc === "mal" && ui.manual && !connected ? `<div class="almal-manual"><input id="almal-mal-manual" type="text" placeholder="Paste code" aria-label="MyAnimeList authorization code" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="almal-btn almal-btn--sm" data-act="mal-manual-save">Save</button></div>` : "";
 		const status = connected ? `<span class="almal-ok">${icon("check", 12)}Connected</span>` : "";
-		const connect = connected ? "" : `<button class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" data-act="${svc}-connect">Connect ${name}</button>`;
+		const connect = connected ? "" : svc === "al" ? `<a class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" href="/login" target="_blank" style="text-decoration:none;color:#fff;">Log in to AniList</a>` : `<button class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" data-act="mal-connect">Connect MyAnimeList</button>`;
 		return `<div class="almal-conn-item"><div class="almal-conn-row">${chip(svc, true)}<span class="almal-conn-name"><span>${name}</span>${status}</span></div>${connect}${manual}</div>`;
 	}
 	function renderPanel() {
 		const panelEl = document.getElementById("almal-panel");
 		if (!panelEl) return;
-		const alOk = !!store$1.get("al_token", null);
+		const alOk = AniList.hasAuth();
 		const malOk = !!store$1.get("mal_token", null);
 		const ready = alOk && malOk;
 		const tone = syncStatus.syncing ? "busy" : ready ? "ok" : "idle";
 		let html = `<div class="almal-head"><div class="almal-flow almal-flow--${tone}" role="img" aria-label="${{
 			busy: "Syncing from AniList to MyAnimeList",
 			ok: "AniList to MyAnimeList sync",
-			idle: "Connect both accounts to sync"
+			idle: !alOk ? "Log in to AniList to sync" : "Connect MyAnimeList to sync"
 		}[tone]}">${chip("al", false, !alOk)}${ARROW}${chip("mal", false, !malOk)}</div></div>`;
 		if (ready) {
 			const t = currentListType();
@@ -9992,19 +9946,10 @@
 		renderRateLimitWarning(panelEl);
 	}
 	var ACTIONS = {
-		"al-connect": alConnect,
 		"mal-connect": malConnect,
 		"manual-toggle": () => {
 			ui.manual = !ui.manual;
 			renderPanel();
-		},
-		"al-manual-save": () => {
-			const token = document.getElementById("almal-al-manual")?.value.trim();
-			if (!token) return;
-			saveAniListToken(token);
-			log("AniList connected (manual).");
-			renderPanel();
-			maybeAutoSync();
 		},
 		"mal-manual-save": async () => {
 			const code = document.getElementById("almal-mal-manual")?.value.trim();
@@ -10112,7 +10057,7 @@
 		let lastAl = null;
 		let lastMal = null;
 		setInterval(() => {
-			const al = !!store$1.get("al_token", null);
+			const al = AniList.hasAuth();
 			const mal = !!store$1.get("mal_token", null);
 			if (al !== lastAl || mal !== lastMal) {
 				lastAl = al;
@@ -10375,11 +10320,6 @@
 				clearCache(stores[t].settled);
 			}
 			log("All stored data cleared.");
-			renderPanel();
-		});
-		_GM_registerMenuCommand("🔵 AL→MAL Sync: Disconnect AniList", () => {
-			clearAniListAuth();
-			log("AniList disconnected.");
 			renderPanel();
 		});
 		_GM_registerMenuCommand("🟦 AL→MAL Sync: Disconnect MAL", () => {

@@ -5,9 +5,7 @@ import {
   log,
   lastNotice,
   logLines,
-  alConnect,
   malConnect,
-  saveAniListToken,
   exchangeMalCode
 } from '../../api/mal';
 import { store, tryOr, esc, debounce } from '../../utils/helpers';
@@ -185,17 +183,16 @@ const refreshTimes = (): void =>
 
 function connItem(svc: 'al' | 'mal', connected: boolean): string {
   const name = svc === 'al' ? 'AniList' : 'MyAnimeList';
-  const what = svc === 'al' ? 'access token' : 'authorization code';
   const manual =
-    ui.manual && !connected
-      ? `<div class="almal-manual"><input id="almal-${svc}-manual" type="text" placeholder="Paste ${
-          svc === 'al' ? 'token' : 'code'
-        }" aria-label="${name} ${what}" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="almal-btn almal-btn--sm" data-act="${svc}-manual-save">Save</button></div>`
+    svc === 'mal' && ui.manual && !connected
+      ? `<div class="almal-manual"><input id="almal-mal-manual" type="text" placeholder="Paste code" aria-label="MyAnimeList authorization code" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="almal-btn almal-btn--sm" data-act="mal-manual-save">Save</button></div>`
       : '';
   const status = connected ? `<span class="almal-ok">${icon('check', 12)}Connected</span>` : '';
   const connect = connected
     ? ''
-    : `<button class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" data-act="${svc}-connect">Connect ${name}</button>`;
+    : svc === 'al'
+    ? `<a class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" href="/login" target="_blank" style="text-decoration:none;color:#fff;">Log in to AniList</a>`
+    : `<button class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" data-act="mal-connect">Connect MyAnimeList</button>`;
   return `<div class="almal-conn-item"><div class="almal-conn-row">${chip(
     svc,
     true
@@ -205,14 +202,14 @@ function connItem(svc: 'al' | 'mal', connected: boolean): string {
 export function renderPanel(): void {
   const panelEl = document.getElementById('almal-panel');
   if (!panelEl) return;
-  const alOk = !!store.get('al_token', null);
+  const alOk = AniList.hasAuth();
   const malOk = !!store.get('mal_token', null);
   const ready = alOk && malOk;
   const tone = syncStatus.syncing ? 'busy' : ready ? 'ok' : 'idle';
   const said = {
     busy: 'Syncing from AniList to MyAnimeList',
     ok: 'AniList to MyAnimeList sync',
-    idle: 'Connect both accounts to sync'
+    idle: !alOk ? 'Log in to AniList to sync' : 'Connect MyAnimeList to sync'
   }[tone];
   let html = `<div class="almal-head"><div class="almal-flow almal-flow--${tone}" role="img" aria-label="${said}">${chip(
     'al',
@@ -281,19 +278,10 @@ export function renderPanel(): void {
 }
 
 const ACTIONS: Record<string, () => void> = {
-  'al-connect': alConnect,
   'mal-connect': malConnect,
   'manual-toggle': () => {
     ui.manual = !ui.manual;
     renderPanel();
-  },
-  'al-manual-save': () => {
-    const token = (document.getElementById('almal-al-manual') as HTMLInputElement | null)?.value.trim();
-    if (!token) return;
-    saveAniListToken(token);
-    log('AniList connected (manual).');
-    renderPanel();
-    maybeAutoSync();
   },
   'mal-manual-save': async () => {
     const code = (document.getElementById('almal-mal-manual') as HTMLInputElement | null)?.value.trim();
@@ -415,7 +403,7 @@ export function initSyncPanel(): void {
   let lastAl: boolean | null = null;
   let lastMal: boolean | null = null;
   setInterval(() => {
-    const al = !!store.get('al_token', null);
+    const al = AniList.hasAuth();
     const mal = !!store.get('mal_token', null);
     if (al !== lastAl || mal !== lastMal) {
       lastAl = al;

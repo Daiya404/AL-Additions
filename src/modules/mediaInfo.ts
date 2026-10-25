@@ -1,7 +1,6 @@
 import { defineFeature } from '../core/registry';
 import { Core } from '../core/observer';
 import { AniList, MediaData } from '../api/anilist';
-import { alConnect } from '../api/mal';
 import { externalReleased } from '../api/scrapers';
 import { addStyle, mediaRoute } from '../utils/dom';
 import { tryOr, safe, logDebug } from '../utils/helpers';
@@ -107,10 +106,9 @@ defineFeature(
       box.dataset.mode = 'connect';
       const msg =
         reason === 'rejected'
-          ? "Couldn't use your AniList login here. Connect AniList to edit your score and progress."
-          : 'Connect AniList to edit your score and progress here.';
-      box.innerHTML = `<div style="margin-bottom:10px;color:rgb(var(--color-text-lighter))">${msg}</div><button class="ala-mi-save" type="button">Connect AniList</button>`;
-      box.querySelector('button')!.addEventListener('click', alConnect);
+          ? "Couldn't verify your AniList session. Log in to AniList to edit your score and progress."
+          : 'Log in to AniList to edit your score and progress here.';
+      box.innerHTML = `<div style="margin-bottom:10px;color:rgb(var(--color-text-lighter))">${msg}</div><a class="ala-mi-save" href="/login" style="display:inline-block;text-decoration:none;color:#fff;text-align:center;">Log in to AniList</a>`;
       panel()?.remove();
       spot.parent.insertBefore(box, spot.before);
       shown = key;

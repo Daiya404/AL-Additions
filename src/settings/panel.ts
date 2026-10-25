@@ -2,7 +2,7 @@ import { Settings, TYPES, ROWS, features } from './settings';
 import { creditsHtml } from './credits';
 import { addStyle, findExactText, icon } from '../utils/dom';
 import { debounce, store, esc, tryOr } from '../utils/helpers';
-import { alConnect, malConnect, clearAniListAuth, clearMalAuth } from '../api/mal';
+import { malConnect, clearMalAuth } from '../api/mal';
 import { AniList } from '../api/anilist';
 import { Core } from '../core/observer';
 import { STANDALONE, STANDALONE_IDS_LIST, detectStandalone, type StandaloneId } from '../utils/standalone';
@@ -173,11 +173,11 @@ const featureHtml = (f: RegisteredFeature): string => {
 };
 
 function accountsHtml(): string {
-  const alConnected = !!store.get('al_token', null);
+  const alLoggedIn = AniList.hasAuth();
   const alUser = store.get<string | null>('al_username', null);
   const malConnected = !!store.get('mal_token', null);
 
-  const alStatus = alConnected ? (alUser ? `Connected as <b>${esc(alUser)}</b>` : 'Connected') : 'Not connected';
+  const alStatus = alLoggedIn ? (alUser ? `Logged in as <b>${esc(alUser)}</b>` : 'Active browser session') : 'Not logged in to AniList';
   const malStatus = malConnected ? 'Connected' : 'Not connected';
 
   return `<h3 class="ala-section-title">Connected Accounts</h3>
@@ -187,9 +187,7 @@ function accountsHtml(): string {
         <span class="ala-title">AniList</span>
         <span class="ala-help" id="ala-status-al">${alStatus}</span>
       </span>
-      <button type="button" class="ala-btn ${alConnected ? 'ala-btn--danger' : 'ala-btn--primary'}" id="ala-btn-al">
-        ${alConnected ? 'Disconnect' : 'Connect to AniList'}
-      </button>
+      ${alLoggedIn ? `<span class="ala-help" style="font-weight:600;color:rgb(var(--color-green))">${icon('check', 12)} Active</span>` : `<a class="ala-btn ala-btn--primary" href="/login" target="_blank" style="text-decoration:none;">Log in</a>`}
     </div>
     <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
       <span class="ala-text">
@@ -649,19 +647,16 @@ export function showPanel(): void {
   document.addEventListener('keydown', backdrop._onKey);
 
   const updateAccountUI = () => {
-    const alBtn = panel.querySelector<HTMLButtonElement>('#ala-btn-al');
     const alStatus = panel.querySelector<HTMLElement>('#ala-status-al');
     const malBtn = panel.querySelector<HTMLButtonElement>('#ala-btn-mal');
     const malStatus = panel.querySelector<HTMLElement>('#ala-status-mal');
 
-    const alConnected = !!store.get('al_token', null);
+    const alLoggedIn = AniList.hasAuth();
     const alUser = store.get<string | null>('al_username', null);
     const malConnected = !!store.get('mal_token', null);
 
-    if (alBtn && alStatus) {
-      alBtn.textContent = alConnected ? 'Disconnect' : 'Connect to AniList';
-      alBtn.className = `ala-btn ${alConnected ? 'ala-btn--danger' : 'ala-btn--primary'}`;
-      alStatus.innerHTML = alConnected ? (alUser ? `Connected as <b>${esc(alUser)}</b>` : 'Connected') : 'Not connected';
+    if (alStatus) {
+      alStatus.innerHTML = alLoggedIn ? (alUser ? `Logged in as <b>${esc(alUser)}</b>` : 'Active browser session') : 'Not logged in to AniList';
     }
     if (malBtn && malStatus) {
       malBtn.textContent = malConnected ? 'Disconnect' : 'Connect to MAL';
@@ -670,23 +665,9 @@ export function showPanel(): void {
     }
   };
 
-  if (store.get('al_token', null) && !store.get('al_username', null)) {
+  if (AniList.hasAuth() && !store.get('al_username', null)) {
     tryOr(() => AniList.viewer()).then(() => updateAccountUI());
   }
-
-  panel.querySelector('#ala-btn-al')?.addEventListener('click', () => {
-    const alConnected = !!store.get('al_token', null);
-    if (alConnected) {
-      if (confirm('Disconnect AniList? You will need to reconnect to use the List Score Editor or Sync.')) {
-        clearAniListAuth();
-        updateAccountUI();
-        setStatus('AniList disconnected.');
-      }
-    } else {
-      alConnect();
-      setStatus('Opened AniList authorization tab…');
-    }
-  });
 
   panel.querySelector('#ala-btn-mal')?.addEventListener('click', () => {
     const malConnected = !!store.get('mal_token', null);

@@ -136,6 +136,9 @@ function set(key: string, raw: any): void {
 
 function migrate(): void {
   safe(() => {
+    // Purge legacy AniList OAuth token
+    store.del('al_token');
+
     for (const r of Object.values(ROWS)) {
       if (store.get(PREFIX + r.key, undefined) !== undefined) continue;
       for (const name of r.legacy) {

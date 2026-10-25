@@ -7,8 +7,7 @@ import {
   malLimiter,
   breaker,
   log,
-  clearMalAuth,
-  clearAniListAuth
+  clearMalAuth
 } from '../../api/mal';
 import { hooks } from '../../api/mal';
 import { store, tryOr, authError, logDebug } from '../../utils/helpers';
@@ -387,7 +386,7 @@ export async function confirmDecimalScores(): Promise<boolean> {
 }
 
 function handleAuthFailure(e: any): void {
-  if (e.auth === 'AniList') clearAniListAuth();
+  if (e.auth === 'AniList') AniList.clearViewer();
   else clearMalAuth();
   log(`⚠ ${e.message}`);
 }
@@ -395,7 +394,7 @@ function handleAuthFailure(e: any): void {
 export async function runSync(types: SyncMediaType[] = [...TYPES], opts: { full?: boolean } = {}): Promise<void> {
   logDebug('[SYNC]', 'runSync initiated for types:', types, 'options:', opts);
   if (syncStatus.syncing) return log('Sync already running.');
-  if (!store.get('al_token') || !store.get('mal_token')) return log('Connect both AniList and MAL first.');
+  if (!AniList.hasAuth() || !store.get('mal_token')) return log('Connect both AniList and MAL first.');
   if (navigator.onLine === false) return log('You appear to be offline; sync skipped.');
   syncStatus.syncing = true;
   syncStatus.cancelled = false;
@@ -411,7 +410,7 @@ export async function runSync(types: SyncMediaType[] = [...TYPES], opts: { full?
   let allOk = false;
   try {
     const viewer = await AniList.viewer();
-    if (!viewer) throw authError('AniList', 'AniList is not connected.');
+    if (!viewer) throw authError('AniList', 'AniList is not logged in.');
     const me = await malWhoAmI();
     const account = `${viewer.id}:${me.id}`;
     const prev = store.get<string | null>('sync_account', null);
@@ -477,7 +476,7 @@ export async function fullResync(): Promise<void> {
 
 export function maybeAutoSync(): void {
   if (!Settings.get('syncEnabled') || syncStatus.syncing || Date.now() < syncStatus.autoSyncRetryAfter || navigator.onLine === false) return;
-  if (!store.get('al_token') || !store.get('mal_token')) return;
+  if (!AniList.hasAuth() || !store.get('mal_token')) return;
 
   const retryAt = Number(store.get('sync_retry_at', 0)) || 0;
   if (retryAt > 0 && Date.now() < retryAt) return;

@@ -12,7 +12,6 @@ export const SALT_LENGTH = 16;
 export const IV_LENGTH = 12;
 
 export const SENSITIVE_KEYS = [
-  'al_token',
   'al_username',
   'al_user_id',
   'al_score_format',
@@ -236,7 +235,11 @@ export function applyVersion1Settings(data: Record<string, any>): ImportResult {
   let applied = 0;
   let secretsApplied = 0;
 
+  // Explicitly purge any legacy AniList OAuth token found in backup or storage
+  store.del('al_token');
+
   for (const [key, rawValue] of Object.entries(data)) {
+    if (key === 'al_token') continue;
     if ((SENSITIVE_KEYS as readonly string[]).includes(key)) {
       if (rawValue !== undefined && rawValue !== null) {
         store.set(key, rawValue);

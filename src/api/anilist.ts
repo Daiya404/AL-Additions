@@ -210,7 +210,6 @@ export const AniList = (() => {
   }
 
   function isBrowserLoggedIn(): boolean {
-    if (store.get('al_token', null)) return true;
     const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
     const nuxtUser = win.__NUXT__?.state?.auth?.user || win.__NUXT__?.state?.user;
     if (nuxtUser?.id) return true;
@@ -250,16 +249,12 @@ export const AniList = (() => {
     retries: number,
     forceFresh = false
   ): Promise<T> {
-    const oauthToken = store.get<string | null>('al_token', null);
     const csrfToken = getCsrfToken();
     const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
     const fetchFn = (typeof win.fetch === 'function' ? win.fetch : fetch).bind(win);
     const backoff = () => sleep(1500 * (4 - retries));
 
-    const isInternal = !oauthToken && Boolean(csrfToken) && isBrowserLoggedIn();
-    const endpoint = isInternal
-      ? `${win.location.origin || 'https://anilist.co'}/graphql`
-      : 'https://graphql.anilist.co';
+    const endpoint = `${win.location?.origin || 'https://anilist.co'}/graphql`;
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -267,9 +262,7 @@ export const AniList = (() => {
       ...(forceFresh ? { 'Cache-Control': 'no-cache' } : {})
     };
 
-    if (oauthToken) {
-      headers.Authorization = `Bearer ${oauthToken}`;
-    } else if (isInternal && csrfToken) {
+    if (csrfToken) {
       headers['X-CSRF-TOKEN'] = csrfToken;
     }
 
@@ -281,7 +274,7 @@ export const AniList = (() => {
         method: 'POST',
         headers,
         cache: forceFresh ? 'no-store' : undefined,
-        credentials: isInternal ? 'include' : 'same-origin',
+        credentials: 'include',
         body: JSON.stringify({ query: q, variables })
       });
     } catch (e: any) {
@@ -309,8 +302,9 @@ export const AniList = (() => {
     } catch (_) {}
 
     const message = json?.errors?.length ? json.errors.map((e: any) => e.message).join('; ') : '';
-    if (res.status === 401 || (oauthToken && /invalid token|unauthenticated|unauthorized/i.test(message))) {
-      throw authError('AniList', 'AniList session unauthenticated — please log in or reconnect AniList.');
+    if (res.status === 401 || /invalid token|unauthenticated|unauthorized/i.test(message)) {
+      clearViewer();
+      throw authError('AniList', 'AniList session unauthenticated — please log in to AniList.');
     }
     if (message) throw new Error(message);
     if (!res.ok || !json) throw new Error(`AniList API HTTP ${res.status}`);
@@ -528,7 +522,7 @@ export const AniList = (() => {
     invalidate(prefix);
   };
 
-  const hasAuth = (): boolean => Boolean(store.get('al_token', null) || (getCsrfToken() && isBrowserLoggedIn()));
+  const hasAuth = (): boolean => isBrowserLoggedIn();
   const resumeAt = (): number => limiter.resumeAt;
 
   return {
@@ -539,7 +533,6 @@ export const AniList = (() => {
     invalidate,
     invalidateMediaList,
     hasAuth,
-    hasOwnAuth: () => Boolean(store.get<string | null>('al_token', null)),
     resumeAt
   };
 })();

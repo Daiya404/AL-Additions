@@ -1,6 +1,6 @@
 import { GM_registerMenuCommand } from 'vite-plugin-monkey/dist/client';
 import { defineFeature } from '../../core/registry';
-import { clearMalAuth, clearAniListAuth, log } from '../../api/mal';
+import { clearMalAuth, log } from '../../api/mal';
 import { store, safe } from '../../utils/helpers';
 import { SENSITIVE_KEYS } from '../../settings/backup';
 import { TYPES } from './types';
@@ -126,11 +126,6 @@ defineFeature(
         clearCache(stores[t].settled);
       }
       log('All stored data cleared.');
-      renderPanel();
-    });
-    GM_registerMenuCommand('🔵 AL→MAL Sync: Disconnect AniList', () => {
-      clearAniListAuth();
-      log('AniList disconnected.');
       renderPanel();
     });
     GM_registerMenuCommand('🟦 AL→MAL Sync: Disconnect MAL', () => {

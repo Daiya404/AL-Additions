@@ -8,9 +8,11 @@ import {
   MAGIC_ENCRYPTED,
   encryptData,
   decryptData,
-  FORMAT_VERSION
+  FORMAT_VERSION,
+  SENSITIVE_KEYS
 } from '../src/settings/backup';
 import { Settings } from '../src/settings/settings';
+import { store } from '../src/utils/helpers';
 
 describe('Settings Backup & Crypto Engine', () => {
   it('creates an unencrypted binary backup with ALAS magic bytes and valid header', async () => {
@@ -107,5 +109,35 @@ describe('Settings Backup & Crypto Engine', () => {
     const result = await importBackup(legacyJson);
     expect(result.applied).toBeGreaterThan(0);
     expect(Settings.get('tagPercentage')).toBe(73);
+  });
+
+  it('excludes al_token from SENSITIVE_KEYS and credential exports', async () => {
+    expect((SENSITIVE_KEYS as readonly string[]).includes('al_token')).toBe(false);
+    store.set('al_token', 'stale_token_123');
+    store.set('mal_token', 'valid_mal_token');
+
+    const bytes = await createBackup(true, 'TestPassword123');
+    const result = await importBackup(bytes, async () => 'TestPassword123');
+
+    expect(result.secretsApplied).toBeGreaterThan(0);
+    expect(store.get('al_token', null)).toBeNull();
+    expect(store.get('mal_token', null)).toBe('valid_mal_token');
+  });
+
+  it('silently ignores and purges legacy al_token when importing legacy backups', async () => {
+    store.set('al_token', 'old_local_token');
+    const legacyJson = JSON.stringify({
+      version: 1,
+      encrypted: false,
+      exportedAt: Date.now(),
+      data: {
+        tagPercentage: 60,
+        al_token: 'legacy_backup_token'
+      }
+    });
+
+    const result = await importBackup(legacyJson);
+    expect(result.applied).toBeGreaterThan(0);
+    expect(store.get('al_token', null)).toBeNull();
   });
 });
