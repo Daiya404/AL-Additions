@@ -215,9 +215,7 @@ defineFeature(
 
         if (stale()) return;
         if (!info || !fmt) {
-          if (!AniList.hasAuth() || !fmt) {
-            return renderConnect(key, 'none');
-          }
+          if (!AniList.hasAuth()) return renderConnect(key, 'none');
           retry = { key, at: Date.now() + 15000, count: retry.key === key ? retry.count + 1 : 1 };
           if (retry.count < MAX_FAILURES) schedule(15500);
           return;

@@ -329,6 +329,11 @@ export function autoPrefetchListsForCurrentRoute(yielded: () => boolean) {
   if (doc.hidden || now < pausedUntil || (navigator as any).connection?.saveData) return;
 
   const path = win.location.pathname;
+  if (path.toLowerCase().includes('/compare')) {
+    // Compare view directly coordinates loading the active comparison collections.
+    // Avoid scheduling conflicting or unrelated background prefetches (e.g. manga while comparing anime).
+    return;
+  }
   const viewer = getViewerFromWindow();
   const myId = viewer.id || Number(gmStore.get('al_user_id', 0));
   const myName = viewer.name || gmStore.get<string | null>('al_username', null);

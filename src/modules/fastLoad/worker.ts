@@ -22,7 +22,10 @@ import {
 } from './helpers';
 import { store as gmStore, logDebug } from '../../utils/helpers';
 
-export const workerPending = new WeakMap<object, Map<string, { key: string | null; mutation: boolean; epoch?: number }>>();
+export const workerPending = new WeakMap<
+  object,
+  Map<string, { key: string | null; mutation: boolean; epoch?: number; extraKeys?: string[] }>
+>();
 export const watched = new WeakSet<object>();
 export let workerUrl: string | null = null;
 export let workerOpts: any;
@@ -121,8 +124,11 @@ export const onIn = function (this: any, ev: MessageEvent) {
   if (p.key && d.error == null && p.epoch === rpcEpoch) {
     attempt(() => {
       const cached = { time: Date.now(), msg: clone(d) };
-      rpcCache.delete(p.key!);
-      rpcCache.set(p.key!, cached);
+      const keysToSet = [p.key!, ...(p.extraKeys || [])];
+      for (const k of keysToSet) {
+        rpcCache.delete(k);
+        rpcCache.set(k, cached);
+      }
       while (rpcCache.size > RPC_MAX_ENTRIES) rpcCache.delete(rpcCache.keys().next().value as string);
     });
   }
@@ -356,6 +362,50 @@ export function hookWorker(yielded: () => boolean) {
           if (id.startsWith('alfl_prefetch_')) {
             return origPost.apply(this, [data, ...rest] as any);
           }
+          const blocker = win.__ALFL_RPC_BLOCK__;
+          if (typeof blocker === 'function' && blocker(String(data.params[1]), data.params[2])) {
+            logDebug('[FASTLOAD RPC] Blocked request:', JSON.stringify(data.params[2]).slice(0, 60));
+            const pageId = data.params[2]?.id ? `listComparison-${data.params[2].id}` : 'listComparison';
+            const pageNum = data.params[2]?.page || 1;
+            const dummyResult = {
+              entities: {
+                page: {
+                  [pageId]: {
+                    pageInfo: {
+                      total: 0,
+                      perPage: 30,
+                      currentPage: pageNum,
+                      lastPage: 1,
+                      hasNextPage: false
+                    },
+                    pageData: []
+                  }
+                }
+              },
+              result: pageId,
+              data: {
+                Page: {
+                  pageInfo: { total: 0, perPage: 30, currentPage: pageNum, lastPage: 1, hasNextPage: false },
+                  mediaList: []
+                }
+              }
+            };
+            setTimeout(() => {
+              try {
+                this.dispatchEvent(
+                  new MessageEvent('message', {
+                    data: { type: 'RPC', id: data.id, result: dummyResult }
+                  })
+                );
+              } catch {
+                const ev: any = (win.document || document).createEvent('Event');
+                ev.initEvent('message', false, false);
+                ev.data = { type: 'RPC', id: data.id, result: dummyResult };
+                this.dispatchEvent(ev);
+              }
+            }, 0);
+            return;
+          }
           if (!watched.has(this)) {
             watched.add(this);
             this.addEventListener('message', onIn);
@@ -396,6 +446,7 @@ export function hookWorker(yielded: () => boolean) {
             const label = String(q.query).replace(/\s+/g, ' ').slice(0, 50);
             let hit: any = null;
             let flying: any = null;
+            let extraKeys: string[] | undefined;
 
             if (isMediaListQuery(q)) {
               const normVars = normalizeVariables(q.variables);
@@ -408,8 +459,8 @@ export function hookWorker(yielded: () => boolean) {
                 userId = userMap.get(userName.toLowerCase());
               }
 
-              const possibleKeys = [key, ...getMediaListKeys(type || 'ANIME', userId, userName)];
-              for (const k of possibleKeys) {
+              extraKeys = [key, ...getMediaListKeys(type || 'ANIME', userId, userName)];
+              for (const k of extraKeys) {
                 if (!hit) {
                   const h = rpcCache.get(k);
                   if (h && h.time >= freshFloor && Date.now() - h.time < 5 * 60_000) {
@@ -464,7 +515,7 @@ export function hookWorker(yielded: () => boolean) {
               pMap = new Map();
               workerPending.set(this, pMap);
             }
-            pMap.set(id, { key, mutation: false, epoch: rpcEpoch });
+            pMap.set(id, { key, mutation: false, epoch: rpcEpoch, extraKeys });
           }
         }
       } catch {

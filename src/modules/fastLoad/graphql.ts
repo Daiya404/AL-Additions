@@ -223,7 +223,7 @@ export async function classify(input: any, init?: RequestInit) {
     }
   }
   const mediaList = isMediaListQuery(parsed);
-  const bypass = !mediaList && (isVolatile(parsed) || noStore(desc));
+  const bypass = noStore(desc) || (!mediaList && isVolatile(parsed));
   return { desc, parsed, mutation: isMutation(parsed), bypass };
 }
 
@@ -231,6 +231,26 @@ export function cachedFetch(nativeFetch: any, job: any, input: any, init?: Reque
   const { desc, parsed } = job;
   if (init?.signal?.aborted) return nativeFetch(input, init);
   if (!replay) attempt(() => rememberQuery(desc, parsed));
+
+  const blocker = (win as any).__ALFL_RPC_BLOCK__;
+  if (typeof blocker === 'function' && blocker(parsed?.query, parsed?.variables)) {
+    logDebug('[FASTLOAD] Blocked GQL fetch via __ALFL_RPC_BLOCK__:', JSON.stringify(parsed?.variables));
+    const dummy = {
+      data: {
+        Page: {
+          pageInfo: { total: 0, perPage: 30, currentPage: parsed?.variables?.page || 1, lastPage: 1, hasNextPage: false },
+          mediaList: []
+        }
+      }
+    };
+    const ResponseCtor = win.Response || Response;
+    return Promise.resolve(
+      new ResponseCtor(JSON.stringify(dummy), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    );
+  }
 
   let key = '';
   let ttl = CFG.gqlTtl;

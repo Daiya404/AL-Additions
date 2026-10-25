@@ -48,6 +48,8 @@ const BREAKER_MAX_TRIPS = 3;
 const RETRY_AFTER_FAILURE_MS = 10 * 60e3;
 export const LIST_PATH_RE = /^\/user\/[^/]+\/(anime|manga)list/;
 
+const onAniList = (): boolean => location.hostname === 'anilist.co';
+
 const ENTRY_FIELDS =
   'status score(format: POINT_100) progress progressVolumes repeat notes updatedAt startedAt { year month day } completedAt { year month day }';
 const MEDIA_FIELDS = 'id idMal startDate { year } synonyms title { userPreferred english romaji native }';
@@ -394,6 +396,7 @@ function handleAuthFailure(e: any): void {
 export async function runSync(types: SyncMediaType[] = [...TYPES], opts: { full?: boolean } = {}): Promise<void> {
   logDebug('[SYNC]', 'runSync initiated for types:', types, 'options:', opts);
   if (syncStatus.syncing) return log('Sync already running.');
+  if (!onAniList()) return log('Open AniList to run a sync — it needs your AniList login.', 'warn');
   if (!AniList.hasAuth() || !store.get('mal_token')) return log('Connect both AniList and MAL first.');
   if (navigator.onLine === false) return log('You appear to be offline; sync skipped.');
   syncStatus.syncing = true;
@@ -475,7 +478,7 @@ export async function fullResync(): Promise<void> {
 }
 
 export function maybeAutoSync(): void {
-  if (!Settings.get('syncEnabled') || syncStatus.syncing || Date.now() < syncStatus.autoSyncRetryAfter || navigator.onLine === false) return;
+  if (!onAniList() || !Settings.get('syncEnabled') || syncStatus.syncing || Date.now() < syncStatus.autoSyncRetryAfter || navigator.onLine === false) return;
   if (!AniList.hasAuth() || !store.get('mal_token')) return;
 
   const retryAt = Number(store.get('sync_retry_at', 0)) || 0;

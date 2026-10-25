@@ -1242,10 +1242,201 @@
 			}
 			return networkPromise;
 		}
+		function formatMediaListResult(mlc) {
+			const mergedCollection = {
+				user: mlc.user,
+				lists: mlc.lists || []
+			};
+			const seenEntryIds = new Set();
+			const allEntries = [];
+			for (const list of mergedCollection.lists) for (const entry of list.entries || []) if (!seenEntryIds.has(entry.id)) {
+				seenEntryIds.add(entry.id);
+				allEntries.push(entry);
+			}
+			return {
+				collection: mergedCollection,
+				lists: mergedCollection.lists,
+				allEntries,
+				user: mergedCollection.user
+			};
+		}
+		function parseRpcMediaList(payload) {
+			if (!payload || typeof payload !== "object") return null;
+			const mlc = payload.MediaListCollection || payload.data?.MediaListCollection;
+			if (mlc && Array.isArray(mlc.lists)) return formatMediaListResult(mlc);
+			const entities = payload.entities || payload;
+			const entriesMap = entities?.listEntry || entities?.mediaListEntry;
+			if (entriesMap && typeof entriesMap === "object") {
+				const mediaMap = entities.media || entities.listEntryMedia || {};
+				const allEntries = [];
+				for (const rawEntry of Object.values(entriesMap)) {
+					if (!rawEntry || typeof rawEntry !== "object") continue;
+					const mediaId = rawEntry.mediaId || (typeof rawEntry.media === "number" ? rawEntry.media : rawEntry.media?.id);
+					if (!mediaId) continue;
+					const mediaObj = typeof rawEntry.media === "object" && rawEntry.media !== null ? rawEntry.media : mediaMap[mediaId] || { id: mediaId };
+					allEntries.push({
+						...rawEntry,
+						mediaId,
+						media: mediaObj
+					});
+				}
+				if (allEntries.length === 0) return null;
+				const userObj = entities.user ? Object.values(entities.user)[0] : void 0;
+				const lists = [];
+				if (entities.listSection && typeof entities.listSection === "object") for (const sec of Object.values(entities.listSection)) {
+					if (!sec) continue;
+					lists.push({
+						name: sec.name || "",
+						isCustomList: !!sec.isCustomList,
+						status: sec.status,
+						entries: Array.isArray(sec.entries) ? sec.entries.map((id) => entriesMap[id]).filter(Boolean) : []
+					});
+				}
+				const user = userObj && userObj.id ? {
+					id: Number(userObj.id),
+					name: String(userObj.name || "")
+				} : void 0;
+				return {
+					collection: {
+						lists,
+						user
+					},
+					allEntries,
+					lists,
+					user
+				};
+			}
+			return null;
+		}
+		function tryGetCachedMediaList(target, type, userId, userName) {
+			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+			const t = type.toUpperCase();
+			const isId = typeof target === "number" || /^\d+$/.test(String(target));
+			const id = userId || (isId ? Number(target) : void 0);
+			const name = userName || (!isId ? String(target).trim().toLowerCase() : void 0);
+			const userMap = win.__ALFL_USER_MAP__;
+			const idMap = win.__ALFL_ID_MAP__;
+			const resolvedId = id || (name && userMap ? userMap.get(name) : void 0);
+			const resolvedName = name || (resolvedId && idMap ? idMap.get(resolvedId)?.toLowerCase() : void 0);
+			const entityKeys = [];
+			if (resolvedId) entityKeys.push(`MediaListCollection:${t}:${resolvedId}`);
+			if (resolvedName) entityKeys.push(`MediaListCollection:${t}:${resolvedName}`);
+			for (const k of entityKeys) {
+				const cached = entityCache.get(k);
+				if (cached && Date.now() - cached.time < ENTITY_TTL && cached.data?.MediaListCollection) {
+					logDebug("[ANILIST API] 🎯 Cache HIT for MediaListCollection via entityCache:", k);
+					return formatMediaListResult(cached.data.MediaListCollection);
+				}
+			}
+			const gqlStore = win.__ALFL_GQL_STORE__;
+			if (gqlStore) {
+				const gqlKeys = [];
+				if (resolvedId) gqlKeys.push(`gql:MediaListCollection:${t}:${resolvedId}:{}`);
+				if (resolvedName) gqlKeys.push(`gql:MediaListCollection:${t}:${resolvedName}:{}`);
+				for (const k of gqlKeys) {
+					const cached = gqlStore.get(k);
+					if (cached && Date.now() - cached.time < 3e5 && cached.snap?.buf) try {
+						const raw = new TextDecoder().decode(cached.snap.buf);
+						const json = JSON.parse(raw);
+						const mlc = json?.data?.MediaListCollection || json?.MediaListCollection;
+						if (mlc && Array.isArray(mlc.lists)) {
+							logDebug("[ANILIST API] 🎯 Cache HIT for MediaListCollection via FastLoad GQL store:", k);
+							const result = formatMediaListResult(mlc);
+							if (resolvedId) entityCache.set(`MediaListCollection:${t}:${resolvedId}`, {
+								time: Date.now(),
+								data: { MediaListCollection: mlc },
+								isSuperset: true,
+								fields: new Set(KNOWN_LIST_FIELDS)
+							});
+							if (resolvedName) entityCache.set(`MediaListCollection:${t}:${resolvedName}`, {
+								time: Date.now(),
+								data: { MediaListCollection: mlc },
+								isSuperset: true,
+								fields: new Set(KNOWN_LIST_FIELDS)
+							});
+							return result;
+						}
+					} catch (_) {}
+				}
+			}
+			const rpcCache = win.__ALFL_RPC_CACHE__;
+			if (rpcCache) {
+				const rpcKeys = [];
+				if (resolvedId) rpcKeys.push(`rpc:MediaListCollection:${t}:${resolvedId}:{}`);
+				if (resolvedName) rpcKeys.push(`rpc:MediaListCollection:${t}:${resolvedName}:{}`);
+				for (const k of rpcKeys) {
+					const cached = rpcCache.get(k);
+					if (cached && Date.now() - cached.time < 3e5 && cached.msg) {
+						const result = parseRpcMediaList(cached.msg.result ?? cached.msg);
+						if (result && result.allEntries.length > 0) {
+							logDebug("[ANILIST API] 🎯 Cache HIT for MediaListCollection via FastLoad RPC cache:", k);
+							return result;
+						}
+					}
+				}
+				for (const [k, cached] of rpcCache.entries()) {
+					if (!k.startsWith(`rpc:MediaListCollection:${t}:`)) continue;
+					const matchId = resolvedId && k.includes(`:${resolvedId}:`);
+					const matchName = resolvedName && k.toLowerCase().includes(`:${resolvedName.toLowerCase()}:`);
+					if ((matchId || matchName) && cached && Date.now() - cached.time < 3e5 && cached.msg) {
+						const result = parseRpcMediaList(cached.msg.result ?? cached.msg);
+						if (result && result.allEntries.length > 0) {
+							logDebug("[ANILIST API] 🎯 Cache HIT for MediaListCollection via FastLoad RPC cache (scan):", k);
+							return result;
+						}
+					}
+				}
+			}
+			return null;
+		}
 		async function getMediaList(target, type = "ANIME", options) {
 			const isId = typeof target === "number" || /^\d+$/.test(String(target));
 			const userId = options?.userId || (isId ? Number(target) : void 0);
 			const userName = options?.userName || (!isId ? String(target).trim() : void 0);
+			if (!options?.forceFresh) {
+				const cached = tryGetCachedMediaList(target, type, userId, userName);
+				if (cached) return cached;
+			}
+			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+			const rpcInflight = win.__ALFL_RPC_INFLIGHT__;
+			if (rpcInflight && !options?.forceFresh) {
+				const t = type.toUpperCase();
+				const userMap = win.__ALFL_USER_MAP__;
+				const idMap = win.__ALFL_ID_MAP__;
+				const resolvedId = userId || (userName && userMap ? userMap.get(userName.toLowerCase()) : void 0);
+				const resolvedName = userName ? userName.toLowerCase() : resolvedId && idMap ? idMap.get(resolvedId)?.toLowerCase() : void 0;
+				const rpcKeys = [];
+				if (resolvedId) rpcKeys.push(`rpc:MediaListCollection:${t}:${resolvedId}:{}`);
+				if (resolvedName) rpcKeys.push(`rpc:MediaListCollection:${t}:${resolvedName}:{}`);
+				const checkInflight = async (k, flight) => {
+					try {
+						logDebug("[ANILIST API] ⏳ Awaiting in-flight FastLoad RPC prefetch:", k);
+						const msg = await Promise.race([flight.promise, new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 5e3))]);
+						const parsed = parseRpcMediaList(msg?.result ?? msg);
+						if (parsed && parsed.allEntries.length > 0) {
+							logDebug("[ANILIST API] 🎯 Cache HIT from completed in-flight FastLoad RPC prefetch:", k);
+							return parsed;
+						}
+					} catch (_) {}
+					return null;
+				};
+				for (const k of rpcKeys) {
+					const flight = rpcInflight.get(k);
+					if (flight) {
+						const res = await checkInflight(k, flight);
+						if (res) return res;
+					}
+				}
+				for (const [k, flight] of rpcInflight.entries()) {
+					if (!k.startsWith(`rpc:MediaListCollection:${t}:`)) continue;
+					const matchId = resolvedId && k.includes(`:${resolvedId}:`);
+					const matchName = resolvedName && k.toLowerCase().includes(`:${resolvedName.toLowerCase()}:`);
+					if (matchId || matchName) {
+						const res = await checkInflight(k, flight);
+						if (res) return res;
+					}
+				}
+			}
 			const mlc = (await query(`query ($userId: Int, $userName: String, $type: MediaType) {
       MediaListCollection(userId: $userId, userName: $userName, type: $type) {
         user { id name }
@@ -1284,22 +1475,7 @@
 				type
 			}, { forceFresh: options?.forceFresh }))?.MediaListCollection;
 			if (!mlc || !Array.isArray(mlc.lists)) throw new Error("Unexpected MediaListCollection response shape");
-			const mergedCollection = {
-				user: mlc.user,
-				lists: mlc.lists || []
-			};
-			const seenEntryIds = new Set();
-			const allEntries = [];
-			for (const list of mergedCollection.lists) for (const entry of list.entries || []) if (!seenEntryIds.has(entry.id)) {
-				seenEntryIds.add(entry.id);
-				allEntries.push(entry);
-			}
-			return {
-				collection: mergedCollection,
-				lists: mergedCollection.lists,
-				allEntries,
-				user: mergedCollection.user
-			};
+			return formatMediaListResult(mlc);
 		}
 		async function viewer() {
 			const name = store$1.get("al_username", null);
@@ -1311,7 +1487,10 @@
 				scoreFormat: fmt
 			};
 			if (!hasAuth()) return null;
-			const d = await query("query { Viewer { id name mediaListOptions { scoreFormat } } }", {}).catch(() => null);
+			const d = await query("query { Viewer { id name mediaListOptions { scoreFormat } } }", {}).catch((e) => {
+				if (e?.auth) throw e;
+				return null;
+			});
 			if (d?.Viewer) {
 				store$1.set("al_user_id", d.Viewer.id);
 				store$1.set("al_username", d.Viewer.name);
@@ -2032,6 +2211,7 @@
 	var BREAKER_MAX_TRIPS = 3;
 	var RETRY_AFTER_FAILURE_MS = 6e5;
 	var LIST_PATH_RE = /^\/user\/[^/]+\/(anime|manga)list/;
+	var onAniList = () => location.hostname === "anilist.co";
 	var ENTRY_FIELDS = "status score(format: POINT_100) progress progressVolumes repeat notes updatedAt startedAt { year month day } completedAt { year month day }";
 	var MEDIA_FIELDS = "id idMal startDate { year } synonyms title { userPreferred english romaji native }";
 	var toEntry = (row, media) => {
@@ -2338,6 +2518,7 @@
 	async function runSync(types = [...TYPES], opts = {}) {
 		logDebug("[SYNC]", "runSync initiated for types:", types, "options:", opts);
 		if (syncStatus.syncing) return log("Sync already running.");
+		if (!onAniList()) return log("Open AniList to run a sync — it needs your AniList login.", "warn");
 		if (!AniList.hasAuth() || !store$1.get("mal_token")) return log("Connect both AniList and MAL first.");
 		if (navigator.onLine === false) return log("You appear to be offline; sync skipped.");
 		syncStatus.syncing = true;
@@ -2417,7 +2598,7 @@
 		runSync([...TYPES], { full: true });
 	}
 	function maybeAutoSync() {
-		if (!Settings.get("syncEnabled") || syncStatus.syncing || Date.now() < syncStatus.autoSyncRetryAfter || navigator.onLine === false) return;
+		if (!onAniList() || !Settings.get("syncEnabled") || syncStatus.syncing || Date.now() < syncStatus.autoSyncRetryAfter || navigator.onLine === false) return;
 		if (!AniList.hasAuth() || !store$1.get("mal_token")) return;
 		const retryAt = Number(store$1.get("sync_retry_at", 0)) || 0;
 		if (retryAt > 0 && Date.now() < retryAt) return;
@@ -6055,8 +6236,11 @@
 				time: Date.now(),
 				msg: clone(d)
 			};
-			rpcCache.delete(p.key);
-			rpcCache.set(p.key, cached);
+			const keysToSet = [p.key, ...p.extraKeys || []];
+			for (const k of keysToSet) {
+				rpcCache.delete(k);
+				rpcCache.set(k, cached);
+			}
 			while (rpcCache.size > RPC_MAX_ENTRIES) rpcCache.delete(rpcCache.keys().next().value);
 		});
 	};
@@ -6278,6 +6462,54 @@
 					if (!yielded() && isRpcFetch(data)) {
 						const id = String(data.id || "");
 						if (id.startsWith("alfl_prefetch_")) return origPost.apply(this, [data, ...rest]);
+						const blocker = win.__ALFL_RPC_BLOCK__;
+						if (typeof blocker === "function" && blocker(String(data.params[1]), data.params[2])) {
+							logDebug("[FASTLOAD RPC] Blocked request:", JSON.stringify(data.params[2]).slice(0, 60));
+							const pageId = data.params[2]?.id ? `listComparison-${data.params[2].id}` : "listComparison";
+							const pageNum = data.params[2]?.page || 1;
+							const dummyResult = {
+								entities: { page: { [pageId]: {
+									pageInfo: {
+										total: 0,
+										perPage: 30,
+										currentPage: pageNum,
+										lastPage: 1,
+										hasNextPage: false
+									},
+									pageData: []
+								} } },
+								result: pageId,
+								data: { Page: {
+									pageInfo: {
+										total: 0,
+										perPage: 30,
+										currentPage: pageNum,
+										lastPage: 1,
+										hasNextPage: false
+									},
+									mediaList: []
+								} }
+							};
+							setTimeout(() => {
+								try {
+									this.dispatchEvent(new MessageEvent("message", { data: {
+										type: "RPC",
+										id: data.id,
+										result: dummyResult
+									} }));
+								} catch {
+									const ev = (win.document || document).createEvent("Event");
+									ev.initEvent("message", false, false);
+									ev.data = {
+										type: "RPC",
+										id: data.id,
+										result: dummyResult
+									};
+									this.dispatchEvent(ev);
+								}
+							}, 0);
+							return;
+						}
 						if (!watched.has(this)) {
 							watched.add(this);
 							this.addEventListener("message", onIn);
@@ -6322,12 +6554,13 @@
 							const label = String(q.query).replace(/\s+/g, " ").slice(0, 50);
 							let hit = null;
 							let flying = null;
+							let extraKeys;
 							if (isMediaListQuery(q)) {
 								let { type = "ANIME", userId, userName } = normalizeVariables(q.variables);
 								if (!userName && userId) userName = idToUserMap.get(userId);
 								if (!userId && userName) userId = userMap.get(userName.toLowerCase());
-								const possibleKeys = [key, ...getMediaListKeys(type || "ANIME", userId, userName)];
-								for (const k of possibleKeys) {
+								extraKeys = [key, ...getMediaListKeys(type || "ANIME", userId, userName)];
+								for (const k of extraKeys) {
 									if (!hit) {
 										const h = rpcCache.get(k);
 										if (h && h.time >= freshFloor && Date.now() - h.time < 3e5) hit = h;
@@ -6381,7 +6614,8 @@
 							pMap.set(id, {
 								key,
 								mutation: false,
-								epoch: rpcEpoch
+								epoch: rpcEpoch,
+								extraKeys
 							});
 						}
 					}
@@ -6545,7 +6779,8 @@
 		if (authHeader && authHeader.startsWith("Bearer ")) {
 			if (authHeader.slice(7).trim()) store$1.set("al_token_auth", authHeader);
 		}
-		const bypass = !isMediaListQuery(parsed) && (isVolatile(parsed) || noStore(desc));
+		const mediaList = isMediaListQuery(parsed);
+		const bypass = noStore(desc) || !mediaList && isVolatile(parsed);
 		return {
 			desc,
 			parsed,
@@ -6557,6 +6792,25 @@
 		const { desc, parsed } = job;
 		if (init?.signal?.aborted) return nativeFetch(input, init);
 		if (!replay) attempt(() => rememberQuery(desc, parsed));
+		const blocker = win.__ALFL_RPC_BLOCK__;
+		if (typeof blocker === "function" && blocker(parsed?.query, parsed?.variables)) {
+			logDebug("[FASTLOAD] Blocked GQL fetch via __ALFL_RPC_BLOCK__:", JSON.stringify(parsed?.variables));
+			const dummy = { data: { Page: {
+				pageInfo: {
+					total: 0,
+					perPage: 30,
+					currentPage: parsed?.variables?.page || 1,
+					lastPage: 1,
+					hasNextPage: false
+				},
+				mediaList: []
+			} } };
+			const ResponseCtor = win.Response || Response;
+			return Promise.resolve(new ResponseCtor(JSON.stringify(dummy), {
+				status: 200,
+				headers: { "content-type": "application/json" }
+			}));
+		}
 		let key = "";
 		let ttl = CFG.gqlTtl;
 		try {
@@ -6974,6 +7228,7 @@
 		const now = Date.now();
 		if (doc.hidden || now < pausedUntil || navigator.connection?.saveData) return;
 		const path = win.location.pathname;
+		if (path.toLowerCase().includes("/compare")) return;
 		const viewer = getViewerFromWindow();
 		const myId = viewer.id || Number(store$1.get("al_user_id", 0));
 		const myName = viewer.name || store$1.get("al_username", null);
@@ -7847,7 +8102,7 @@
 				}
 				if (stale()) return;
 				if (!info || !fmt) {
-					if (!AniList.hasAuth() || !fmt) return renderConnect(key, "none");
+					if (!AniList.hasAuth()) return renderConnect(key, "none");
 					retry = {
 						key,
 						at: Date.now() + 15e3,
@@ -9275,6 +9530,7 @@
 		let isMutatingDOM = false;
 		let loadAbortState = null;
 		let resizeCleanup = null;
+		let indicatorTimer = null;
 		function getCompareVue() {
 			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
 			const scrollerEl = win.document?.querySelector?.(".scroller") || document.querySelector(".scroller");
@@ -9282,6 +9538,33 @@
 			const compareEl = win.document?.querySelector?.(".compare") || document.querySelector(".compare");
 			if (compareEl && compareEl.__vue__) return compareEl.__vue__;
 			return null;
+		}
+		const pageWin = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+		const setRpcBlock = (fn) => {
+			pageWin.__ALFL_RPC_BLOCK__ = fn;
+		};
+		function disableNativeScrollers(listContainer) {
+			(listContainer || document).querySelectorAll(".scroller").forEach((el) => {
+				try {
+					const v = el.__vue__;
+					if (v) {
+						if (typeof v.check === "function") {
+							window.removeEventListener("scroll", v.check);
+							window.removeEventListener("resize", v.check);
+							v._scrollContainer?.removeEventListener?.("scroll", v.check);
+							v._scrollContainer?.removeEventListener?.("resize", v.check);
+						}
+						v.execute = () => {};
+						v.handler = () => {};
+						if (v.$parent) {
+							v.$parent.complete = true;
+							v.$parent.loading = false;
+						}
+						v.$destroy?.();
+					}
+				} catch {}
+				el.remove();
+			});
 		}
 		async function resolveCompareUsers() {
 			const type = location.pathname.toLowerCase().includes("mangalist") ? "MANGA" : "ANIME";
@@ -9312,6 +9595,13 @@
 				if (nuxtUser) {
 					if (!viewerId && nuxtUser.id) viewerId = Number(nuxtUser.id);
 					if (!viewerName && nuxtUser.name) viewerName = String(nuxtUser.name);
+				}
+			}
+			if (!viewerId || !viewerName) {
+				const viewer = await AniList.viewer();
+				if (viewer) {
+					viewerId = viewer.id;
+					viewerName = viewer.name;
 				}
 			}
 			if (!viewerId && viewerName && userMap) viewerId = userMap.get(viewerName.toLowerCase());
@@ -9437,6 +9727,10 @@
 			if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
 		}
 		function setLoadIndicator(sidebar, text) {
+			if (indicatorTimer) {
+				clearTimeout(indicatorTimer);
+				indicatorTimer = null;
+			}
 			let indicator = sidebar.querySelector("#ala-compare-load-indicator");
 			if (!text) {
 				indicator?.remove();
@@ -9456,12 +9750,40 @@
 			const textEl = indicator.querySelector(".ala-compare-load-text");
 			if (textEl) textEl.textContent = text;
 		}
-		async function loadAllEntriesViaMediaList(listContainer, sidebar) {
+		function getActiveCompareContainer(fallback) {
+			return document.getElementById("ala-compare-table") || fallback || document.querySelector(".ala-compare-main .compare") || null;
+		}
+		function triggerFilterUpdate(sidebar, fallback) {
+			const badge = sidebar.querySelector(".ala-compare-active-badge");
+			if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
+			const target = getActiveCompareContainer(fallback);
+			if (!target) return;
+			applyFilter(target, Array.from(target.querySelectorAll(".entry:not(.header)")));
+		}
+		function triggerSort(col, fallback) {
+			if (activeSortCol === col) activeSortDir = activeSortDir === "asc" ? "desc" : "asc";
+			else {
+				activeSortCol = col;
+				activeSortDir = col === "title" ? "asc" : "desc";
+			}
+			const target = getActiveCompareContainer(fallback);
+			if (!target) return;
+			const currentHeader = target.querySelector(".entry.header");
+			if (currentHeader) {
+				const titleH = currentHeader.querySelector(".title");
+				const scores = currentHeader.querySelectorAll(".score");
+				updateSortArrows(titleH, scores[0] || null, scores[1] || null, activeSortCol, activeSortDir);
+			}
+			applySort(target, Array.from(target.querySelectorAll(".entry:not(.header)")), activeSortCol, activeSortDir);
+		}
+		async function loadAllEntriesViaMediaList(compareRoot, sidebar) {
 			if (isLoadingAll || isCompareLoaded || loadFailed) return;
 			isLoadingAll = true;
 			const abortState = { abort: false };
 			loadAbortState = abortState;
-			setLoadIndicator(sidebar, "Resolving user lists...");
+			indicatorTimer = setTimeout(() => {
+				if (!abortState.abort && isComparePage()) setLoadIndicator(sidebar, "Loading full compare list...");
+			}, 250);
 			try {
 				const { viewerId, viewerName, otherId, otherName, type } = await resolveCompareUsers();
 				if (abortState.abort || !isComparePage()) return;
@@ -9469,9 +9791,9 @@
 				const otherTarget = otherId || otherName;
 				if (!viewerTarget || !otherTarget) {
 					logDebug("[COMPARE] Missing viewer or other user for getMediaList, keeping fallback");
+					loadFailed = true;
 					return;
 				}
-				setLoadIndicator(sidebar, "Loading compare collections...");
 				const [myListRes, otherListRes] = await Promise.all([AniList.getMediaList(viewerTarget, type, {
 					userId: viewerId,
 					userName: viewerId ? void 0 : viewerName
@@ -9482,10 +9804,13 @@
 				if (abortState.abort || !isComparePage()) return;
 				const myMap = new Map();
 				for (const entry of myListRes.allEntries) myMap.set(entry.mediaId, entry);
+				const displayOtherName = otherListRes.user?.name || otherName || "User";
+				const scopeAttr = Array.from(compareRoot.attributes).map((a) => a.name).find((n) => /^data-v-[a-f0-9]+$/i.test(n));
 				const matchedNodes = [];
 				for (const otherEntry of otherListRes.allEntries) {
 					const myEntry = myMap.get(otherEntry.mediaId);
 					if (!myEntry) continue;
+					const mediaId = otherEntry.mediaId;
 					const title = otherEntry.media?.title?.userPreferred || otherEntry.media?.title?.romaji || otherEntry.media?.title?.english || myEntry.media?.title?.userPreferred || "Unknown";
 					const yourScore = myEntry.score || 0;
 					const otherScore = otherEntry.score || 0;
@@ -9493,14 +9818,15 @@
 					const otherStatus = normalizeStatus(otherEntry.status);
 					const row = document.createElement("div");
 					row.className = "entry";
+					if (scopeAttr) row.setAttribute(scopeAttr, "");
 					row.innerHTML = `
-            <div class="title">
-              <a href="/${type.toLowerCase()}/${otherEntry.mediaId}" class="title"></a>
+            <div class="title"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
+              <a href="/${type.toLowerCase()}/${mediaId}/" class=""${scopeAttr ? ` ${scopeAttr}=""` : ""}></a>
             </div>
-            <div class="score" label="Score" score="${yourScore}"><span>${yourScore > 0 ? yourScore : ""}</span></div>
-            <div class="score" score="${otherScore}"><span>${otherScore > 0 ? otherScore : ""}</span></div>
-            <div class="status" label="Your Status"><span>${yourStatus}</span></div>
-            <div class="status"><span>${otherStatus}</span></div>
+            <div class="score" label="Score" score="${yourScore}"${scopeAttr ? ` ${scopeAttr}=""` : ""}><span>${yourScore > 0 ? yourScore : "0"}</span></div>
+            <div class="score" label="${displayOtherName}'s Score" score="${otherScore}"${scopeAttr ? ` ${scopeAttr}=""` : ""}><span>${otherScore > 0 ? otherScore : "0"}</span></div>
+            <div class="status" label="Your Status"${scopeAttr ? ` ${scopeAttr}=""` : ""}><span>${yourStatus}</span></div>
+            <div class="status" label="${displayOtherName}'s Status"${scopeAttr ? ` ${scopeAttr}=""` : ""}><span>${otherStatus}</span></div>
           `;
 					const link = row.querySelector(".title a");
 					if (link) link.textContent = title;
@@ -9515,28 +9841,75 @@
 					matchedNodes.push(row);
 				}
 				logDebug("[COMPARE] Matched entries via MediaListCollection:", matchedNodes.length);
-				const vue = getCompareVue();
-				if (vue) {
-					vue.hasNextPage = false;
-					vue.complete = true;
-					vue.loading = false;
-					if (typeof vue.scrollHandler === "function") vue.scrollHandler = () => {};
+				const main = compareRoot.parentElement || document.querySelector(".ala-compare-main");
+				if (!main) return;
+				let customTable = main.querySelector("#ala-compare-table");
+				if (!customTable) {
+					customTable = document.createElement("div");
+					customTable.id = "ala-compare-table";
+					customTable.className = "compare";
+					if (scopeAttr) customTable.setAttribute(scopeAttr, "");
+					main.appendChild(customTable);
 				}
-				const scrollerEl = listContainer.querySelector(".scroller");
-				if (scrollerEl) scrollerEl.remove();
+				let customHeader = customTable.querySelector(".entry.header");
+				if (!customHeader) {
+					customHeader = document.createElement("div");
+					customHeader.className = "entry header";
+					if (scopeAttr) customHeader.setAttribute(scopeAttr, "");
+					customHeader.innerHTML = `
+            <div class="title ala-sortable-header"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
+              <div class="ala-header-wrap"><span class="ala-header-label">Title</span></div>
+            </div>
+            <div class="score ala-sortable-header"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
+              <div class="ala-header-wrap"><span class="ala-header-label">Your Score</span></div>
+            </div>
+            <div class="score ala-sortable-header"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
+              <div class="ala-header-wrap"><span class="ala-header-label">${displayOtherName}'s Score</span></div>
+            </div>
+            <div class="status"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
+              <span class="ala-header-label">Your Status</span>
+            </div>
+            <div class="status"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
+              <span class="ala-header-label">${displayOtherName}'s Status</span>
+            </div>
+          `;
+					customTable.appendChild(customHeader);
+					const titleH = customHeader.querySelector(".title");
+					const scores = customHeader.querySelectorAll(".score");
+					titleH?.addEventListener("click", () => triggerSort("title", compareRoot));
+					scores[0]?.addEventListener("click", () => triggerSort("yourScore", compareRoot));
+					scores[1]?.addEventListener("click", () => triggerSort("otherScore", compareRoot));
+				}
+				const titleH = customHeader.querySelector(".title");
+				const scores = customHeader.querySelectorAll(".score");
+				updateSortArrows(titleH, scores[0] || null, scores[1] || null, activeSortCol, activeSortDir);
 				matchedNodes.sort((a, b) => {
 					return compareEntries(getEntryData(a), getEntryData(b), activeSortCol, activeSortDir);
 				});
 				isMutatingDOM = true;
-				listContainer.querySelectorAll(".entry:not(.header)").forEach((el) => el.remove());
+				customTable.querySelectorAll(".entry:not(.header)").forEach((el) => el.remove());
 				const frag = document.createDocumentFragment();
 				for (const el of matchedNodes) frag.appendChild(el);
-				listContainer.appendChild(frag);
+				customTable.appendChild(frag);
+				if (matchedNodes.length === 0) {
+					let empty = customTable.querySelector(".no-results");
+					if (!empty) {
+						empty = document.createElement("div");
+						empty.className = "no-results";
+						empty.textContent = `You don't have any ${type.toLowerCase()} in common ｡ﾟヽ(ﾟ´Д｀)ﾉﾟ｡`;
+						customTable.appendChild(empty);
+					}
+				}
+				const emptyEl = customTable.querySelector(".ala-compare-empty");
+				if (emptyEl) customTable.appendChild(emptyEl);
+				isMutatingDOM = false;
+				compareRoot.style.display = "none";
+				disableNativeScrollers(compareRoot);
 				lastProcessedCount = matchedNodes.length;
 				isCompareLoaded = true;
+				setRpcBlock((q) => isComparePage() && /\bcompareWithAuthList\b/i.test(q || ""));
 				updateStatusCounts(sidebar, matchedNodes);
-				applyFilter(listContainer, matchedNodes);
-				isMutatingDOM = false;
+				applyFilter(customTable, matchedNodes);
 			} catch (err) {
 				loadFailed = true;
 				console.error("[AL-Additions] CompareView getMediaList error:", err);
@@ -9547,6 +9920,11 @@
 			}
 		}
 		function cleanup() {
+			setRpcBlock();
+			if (indicatorTimer) {
+				clearTimeout(indicatorTimer);
+				indicatorTimer = null;
+			}
 			if (loadAbortState) {
 				loadAbortState.abort = true;
 				loadAbortState = null;
@@ -9559,11 +9937,23 @@
 				resizeCleanup();
 				resizeCleanup = null;
 			}
+			const customTable = document.getElementById("ala-compare-table");
+			if (customTable) customTable.remove();
 			const wrap = document.getElementById("ala-compare-wrap");
 			if (wrap) {
-				const compareRoot = wrap.querySelector(".ala-compare-main")?.firstElementChild;
-				if (compareRoot && wrap.parentElement) wrap.parentElement.insertBefore(compareRoot, wrap);
+				const main = wrap.querySelector(".ala-compare-main");
+				const compareRoot = main?.querySelector(".compare:not(#ala-compare-table)") || main?.firstElementChild;
+				if (compareRoot && wrap.parentElement) {
+					if (compareRoot.style) compareRoot.style.display = "";
+					wrap.parentElement.insertBefore(compareRoot, wrap);
+				}
 				wrap.remove();
+			} else {
+				const compareRoot = document.querySelector(".compare:not(#ala-compare-table)");
+				if (compareRoot) {
+					delete compareRoot.dataset.alaCompareInit;
+					compareRoot.style.display = "";
+				}
 			}
 			document.querySelectorAll(".ala-compare-page-container").forEach((el) => {
 				el.classList.remove("ala-compare-page-container");
@@ -9571,7 +9961,7 @@
 			document.querySelectorAll(".compare .entry.ala-hidden").forEach((el) => {
 				el.classList.remove("ala-hidden");
 			});
-			const header = document.querySelector(".entry.header");
+			const header = document.querySelector(".compare:not(#ala-compare-table) .entry.header, .entry.header");
 			if (header) {
 				delete header._alaHeaderBound;
 				delete header.dataset.alaCompareInit;
@@ -9588,16 +9978,14 @@
 			}
 			lastProcessedCount = -1;
 		}
-		function setupCompareView(header, listContainer, entries) {
-			header.querySelectorAll(".status").forEach((statusEl) => {
+		function setupCompareView(compareRoot, header, entries) {
+			if (header) header.querySelectorAll(".status").forEach((statusEl) => {
 				if (!statusEl.querySelector(".ala-header-label")) statusEl.innerHTML = `<span class="ala-header-label">${statusEl.textContent?.trim() || ""}</span>`;
 			});
-			const headerCells = Array.from(header.children);
-			if (headerCells.length < 3) return;
-			const titleHeader = header.querySelector(".title") || headerCells.find((el) => /title/i.test(el.textContent || "")) || headerCells[0];
-			const yourScoreHeader = headerCells.find((el) => /your score/i.test(el.textContent || "")) || header.querySelector(".score:first-of-type") || headerCells[1];
-			const otherScoreHeader = headerCells.find((el) => el !== yourScoreHeader && /score/i.test(el.textContent || "")) || header.querySelectorAll(".score")[1] || headerCells[2];
-			const compareRoot = header.closest(".compare") || listContainer;
+			const headerCells = header ? Array.from(header.children) : [];
+			const titleHeader = headerCells.length >= 3 ? header.querySelector(".title") || headerCells.find((el) => /title/i.test(el.textContent || "")) || headerCells[0] : null;
+			const yourScoreHeader = headerCells.length >= 3 ? headerCells.find((el) => /your score/i.test(el.textContent || "")) || header.querySelector(".score:first-of-type") || headerCells[1] : null;
+			const otherScoreHeader = headerCells.length >= 3 ? headerCells.find((el) => el !== yourScoreHeader && /score/i.test(el.textContent || "")) || header.querySelectorAll(".score")[1] || headerCells[2] : null;
 			const container = compareRoot.closest(".content.container") || compareRoot.parentElement;
 			if (container) container.classList.add("ala-compare-page-container");
 			let wrap = document.getElementById("ala-compare-wrap");
@@ -9669,50 +10057,51 @@
 						const st = cb.dataset.status;
 						if (cb.checked) activeStatuses.add(st);
 						else activeStatuses.delete(st);
-						const badge = sidebar?.querySelector(".ala-compare-active-badge");
-						if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
-						applyFilter(listContainer, Array.from(listContainer.querySelectorAll(".entry:not(.header)")));
+						triggerFilterUpdate(sidebar, compareRoot);
 					});
 				});
 				sidebar.querySelector("#ala-compare-all")?.addEventListener("click", () => {
 					for (const s of STATUSES) activeStatuses.add(s);
 					sidebar?.querySelectorAll(".ala-compare-cb").forEach((cb) => cb.checked = true);
-					const badge = sidebar?.querySelector(".ala-compare-active-badge");
-					if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
-					applyFilter(listContainer, Array.from(listContainer.querySelectorAll(".entry:not(.header)")));
+					triggerFilterUpdate(sidebar, compareRoot);
 				});
 				sidebar.querySelector("#ala-compare-none")?.addEventListener("click", () => {
 					activeStatuses.clear();
 					sidebar?.querySelectorAll(".ala-compare-cb").forEach((cb) => cb.checked = false);
-					const badge = sidebar?.querySelector(".ala-compare-active-badge");
-					if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
-					applyFilter(listContainer, Array.from(listContainer.querySelectorAll(".entry:not(.header)")));
+					triggerFilterUpdate(sidebar, compareRoot);
 				});
 			}
-			if (sidebar) updateStatusCounts(sidebar, entries);
-			if (!header._alaHeaderBound) {
+			if (sidebar && entries.length > 0) updateStatusCounts(sidebar, entries);
+			if (header && titleHeader && yourScoreHeader && otherScoreHeader && !header._alaHeaderBound) {
 				header._alaHeaderBound = true;
 				const attachSortClick = (el, col) => {
 					if (!el) return;
 					el.addEventListener("click", () => {
-						if (activeSortCol === col) activeSortDir = activeSortDir === "asc" ? "desc" : "asc";
-						else {
-							activeSortCol = col;
-							activeSortDir = col === "title" ? "asc" : "desc";
-						}
-						updateSortArrows(titleHeader, yourScoreHeader, otherScoreHeader, activeSortCol, activeSortDir);
-						applySort(listContainer, Array.from(listContainer.querySelectorAll(".entry:not(.header)")), activeSortCol, activeSortDir);
+						triggerSort(col, compareRoot);
 					});
 				};
 				attachSortClick(titleHeader, "title");
 				attachSortClick(yourScoreHeader, "yourScore");
 				attachSortClick(otherScoreHeader, "otherScore");
 			}
-			header.dataset.alaCompareInit = "true";
-			updateSortArrows(titleHeader, yourScoreHeader, otherScoreHeader, activeSortCol, activeSortDir);
-			applyFilter(listContainer, entries);
-			applySort(listContainer, entries, activeSortCol, activeSortDir);
-			if (!isLoadingAll && !isCompareLoaded && !loadFailed && sidebar) loadAllEntriesViaMediaList(listContainer, sidebar);
+			if (header && titleHeader) {
+				header.dataset.alaCompareInit = "true";
+				updateSortArrows(titleHeader, yourScoreHeader, otherScoreHeader, activeSortCol, activeSortDir);
+			}
+			compareRoot.dataset.alaCompareInit = "true";
+			entries.forEach((el) => {
+				el.querySelectorAll(".score").forEach((scoreEl) => {
+					const text = scoreEl.textContent?.trim();
+					if (!text || text === "") scoreEl.textContent = "0";
+				});
+			});
+			disableNativeScrollers(compareRoot);
+			if (entries.length > 0) {
+				applyFilter(compareRoot, entries);
+				applySort(compareRoot, entries, activeSortCol, activeSortDir);
+			}
+			setRpcBlock((q) => isComparePage() && /\bcompareWithAuthList\b/i.test(q || ""));
+			if (!isLoadingAll && !isCompareLoaded && !loadFailed && sidebar) loadAllEntriesViaMediaList(compareRoot, sidebar);
 		}
 		const checkView = debounce(() => {
 			if (isMutatingDOM) return;
@@ -9731,23 +10120,30 @@
 				for (const s of STATUSES) activeStatuses.add(s);
 				cleanup();
 			}
-			const header = document.querySelector(".entry.header");
-			if (!header) return;
-			const listContainer = header.parentElement;
-			if (!listContainer) return;
-			const entries = Array.from(listContainer.querySelectorAll(".entry:not(.header)"));
-			if (entries.length === 0) return;
-			if (!header.dataset.alaCompareInit || !isCompareLoaded && entries.length !== lastProcessedCount) {
+			if (isCompareLoaded) return;
+			const compareRoot = document.querySelector(".compare:not(#ala-compare-table)");
+			if (!compareRoot) return;
+			const header = compareRoot.querySelector(".entry.header");
+			const entries = Array.from(compareRoot.querySelectorAll(".entry:not(.header)"));
+			if (!compareRoot.dataset.alaCompareInit || !isCompareLoaded && entries.length !== lastProcessedCount) {
 				lastProcessedCount = entries.length;
-				setupCompareView(header, listContainer, entries);
+				setupCompareView(compareRoot, header, entries);
 			}
 		}, 60);
+		const installBlocker = () => {
+			setRpcBlock((q) => isComparePage() && /\bcompareWithAuthList\b/i.test(q || ""));
+		};
+		installBlocker();
 		Core.ready(checkView);
 		Core.onNavigate(() => {
+			installBlocker();
 			checkView();
 		});
 		Core.onBodyMutation(() => {
-			if (isComparePage() && !isMutatingDOM) checkView();
+			if (isComparePage() && !isMutatingDOM) {
+				installBlocker();
+				checkView();
+			}
 		});
 	});
 	addStyle("almal-style", `

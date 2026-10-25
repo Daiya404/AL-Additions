@@ -5,7 +5,7 @@ import { debounce, logDebug, store } from '../utils/helpers';
 import { unsafeWindow } from 'vite-plugin-monkey/dist/client';
 import { AniList, type MediaListEntryItem } from '../api/anilist';
 
-interface EntryData {
+export interface EntryData {
   el: HTMLElement;
   title: string;
   yourScore: number;
@@ -14,9 +14,9 @@ interface EntryData {
   otherStatus: string;
 }
 
-const STATUSES = ['Completed', 'Planning', 'Current', 'Paused', 'Dropped'] as const;
+export const STATUSES = ['Completed', 'Planning', 'Current', 'Paused', 'Dropped'] as const;
 
-function normalizeStatus(raw: string): string {
+export function normalizeStatus(raw: string): string {
   const s = (raw || '').trim().toLowerCase();
   if (s.includes('plan')) return 'Planning';
   if (s.includes('complete')) return 'Completed';
@@ -26,7 +26,15 @@ function normalizeStatus(raw: string): string {
   return raw ? raw.trim() : 'Planning';
 }
 
-function getEntryData(el: HTMLElement): EntryData {
+export function getEntryMediaId(el: HTMLElement): number | null {
+  const link = el.querySelector<HTMLAnchorElement>('.title a, a.title');
+  if (!link) return null;
+  const href = link.getAttribute('href') || link.pathname || '';
+  const m = href.match(/\/(?:anime|manga)\/(\d+)/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+export function getEntryData(el: HTMLElement): EntryData {
   const cached = (el as any)._alaCompareData as EntryData | undefined;
   if (cached) return cached;
 
@@ -61,7 +69,7 @@ function getEntryData(el: HTMLElement): EntryData {
   return data;
 }
 
-function compareEntries(
+export function compareEntries(
   a: EntryData,
   b: EntryData,
   col: 'title' | 'yourScore' | 'otherScore',
@@ -388,6 +396,7 @@ defineFeature(
     let isMutatingDOM = false;
     let loadAbortState: { abort: boolean } | null = null;
     let resizeCleanup: (() => void) | null = null;
+    let indicatorTimer: ReturnType<typeof setTimeout> | null = null;
 
     function getCompareVue(): any {
       const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
@@ -400,6 +409,36 @@ defineFeature(
         return (compareEl as any).__vue__;
       }
       return null;
+    }
+
+    const pageWin = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+    const setRpcBlock = (fn?: (query: string, vars: any) => boolean): void => {
+      pageWin.__ALFL_RPC_BLOCK__ = fn;
+    };
+
+    function disableNativeScrollers(listContainer?: HTMLElement): void {
+      const root = listContainer || document;
+      root.querySelectorAll<HTMLElement>('.scroller').forEach((el) => {
+        try {
+          const v = (el as any).__vue__;
+          if (v) {
+            if (typeof v.check === 'function') {
+              window.removeEventListener('scroll', v.check);
+              window.removeEventListener('resize', v.check);
+              v._scrollContainer?.removeEventListener?.('scroll', v.check);
+              v._scrollContainer?.removeEventListener?.('resize', v.check);
+            }
+            v.execute = () => {};
+            v.handler = () => {};
+            if (v.$parent) {
+              v.$parent.complete = true;
+              v.$parent.loading = false;
+            }
+            v.$destroy?.();
+          }
+        } catch {}
+        el.remove();
+      });
     }
 
     async function resolveCompareUsers(): Promise<{
@@ -448,6 +487,14 @@ defineFeature(
         if (nuxtUser) {
           if (!viewerId && nuxtUser.id) viewerId = Number(nuxtUser.id);
           if (!viewerName && nuxtUser.name) viewerName = String(nuxtUser.name);
+        }
+      }
+
+      if (!viewerId || !viewerName) {
+        const viewer = await AniList.viewer();
+        if (viewer) {
+          viewerId = viewer.id;
+          viewerName = viewer.name;
         }
       }
 
@@ -625,6 +672,10 @@ defineFeature(
     }
 
     function setLoadIndicator(sidebar: HTMLElement, text: string | null): void {
+      if (indicatorTimer) {
+        clearTimeout(indicatorTimer);
+        indicatorTimer = null;
+      }
       let indicator = sidebar.querySelector<HTMLElement>('#ala-compare-load-indicator');
       if (!text) {
         indicator?.remove();
@@ -646,8 +697,40 @@ defineFeature(
       if (textEl) textEl.textContent = text;
     }
 
+    function getActiveCompareContainer(fallback?: HTMLElement): HTMLElement | null {
+      return document.getElementById('ala-compare-table') || fallback || document.querySelector('.ala-compare-main .compare') || null;
+    }
+
+    function triggerFilterUpdate(sidebar: HTMLElement, fallback?: HTMLElement): void {
+      const badge = sidebar.querySelector<HTMLElement>('.ala-compare-active-badge');
+      if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
+      const target = getActiveCompareContainer(fallback);
+      if (!target) return;
+      const currentEntries = Array.from(target.querySelectorAll<HTMLElement>('.entry:not(.header)'));
+      applyFilter(target, currentEntries);
+    }
+
+    function triggerSort(col: 'title' | 'yourScore' | 'otherScore', fallback?: HTMLElement): void {
+      if (activeSortCol === col) {
+        activeSortDir = activeSortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        activeSortCol = col;
+        activeSortDir = col === 'title' ? 'asc' : 'desc';
+      }
+      const target = getActiveCompareContainer(fallback);
+      if (!target) return;
+      const currentHeader = target.querySelector<HTMLElement>('.entry.header');
+      if (currentHeader) {
+        const titleH = currentHeader.querySelector<HTMLElement>('.title');
+        const scores = currentHeader.querySelectorAll<HTMLElement>('.score');
+        updateSortArrows(titleH, scores[0] || null, scores[1] || null, activeSortCol, activeSortDir);
+      }
+      const currentEntries = Array.from(target.querySelectorAll<HTMLElement>('.entry:not(.header)'));
+      applySort(target, currentEntries, activeSortCol, activeSortDir);
+    }
+
     async function loadAllEntriesViaMediaList(
-      listContainer: HTMLElement,
+      compareRoot: HTMLElement,
       sidebar: HTMLElement
     ): Promise<void> {
       if (isLoadingAll || isCompareLoaded || loadFailed) return;
@@ -655,7 +738,11 @@ defineFeature(
       const abortState = { abort: false };
       loadAbortState = abortState;
 
-      setLoadIndicator(sidebar, 'Resolving user lists...');
+      indicatorTimer = setTimeout(() => {
+        if (!abortState.abort && isComparePage()) {
+          setLoadIndicator(sidebar, 'Loading full compare list...');
+        }
+      }, 250);
 
       try {
         const { viewerId, viewerName, otherId, otherName, type } = await resolveCompareUsers();
@@ -666,10 +753,9 @@ defineFeature(
 
         if (!viewerTarget || !otherTarget) {
           logDebug('[COMPARE] Missing viewer or other user for getMediaList, keeping fallback');
+          loadFailed = true;
           return;
         }
-
-        setLoadIndicator(sidebar, 'Loading compare collections...');
 
         const [myListRes, otherListRes] = await Promise.all([
           AniList.getMediaList(viewerTarget, type, {
@@ -689,11 +775,17 @@ defineFeature(
           myMap.set(entry.mediaId, entry);
         }
 
+        const displayOtherName = otherListRes.user?.name || otherName || 'User';
+        const scopeAttr = Array.from(compareRoot.attributes)
+          .map((a) => a.name)
+          .find((n) => /^data-v-[a-f0-9]+$/i.test(n));
+
         const matchedNodes: HTMLElement[] = [];
         for (const otherEntry of otherListRes.allEntries) {
           const myEntry = myMap.get(otherEntry.mediaId);
           if (!myEntry) continue;
 
+          const mediaId = otherEntry.mediaId;
           const title =
             otherEntry.media?.title?.userPreferred ||
             otherEntry.media?.title?.romaji ||
@@ -708,14 +800,15 @@ defineFeature(
 
           const row = document.createElement('div');
           row.className = 'entry';
+          if (scopeAttr) row.setAttribute(scopeAttr, '');
           row.innerHTML = `
-            <div class="title">
-              <a href="/${type.toLowerCase()}/${otherEntry.mediaId}" class="title"></a>
+            <div class="title"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
+              <a href="/${type.toLowerCase()}/${mediaId}/" class=""${scopeAttr ? ` ${scopeAttr}=""` : ''}></a>
             </div>
-            <div class="score" label="Score" score="${yourScore}"><span>${yourScore > 0 ? yourScore : ''}</span></div>
-            <div class="score" score="${otherScore}"><span>${otherScore > 0 ? otherScore : ''}</span></div>
-            <div class="status" label="Your Status"><span>${yourStatus}</span></div>
-            <div class="status"><span>${otherStatus}</span></div>
+            <div class="score" label="Score" score="${yourScore}"${scopeAttr ? ` ${scopeAttr}=""` : ''}><span>${yourScore > 0 ? yourScore : '0'}</span></div>
+            <div class="score" label="${displayOtherName}'s Score" score="${otherScore}"${scopeAttr ? ` ${scopeAttr}=""` : ''}><span>${otherScore > 0 ? otherScore : '0'}</span></div>
+            <div class="status" label="Your Status"${scopeAttr ? ` ${scopeAttr}=""` : ''}><span>${yourStatus}</span></div>
+            <div class="status" label="${displayOtherName}'s Status"${scopeAttr ? ` ${scopeAttr}=""` : ''}><span>${otherStatus}</span></div>
           `;
 
           const link = row.querySelector<HTMLAnchorElement>('.title a');
@@ -735,17 +828,52 @@ defineFeature(
 
         logDebug('[COMPARE] Matched entries via MediaListCollection:', matchedNodes.length);
 
-        const vue = getCompareVue();
-        if (vue) {
-          vue.hasNextPage = false;
-          vue.complete = true;
-          vue.loading = false;
-          if (typeof vue.scrollHandler === 'function') {
-            vue.scrollHandler = () => {};
-          }
+        const main = compareRoot.parentElement || document.querySelector('.ala-compare-main');
+        if (!main) return;
+
+        let customTable = main.querySelector<HTMLElement>('#ala-compare-table');
+        if (!customTable) {
+          customTable = document.createElement('div');
+          customTable.id = 'ala-compare-table';
+          customTable.className = 'compare';
+          if (scopeAttr) customTable.setAttribute(scopeAttr, '');
+          main.appendChild(customTable);
         }
-        const scrollerEl = listContainer.querySelector<HTMLElement>('.scroller');
-        if (scrollerEl) scrollerEl.remove();
+
+        let customHeader = customTable.querySelector<HTMLElement>('.entry.header');
+        if (!customHeader) {
+          customHeader = document.createElement('div');
+          customHeader.className = 'entry header';
+          if (scopeAttr) customHeader.setAttribute(scopeAttr, '');
+          customHeader.innerHTML = `
+            <div class="title ala-sortable-header"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
+              <div class="ala-header-wrap"><span class="ala-header-label">Title</span></div>
+            </div>
+            <div class="score ala-sortable-header"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
+              <div class="ala-header-wrap"><span class="ala-header-label">Your Score</span></div>
+            </div>
+            <div class="score ala-sortable-header"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
+              <div class="ala-header-wrap"><span class="ala-header-label">${displayOtherName}'s Score</span></div>
+            </div>
+            <div class="status"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
+              <span class="ala-header-label">Your Status</span>
+            </div>
+            <div class="status"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
+              <span class="ala-header-label">${displayOtherName}'s Status</span>
+            </div>
+          `;
+          customTable.appendChild(customHeader);
+
+          const titleH = customHeader.querySelector<HTMLElement>('.title');
+          const scores = customHeader.querySelectorAll<HTMLElement>('.score');
+          titleH?.addEventListener('click', () => triggerSort('title', compareRoot));
+          scores[0]?.addEventListener('click', () => triggerSort('yourScore', compareRoot));
+          scores[1]?.addEventListener('click', () => triggerSort('otherScore', compareRoot));
+        }
+
+        const titleH = customHeader.querySelector<HTMLElement>('.title');
+        const scores = customHeader.querySelectorAll<HTMLElement>('.score');
+        updateSortArrows(titleH, scores[0] || null, scores[1] || null, activeSortCol, activeSortDir);
 
         matchedNodes.sort((a, b) => {
           const dataA = getEntryData(a);
@@ -754,20 +882,38 @@ defineFeature(
         });
 
         isMutatingDOM = true;
-        listContainer.querySelectorAll('.entry:not(.header)').forEach((el) => el.remove());
+        customTable.querySelectorAll('.entry:not(.header)').forEach((el) => el.remove());
 
         const frag = document.createDocumentFragment();
         for (const el of matchedNodes) {
           frag.appendChild(el);
         }
-        listContainer.appendChild(frag);
+        customTable.appendChild(frag);
+
+        if (matchedNodes.length === 0) {
+          let empty = customTable.querySelector<HTMLElement>('.no-results');
+          if (!empty) {
+            empty = document.createElement('div');
+            empty.className = 'no-results';
+            empty.textContent = `You don't have any ${type.toLowerCase()} in common ｡ﾟヽ(ﾟ´Д｀)ﾉﾟ｡`;
+            customTable.appendChild(empty);
+          }
+        }
+
+        const emptyEl = customTable.querySelector('.ala-compare-empty');
+        if (emptyEl) customTable.appendChild(emptyEl);
+        isMutatingDOM = false;
+
+        compareRoot.style.display = 'none';
+        disableNativeScrollers(compareRoot);
 
         lastProcessedCount = matchedNodes.length;
         isCompareLoaded = true;
 
+        setRpcBlock((q) => isComparePage() && /\bcompareWithAuthList\b/i.test(q || ''));
+
         updateStatusCounts(sidebar, matchedNodes);
-        applyFilter(listContainer, matchedNodes);
-        isMutatingDOM = false;
+        applyFilter(customTable, matchedNodes);
       } catch (err) {
         loadFailed = true;
         console.error('[AL-Additions] CompareView getMediaList error:', err);
@@ -779,6 +925,11 @@ defineFeature(
     }
 
     function cleanup(): void {
+      setRpcBlock();
+      if (indicatorTimer) {
+        clearTimeout(indicatorTimer);
+        indicatorTimer = null;
+      }
       if (loadAbortState) {
         loadAbortState.abort = true;
         loadAbortState = null;
@@ -792,14 +943,26 @@ defineFeature(
         resizeCleanup = null;
       }
 
+      const customTable = document.getElementById('ala-compare-table');
+      if (customTable) customTable.remove();
+
       const wrap = document.getElementById('ala-compare-wrap');
       if (wrap) {
         const main = wrap.querySelector('.ala-compare-main');
-        const compareRoot = main?.firstElementChild;
+        const compareRoot = main?.querySelector<HTMLElement>('.compare:not(#ala-compare-table)') || main?.firstElementChild;
         if (compareRoot && wrap.parentElement) {
+          if ((compareRoot as HTMLElement).style) {
+            (compareRoot as HTMLElement).style.display = '';
+          }
           wrap.parentElement.insertBefore(compareRoot, wrap);
         }
         wrap.remove();
+      } else {
+        const compareRoot = document.querySelector<HTMLElement>('.compare:not(#ala-compare-table)');
+        if (compareRoot) {
+          delete compareRoot.dataset.alaCompareInit;
+          compareRoot.style.display = '';
+        }
       }
 
       document.querySelectorAll('.ala-compare-page-container').forEach((el) => {
@@ -810,7 +973,7 @@ defineFeature(
         el.classList.remove('ala-hidden');
       });
 
-      const header = document.querySelector<HTMLElement>('.entry.header');
+      const header = document.querySelector<HTMLElement>('.compare:not(#ala-compare-table) .entry.header, .entry.header');
       if (header) {
         delete (header as any)._alaHeaderBound;
         delete header.dataset.alaCompareInit;
@@ -829,31 +992,35 @@ defineFeature(
       lastProcessedCount = -1;
     }
 
-    function setupCompareView(header: HTMLElement, listContainer: HTMLElement, entries: HTMLElement[]): void {
-      header.querySelectorAll<HTMLElement>('.status').forEach((statusEl) => {
-        if (!statusEl.querySelector('.ala-header-label')) {
-          const text = statusEl.textContent?.trim() || '';
-          statusEl.innerHTML = `<span class="ala-header-label">${text}</span>`;
-        }
-      });
+    function setupCompareView(compareRoot: HTMLElement, header: HTMLElement | null, entries: HTMLElement[]): void {
+      if (header) {
+        header.querySelectorAll<HTMLElement>('.status').forEach((statusEl) => {
+          if (!statusEl.querySelector('.ala-header-label')) {
+            const text = statusEl.textContent?.trim() || '';
+            statusEl.innerHTML = `<span class="ala-header-label">${text}</span>`;
+          }
+        });
+      }
 
-      const headerCells = Array.from(header.children) as HTMLElement[];
-      if (headerCells.length < 3) return;
-
+      const headerCells = header ? (Array.from(header.children) as HTMLElement[]) : [];
       const titleHeader =
-        header.querySelector<HTMLElement>('.title') ||
-        headerCells.find((el) => /title/i.test(el.textContent || '')) ||
-        headerCells[0];
+        headerCells.length >= 3
+          ? header!.querySelector<HTMLElement>('.title') ||
+            headerCells.find((el) => /title/i.test(el.textContent || '')) ||
+            headerCells[0]
+          : null;
       const yourScoreHeader =
-        headerCells.find((el) => /your score/i.test(el.textContent || '')) ||
-        header.querySelector<HTMLElement>('.score:first-of-type') ||
-        headerCells[1];
+        headerCells.length >= 3
+          ? headerCells.find((el) => /your score/i.test(el.textContent || '')) ||
+            header!.querySelector<HTMLElement>('.score:first-of-type') ||
+            headerCells[1]
+          : null;
       const otherScoreHeader =
-        headerCells.find((el) => el !== yourScoreHeader && /score/i.test(el.textContent || '')) ||
-        header.querySelectorAll<HTMLElement>('.score')[1] ||
-        headerCells[2];
-
-      const compareRoot = header.closest<HTMLElement>('.compare') || listContainer;
+        headerCells.length >= 3
+          ? headerCells.find((el) => el !== yourScoreHeader && /score/i.test(el.textContent || '')) ||
+            header!.querySelectorAll<HTMLElement>('.score')[1] ||
+            headerCells[2]
+          : null;
 
       const container = compareRoot.closest<HTMLElement>('.content.container') || compareRoot.parentElement;
       if (container) {
@@ -940,51 +1107,34 @@ defineFeature(
             const st = cb.dataset.status!;
             if (cb.checked) activeStatuses.add(st);
             else activeStatuses.delete(st);
-            const badge = sidebar?.querySelector<HTMLElement>('.ala-compare-active-badge');
-            if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
-            const currentEntries = Array.from(listContainer.querySelectorAll<HTMLElement>('.entry:not(.header)'));
-            applyFilter(listContainer, currentEntries);
+            triggerFilterUpdate(sidebar!, compareRoot);
           });
         });
 
         sidebar.querySelector('#ala-compare-all')?.addEventListener('click', () => {
           for (const s of STATUSES) activeStatuses.add(s);
           sidebar?.querySelectorAll<HTMLInputElement>('.ala-compare-cb').forEach((cb) => (cb.checked = true));
-          const badge = sidebar?.querySelector<HTMLElement>('.ala-compare-active-badge');
-          if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
-          const currentEntries = Array.from(listContainer.querySelectorAll<HTMLElement>('.entry:not(.header)'));
-          applyFilter(listContainer, currentEntries);
+          triggerFilterUpdate(sidebar!, compareRoot);
         });
 
         sidebar.querySelector('#ala-compare-none')?.addEventListener('click', () => {
           activeStatuses.clear();
           sidebar?.querySelectorAll<HTMLInputElement>('.ala-compare-cb').forEach((cb) => (cb.checked = false));
-          const badge = sidebar?.querySelector<HTMLElement>('.ala-compare-active-badge');
-          if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
-          const currentEntries = Array.from(listContainer.querySelectorAll<HTMLElement>('.entry:not(.header)'));
-          applyFilter(listContainer, currentEntries);
+          triggerFilterUpdate(sidebar!, compareRoot);
         });
       }
 
-      if (sidebar) {
+      if (sidebar && entries.length > 0) {
         updateStatusCounts(sidebar, entries);
       }
 
-      if (!(header as any)._alaHeaderBound) {
+      if (header && titleHeader && yourScoreHeader && otherScoreHeader && !(header as any)._alaHeaderBound) {
         (header as any)._alaHeaderBound = true;
 
         const attachSortClick = (el: HTMLElement | null, col: 'title' | 'yourScore' | 'otherScore') => {
           if (!el) return;
           el.addEventListener('click', () => {
-            if (activeSortCol === col) {
-              activeSortDir = activeSortDir === 'asc' ? 'desc' : 'asc';
-            } else {
-              activeSortCol = col;
-              activeSortDir = col === 'title' ? 'asc' : 'desc';
-            }
-            updateSortArrows(titleHeader, yourScoreHeader, otherScoreHeader, activeSortCol, activeSortDir);
-            const currentEntries = Array.from(listContainer.querySelectorAll<HTMLElement>('.entry:not(.header)'));
-            applySort(listContainer, currentEntries, activeSortCol, activeSortDir);
+            triggerSort(col, compareRoot);
           });
         };
 
@@ -993,13 +1143,32 @@ defineFeature(
         attachSortClick(otherScoreHeader, 'otherScore');
       }
 
-      header.dataset.alaCompareInit = 'true';
-      updateSortArrows(titleHeader, yourScoreHeader, otherScoreHeader, activeSortCol, activeSortDir);
-      applyFilter(listContainer, entries);
-      applySort(listContainer, entries, activeSortCol, activeSortDir);
+      if (header && titleHeader) {
+        header.dataset.alaCompareInit = 'true';
+        updateSortArrows(titleHeader, yourScoreHeader, otherScoreHeader, activeSortCol, activeSortDir);
+      }
+      compareRoot.dataset.alaCompareInit = 'true';
+
+      entries.forEach((el) => {
+        el.querySelectorAll<HTMLElement>('.score').forEach((scoreEl) => {
+          const text = scoreEl.textContent?.trim();
+          if (!text || text === '') {
+            scoreEl.textContent = '0';
+          }
+        });
+      });
+
+      disableNativeScrollers(compareRoot);
+
+      if (entries.length > 0) {
+        applyFilter(compareRoot, entries);
+        applySort(compareRoot, entries, activeSortCol, activeSortDir);
+      }
+
+      setRpcBlock((q) => isComparePage() && /\bcompareWithAuthList\b/i.test(q || ''));
 
       if (!isLoadingAll && !isCompareLoaded && !loadFailed && sidebar) {
-        loadAllEntriesViaMediaList(listContainer, sidebar);
+        loadAllEntriesViaMediaList(compareRoot, sidebar);
       }
     }
 
@@ -1022,27 +1191,33 @@ defineFeature(
         cleanup();
       }
 
-      const header = document.querySelector<HTMLElement>('.entry.header');
-      if (!header) return;
+      if (isCompareLoaded) return;
 
-      const listContainer = header.parentElement;
-      if (!listContainer) return;
+      const compareRoot = document.querySelector<HTMLElement>('.compare:not(#ala-compare-table)');
+      if (!compareRoot) return;
 
-      const entries = Array.from(listContainer.querySelectorAll<HTMLElement>('.entry:not(.header)'));
-      if (entries.length === 0) return;
+      const header = compareRoot.querySelector<HTMLElement>('.entry.header');
+      const entries = Array.from(compareRoot.querySelectorAll<HTMLElement>('.entry:not(.header)'));
 
-      if (!header.dataset.alaCompareInit || (!isCompareLoaded && entries.length !== lastProcessedCount)) {
+      if (!compareRoot.dataset.alaCompareInit || (!isCompareLoaded && entries.length !== lastProcessedCount)) {
         lastProcessedCount = entries.length;
-        setupCompareView(header, listContainer, entries);
+        setupCompareView(compareRoot, header, entries);
       }
     }, 60);
 
+    const installBlocker = () => {
+      setRpcBlock((q) => isComparePage() && /\bcompareWithAuthList\b/i.test(q || ''));
+    };
+
+    installBlocker();
     Core.ready(checkView);
     Core.onNavigate(() => {
+      installBlocker();
       checkView();
     });
     Core.onBodyMutation(() => {
       if (isComparePage() && !isMutatingDOM) {
+        installBlocker();
         checkView();
       }
     });

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
 import { modules } from '../src/core/registry';
 import { store as gmStore } from '../src/utils/helpers';
+import { AniList } from '../src/api/anilist';
 import '../src/modules/fastLoad';
 
 describe('FastLoad: GraphQL Performance & Cache Engine', () => {
@@ -348,6 +349,193 @@ describe('FastLoad: GraphQL Performance & Cache Engine', () => {
       expect((window as any).__ALFL_STATS__.staleServed).toBe(1);
 
       vi.useRealTimers();
+    });
+
+    it('serves MediaListCollection from RPC cache when queried via window.fetch without network request', async () => {
+      const rpcCache = (window as any).__ALFL_RPC_CACHE__ as Map<string, any>;
+      expect(rpcCache).toBeDefined();
+
+      const cachedCollection = {
+        data: {
+          MediaListCollection: {
+            user: { id: 7053169, name: 'TargetUser' },
+            lists: [
+              {
+                name: 'Completed',
+                isCustomList: false,
+                entries: [
+                  {
+                    id: 111,
+                    mediaId: 1,
+                    status: 'COMPLETED',
+                    score: 9,
+                    media: { id: 1, title: { userPreferred: 'Cowboy Bebop' } }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      };
+
+      const gqlStore = (window as any).__ALFL_GQL_STORE__ as Map<string, any>;
+      const cachedMlc = {
+        user: { id: 7053169, name: 'TargetUser' },
+        lists: [
+          {
+            name: 'Completed',
+            isCustomList: false,
+            entries: [
+              {
+                id: 222,
+                mediaId: 50,
+                status: 'COMPLETED',
+                score: 10,
+                media: { id: 50, title: { userPreferred: 'Neon Genesis Evangelion' } }
+              }
+            ]
+          }
+        ]
+      };
+
+      const raw = JSON.stringify({ data: { MediaListCollection: cachedMlc } });
+      gqlStore.set('gql:MediaListCollection:ANIME:7053169:{}', {
+        time: Date.now(),
+        snap: { buf: new TextEncoder().encode(raw).buffer }
+      });
+
+      const result = await AniList.getMediaList(7053169, 'ANIME');
+      expect(result.allEntries.length).toBe(1);
+      expect(result.allEntries[0].mediaId).toBe(50);
+      expect(result.allEntries[0].score).toBe(10);
+      expect(result.user?.name).toBe('TargetUser');
+    });
+
+    it('bypasses cache when noStore is present even for MediaListCollection queries', async () => {
+      mockNativeFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: { MediaListCollection: { user: { id: 7053169 }, lists: [] } }
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      await window.fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        body: JSON.stringify({
+          query: 'query ($userId: Int, $type: MediaType) { MediaListCollection(userId: $userId, type: $type) { lists { name } } }',
+          variables: { userId: 7053169, type: 'ANIME' }
+        })
+      });
+
+      expect(mockNativeFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('blocks requests in worker hook when __ALFL_RPC_BLOCK__ matches', () => {
+      const pageWin = window as any;
+      const blocker = vi.fn((_q: string, v: any) => v?.id === 7053169 && Number(v?.page) > 1);
+      pageWin.__ALFL_RPC_BLOCK__ = blocker;
+
+      expect(typeof pageWin.__ALFL_RPC_BLOCK__).toBe('function');
+      expect(pageWin.__ALFL_RPC_BLOCK__('query', { id: 7053169, page: 2 })).toBe(true);
+      expect(pageWin.__ALFL_RPC_BLOCK__('query', { id: 7053169, page: 1 })).toBe(false);
+      delete pageWin.__ALFL_RPC_BLOCK__;
+    });
+
+    it('blocks requests in cachedFetch when __ALFL_RPC_BLOCK__ matches', async () => {
+      const pageWin = window as any;
+      const blocker = vi.fn((_q: string, v: any) => v?.id === 7053169 && Number(v?.page) > 1);
+      pageWin.__ALFL_RPC_BLOCK__ = blocker;
+
+      mockNativeFetch.mockClear();
+      const payload = {
+        query: 'query($id:Int,$page:Int){Page(page:$page){mediaList(userId:$id){id}}}',
+        variables: { id: 7053169, page: 2 }
+      };
+
+      const res = await window.fetch('/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      expect(mockNativeFetch).not.toHaveBeenCalled();
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.data.Page.pageInfo.hasNextPage).toBe(false);
+      expect(json.data.Page.mediaList).toEqual([]);
+
+      delete pageWin.__ALFL_RPC_BLOCK__;
+    });
+
+    it('serves MediaListCollection from rpcCache via AniList.getMediaList without network request', async () => {
+      const pageWin = window as any;
+      const rpcCache = pageWin.__ALFL_RPC_CACHE__ as Map<string, any>;
+      mockNativeFetch.mockClear();
+
+      rpcPayload = {
+        entities: {
+          mediaListEntry: {
+            '1001': { id: 1001, mediaId: 888, status: 'COMPLETED', score: 9.5 }
+          },
+          media: {
+            '888': { id: 888, title: { userPreferred: 'RPC Prefetched Anime' } }
+          },
+          user: {
+            '7053170': { id: 7053170, name: 'TargetUser2' }
+          }
+        },
+        result: 'rpcResult'
+      };
+
+      rpcCache.set('rpc:MediaListCollection:ANIME:7053170:{}', {
+        time: Date.now(),
+        msg: { type: 'RPC', id: '1', result: rpcPayload }
+      });
+
+      const res = await AniList.getMediaList(7053170, 'ANIME');
+      expect(mockNativeFetch).not.toHaveBeenCalled();
+      expect(res.allEntries.length).toBe(1);
+      expect(res.allEntries[0].mediaId).toBe(888);
+      expect(res.allEntries[0].score).toBe(9.5);
+      expect(res.allEntries[0].media?.title?.userPreferred).toBe('RPC Prefetched Anime');
+      expect(res.user?.name).toBe('TargetUser2');
+    });
+
+    it('serves MediaListCollection from rpcCache via AniList.getMediaList with real normalizr listEntry entity', async () => {
+      const pageWin = window as any;
+      const rpcCache = pageWin.__ALFL_RPC_CACHE__ as Map<string, any>;
+      mockNativeFetch.mockClear();
+
+      const rpcPayload = {
+        entities: {
+          listEntry: {
+            '2001': { id: 2001, mediaId: 999, status: 'PLANNING', score: 0 }
+          },
+          media: {
+            '999': { id: 999, title: { userPreferred: 'Real Worker Normalizr Anime' } }
+          },
+          user: {
+            '7053171': { id: 7053171, name: 'TargetUser3' }
+          }
+        },
+        result: 'rpcResult3'
+      };
+
+      rpcCache.set('rpc:MediaListCollection:ANIME:7053171:{}', {
+        time: Date.now(),
+        msg: { type: 'RPC', id: '2', result: rpcPayload }
+      });
+
+      const res = await AniList.getMediaList(7053171, 'ANIME');
+      expect(mockNativeFetch).not.toHaveBeenCalled();
+      expect(res.allEntries.length).toBe(1);
+      expect(res.allEntries[0].mediaId).toBe(999);
+      expect(res.allEntries[0].score).toBe(0);
+      expect(res.allEntries[0].media?.title?.userPreferred).toBe('Real Worker Normalizr Anime');
+      expect(res.user?.name).toBe('TargetUser3');
     });
   });
 });

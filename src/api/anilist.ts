@@ -387,6 +387,214 @@ export const AniList = (() => {
     return networkPromise;
   }
 
+  function formatMediaListResult(mlc: any): MediaListResult {
+    const mergedCollection: MediaListCollectionData = {
+      user: mlc.user,
+      lists: mlc.lists || []
+    };
+
+    const seenEntryIds = new Set<number>();
+    const allEntries: MediaListEntryItem[] = [];
+    for (const list of mergedCollection.lists) {
+      for (const entry of list.entries || []) {
+        if (!seenEntryIds.has(entry.id)) {
+          seenEntryIds.add(entry.id);
+          allEntries.push(entry);
+        }
+      }
+    }
+
+    return {
+      collection: mergedCollection,
+      lists: mergedCollection.lists,
+      allEntries,
+      user: mergedCollection.user
+    };
+  }
+
+  function parseRpcMediaList(payload: any): MediaListResult | null {
+    if (!payload || typeof payload !== 'object') return null;
+
+    const mlc = payload.MediaListCollection || payload.data?.MediaListCollection;
+    if (mlc && Array.isArray(mlc.lists)) {
+      return formatMediaListResult(mlc);
+    }
+
+    const entities = payload.entities || payload;
+    const entriesMap = entities?.listEntry || entities?.mediaListEntry;
+    if (entriesMap && typeof entriesMap === 'object') {
+      const mediaMap = entities.media || entities.listEntryMedia || {};
+      const allEntries: MediaListEntryItem[] = [];
+
+      for (const rawEntry of Object.values(entriesMap) as any[]) {
+        if (!rawEntry || typeof rawEntry !== 'object') continue;
+        const mediaId =
+          rawEntry.mediaId ||
+          (typeof rawEntry.media === 'number' ? rawEntry.media : rawEntry.media?.id);
+        if (!mediaId) continue;
+
+        const mediaObj =
+          typeof rawEntry.media === 'object' && rawEntry.media !== null
+            ? rawEntry.media
+            : mediaMap[mediaId] || { id: mediaId };
+
+        allEntries.push({
+          ...rawEntry,
+          mediaId,
+          media: mediaObj
+        });
+      }
+
+      if (allEntries.length === 0) return null;
+
+      const userObj = entities.user ? (Object.values(entities.user)[0] as any) : undefined;
+      const lists: any[] = [];
+      if (entities.listSection && typeof entities.listSection === 'object') {
+        for (const sec of Object.values(entities.listSection) as any[]) {
+          if (!sec) continue;
+          lists.push({
+            name: sec.name || '',
+            isCustomList: !!sec.isCustomList,
+            status: sec.status,
+            entries: Array.isArray(sec.entries)
+              ? sec.entries.map((id: any) => entriesMap[id]).filter(Boolean)
+              : []
+          });
+        }
+      }
+
+      const user = userObj && userObj.id ? { id: Number(userObj.id), name: String(userObj.name || '') } : undefined;
+      const collection: MediaListCollectionData = {
+        lists,
+        user
+      };
+
+      return {
+        collection,
+        allEntries,
+        lists,
+        user
+      };
+    }
+
+    return null;
+  }
+
+  function tryGetCachedMediaList(
+    target: number | string,
+    type: 'ANIME' | 'MANGA',
+    userId?: number,
+    userName?: string
+  ): MediaListResult | null {
+    const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+    const t = type.toUpperCase();
+    const isId = typeof target === 'number' || /^\d+$/.test(String(target));
+    const id = userId || (isId ? Number(target) : undefined);
+    const name = userName || (!isId ? String(target).trim().toLowerCase() : undefined);
+
+    const userMap: Map<string, number> | undefined = win.__ALFL_USER_MAP__;
+    const idMap: Map<number, string> | undefined = win.__ALFL_ID_MAP__;
+
+    const resolvedId = id || (name && userMap ? userMap.get(name) : undefined);
+    const resolvedName = name || (resolvedId && idMap ? idMap.get(resolvedId)?.toLowerCase() : undefined);
+
+    // 1. Check entityCache in AniList
+    const entityKeys: string[] = [];
+    if (resolvedId) entityKeys.push(`MediaListCollection:${t}:${resolvedId}`);
+    if (resolvedName) entityKeys.push(`MediaListCollection:${t}:${resolvedName}`);
+    for (const k of entityKeys) {
+      const cached = entityCache.get(k);
+      if (cached && Date.now() - cached.time < ENTITY_TTL && cached.data?.MediaListCollection) {
+        logDebug('[ANILIST API] 🎯 Cache HIT for MediaListCollection via entityCache:', k);
+        return formatMediaListResult(cached.data.MediaListCollection);
+      }
+    }
+
+    // 2. Check FastLoad GQL Store (Fetch responses intercepted by FastLoad)
+    const gqlStore: Map<string, { time: number; snap: any }> | undefined = win.__ALFL_GQL_STORE__;
+    if (gqlStore) {
+      const gqlKeys: string[] = [];
+      if (resolvedId) {
+        gqlKeys.push(`gql:MediaListCollection:${t}:${resolvedId}:{}`);
+      }
+      if (resolvedName) {
+        gqlKeys.push(`gql:MediaListCollection:${t}:${resolvedName}:{}`);
+      }
+
+      for (const k of gqlKeys) {
+        const cached = gqlStore.get(k);
+        if (cached && Date.now() - cached.time < 5 * 60_000 && cached.snap?.buf) {
+          try {
+            const raw = new TextDecoder().decode(cached.snap.buf);
+            const json = JSON.parse(raw);
+            const mlc = json?.data?.MediaListCollection || json?.MediaListCollection;
+            if (mlc && Array.isArray(mlc.lists)) {
+              logDebug('[ANILIST API] 🎯 Cache HIT for MediaListCollection via FastLoad GQL store:', k);
+              const result = formatMediaListResult(mlc);
+              if (resolvedId) {
+                entityCache.set(`MediaListCollection:${t}:${resolvedId}`, {
+                  time: Date.now(),
+                  data: { MediaListCollection: mlc },
+                  isSuperset: true,
+                  fields: new Set(KNOWN_LIST_FIELDS)
+                });
+              }
+              if (resolvedName) {
+                entityCache.set(`MediaListCollection:${t}:${resolvedName}`, {
+                  time: Date.now(),
+                  data: { MediaListCollection: mlc },
+                  isSuperset: true,
+                  fields: new Set(KNOWN_LIST_FIELDS)
+                });
+              }
+              return result;
+            }
+          } catch (_) {}
+        }
+      }
+    }
+
+    // 3. Check FastLoad RPC Cache (Prefetched by Web Worker)
+    const rpcCache: Map<string, { time: number; msg: any }> | undefined = win.__ALFL_RPC_CACHE__;
+    if (rpcCache) {
+      const rpcKeys: string[] = [];
+      if (resolvedId) {
+        rpcKeys.push(`rpc:MediaListCollection:${t}:${resolvedId}:{}`);
+      }
+      if (resolvedName) {
+        rpcKeys.push(`rpc:MediaListCollection:${t}:${resolvedName}:{}`);
+      }
+
+      for (const k of rpcKeys) {
+        const cached = rpcCache.get(k);
+        if (cached && Date.now() - cached.time < 5 * 60_000 && cached.msg) {
+          const payload = cached.msg.result ?? cached.msg;
+          const result = parseRpcMediaList(payload);
+          if (result && result.allEntries.length > 0) {
+            logDebug('[ANILIST API] 🎯 Cache HIT for MediaListCollection via FastLoad RPC cache:', k);
+            return result;
+          }
+        }
+      }
+
+      for (const [k, cached] of rpcCache.entries()) {
+        if (!k.startsWith(`rpc:MediaListCollection:${t}:`)) continue;
+        const matchId = resolvedId && k.includes(`:${resolvedId}:`);
+        const matchName = resolvedName && k.toLowerCase().includes(`:${resolvedName.toLowerCase()}:`);
+        if ((matchId || matchName) && cached && Date.now() - cached.time < 5 * 60_000 && cached.msg) {
+          const payload = cached.msg.result ?? cached.msg;
+          const result = parseRpcMediaList(payload);
+          if (result && result.allEntries.length > 0) {
+            logDebug('[ANILIST API] 🎯 Cache HIT for MediaListCollection via FastLoad RPC cache (scan):', k);
+            return result;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
   async function getMediaList(
     target: number | string,
     type: 'ANIME' | 'MANGA' = 'ANIME',
@@ -395,6 +603,62 @@ export const AniList = (() => {
     const isId = typeof target === 'number' || /^\d+$/.test(String(target));
     const userId = options?.userId || (isId ? Number(target) : undefined);
     const userName = options?.userName || (!isId ? String(target).trim() : undefined);
+
+    if (!options?.forceFresh) {
+      const cached = tryGetCachedMediaList(target, type, userId, userName);
+      if (cached) {
+        return cached;
+      }
+    }
+
+    const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+    const rpcInflight: Map<string, { promise: Promise<any> }> | undefined = win.__ALFL_RPC_INFLIGHT__;
+    if (rpcInflight && !options?.forceFresh) {
+      const t = type.toUpperCase();
+      const userMap: Map<string, number> | undefined = win.__ALFL_USER_MAP__;
+      const idMap: Map<number, string> | undefined = win.__ALFL_ID_MAP__;
+      const resolvedId = userId || (userName && userMap ? userMap.get(userName.toLowerCase()) : undefined);
+      const resolvedName = userName ? userName.toLowerCase() : (resolvedId && idMap ? idMap.get(resolvedId)?.toLowerCase() : undefined);
+
+      const rpcKeys: string[] = [];
+      if (resolvedId) rpcKeys.push(`rpc:MediaListCollection:${t}:${resolvedId}:{}`);
+      if (resolvedName) rpcKeys.push(`rpc:MediaListCollection:${t}:${resolvedName}:{}`);
+
+      const checkInflight = async (k: string, flight: { promise: Promise<any> }) => {
+        try {
+          logDebug('[ANILIST API] ⏳ Awaiting in-flight FastLoad RPC prefetch:', k);
+          const msg = await Promise.race([
+            flight.promise,
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+          ]);
+          const payload = msg?.result ?? msg;
+          const parsed = parseRpcMediaList(payload);
+          if (parsed && parsed.allEntries.length > 0) {
+            logDebug('[ANILIST API] 🎯 Cache HIT from completed in-flight FastLoad RPC prefetch:', k);
+            return parsed;
+          }
+        } catch (_) {}
+        return null;
+      };
+
+      for (const k of rpcKeys) {
+        const flight = rpcInflight.get(k);
+        if (flight) {
+          const res = await checkInflight(k, flight);
+          if (res) return res;
+        }
+      }
+
+      for (const [k, flight] of rpcInflight.entries()) {
+        if (!k.startsWith(`rpc:MediaListCollection:${t}:`)) continue;
+        const matchId = resolvedId && k.includes(`:${resolvedId}:`);
+        const matchName = resolvedName && k.toLowerCase().includes(`:${resolvedName.toLowerCase()}:`);
+        if (matchId || matchName) {
+          const res = await checkInflight(k, flight);
+          if (res) return res;
+        }
+      }
+    }
 
     const singleQuery = `query ($userId: Int, $userName: String, $type: MediaType) {
       MediaListCollection(userId: $userId, userName: $userName, type: $type) {
@@ -447,28 +711,7 @@ export const AniList = (() => {
       throw new Error('Unexpected MediaListCollection response shape');
     }
 
-    const mergedCollection: MediaListCollectionData = {
-      user: mlc.user,
-      lists: mlc.lists || []
-    };
-
-    const seenEntryIds = new Set<number>();
-    const allEntries: MediaListEntryItem[] = [];
-    for (const list of mergedCollection.lists) {
-      for (const entry of list.entries || []) {
-        if (!seenEntryIds.has(entry.id)) {
-          seenEntryIds.add(entry.id);
-          allEntries.push(entry);
-        }
-      }
-    }
-
-    return {
-      collection: mergedCollection,
-      lists: mergedCollection.lists,
-      allEntries,
-      user: mergedCollection.user
-    };
+    return formatMediaListResult(mlc);
   }
 
   async function viewer(): Promise<ViewerInfo | null> {
@@ -481,7 +724,10 @@ export const AniList = (() => {
     const d = await query<{ Viewer: { id: number; name: string; mediaListOptions: { scoreFormat: string } } | null }>(
       'query { Viewer { id name mediaListOptions { scoreFormat } } }',
       {}
-    ).catch(() => null);
+    ).catch((e) => {
+      if (e?.auth) throw e;
+      return null;
+    });
 
     if (d?.Viewer) {
       store.set('al_user_id', d.Viewer.id);
