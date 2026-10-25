@@ -211,11 +211,14 @@ export const AniList = (() => {
 
   function isBrowserLoggedIn(): boolean {
     const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+    const doc = win.document || document;
+    if (doc?.querySelector?.('nav a[href="/login"], .nav a[href="/login"]')) {
+      clearViewer();
+      return false;
+    }
     const nuxtUser = win.__NUXT__?.state?.auth?.user || win.__NUXT__?.state?.user;
     if (nuxtUser?.id) return true;
-    const doc = win.document || document;
     if (doc?.querySelector?.('nav a[href^="/user/"], .nav-wrap a[href^="/user/"], .user-wrap .avatar')) return true;
-    if (doc?.querySelector?.('nav a[href="/login"], .nav a[href="/login"]')) return false;
     return Boolean(Number(store.get('al_user_id', 0)) > 0 && store.get('al_username', null));
   }
 
@@ -747,11 +750,28 @@ export const AniList = (() => {
     return formatMediaListResult(mlc);
   }
 
-  async function viewer(): Promise<ViewerInfo | null> {
-    const name = store.get<string | null>('al_username', null);
-    const fmt = store.get<string | null>('al_score_format', null);
-    const id = Number(store.get('al_user_id', 0));
-    if (name && fmt && id) return { id, name, scoreFormat: fmt };
+  async function viewer(forceFresh = false): Promise<ViewerInfo | null> {
+    const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+    const doc = win.document || document;
+    if (doc?.querySelector?.('nav a[href="/login"], .nav a[href="/login"]')) {
+      clearViewer();
+      return null;
+    }
+    const nuxtUser = win.__NUXT__?.state?.auth?.user || win.__NUXT__?.state?.user;
+    if (nuxtUser?.id) {
+      const nuxtId = Number(nuxtUser.id);
+      const storedId = Number(store.get('al_user_id', 0));
+      if (storedId && storedId !== nuxtId) {
+        clearViewer();
+      }
+    }
+
+    if (!forceFresh) {
+      const name = store.get<string | null>('al_username', null);
+      const fmt = store.get<string | null>('al_score_format', null);
+      const id = Number(store.get('al_user_id', 0));
+      if (name && fmt && id) return { id, name, scoreFormat: fmt };
+    }
     if (!hasAuth()) return null;
 
     const d = await query<{ Viewer: { id: number; name: string; mediaListOptions: { scoreFormat: string } } | null }>(

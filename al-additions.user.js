@@ -1115,10 +1115,13 @@
 		}
 		function isBrowserLoggedIn() {
 			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
-			if ((win.__NUXT__?.state?.auth?.user || win.__NUXT__?.state?.user)?.id) return true;
 			const doc = win.document || document;
+			if (doc?.querySelector?.("nav a[href=\"/login\"], .nav a[href=\"/login\"]")) {
+				clearViewer();
+				return false;
+			}
+			if ((win.__NUXT__?.state?.auth?.user || win.__NUXT__?.state?.user)?.id) return true;
 			if (doc?.querySelector?.("nav a[href^=\"/user/\"], .nav-wrap a[href^=\"/user/\"], .user-wrap .avatar")) return true;
-			if (doc?.querySelector?.("nav a[href=\"/login\"], .nav a[href=\"/login\"]")) return false;
 			return Boolean(Number(store$1.get("al_user_id", 0)) > 0 && store$1.get("al_username", null));
 		}
 		const header = (res, name) => {
@@ -1504,15 +1507,28 @@
 			if (!mlc || !Array.isArray(mlc.lists)) throw new Error("Unexpected MediaListCollection response shape");
 			return formatMediaListResult(mlc);
 		}
-		async function viewer() {
-			const name = store$1.get("al_username", null);
-			const fmt = store$1.get("al_score_format", null);
-			const id = Number(store$1.get("al_user_id", 0));
-			if (name && fmt && id) return {
-				id,
-				name,
-				scoreFormat: fmt
-			};
+		async function viewer(forceFresh = false) {
+			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+			if ((win.document || document)?.querySelector?.("nav a[href=\"/login\"], .nav a[href=\"/login\"]")) {
+				clearViewer();
+				return null;
+			}
+			const nuxtUser = win.__NUXT__?.state?.auth?.user || win.__NUXT__?.state?.user;
+			if (nuxtUser?.id) {
+				const nuxtId = Number(nuxtUser.id);
+				const storedId = Number(store$1.get("al_user_id", 0));
+				if (storedId && storedId !== nuxtId) clearViewer();
+			}
+			if (!forceFresh) {
+				const name = store$1.get("al_username", null);
+				const fmt = store$1.get("al_score_format", null);
+				const id = Number(store$1.get("al_user_id", 0));
+				if (name && fmt && id) return {
+					id,
+					name,
+					scoreFormat: fmt
+				};
+			}
 			if (!hasAuth()) return null;
 			const d = await query("query { Viewer { id name mediaListOptions { scoreFormat } } }", {}).catch((e) => {
 				if (e?.auth) throw e;
@@ -2881,13 +2897,16 @@
 		69
 	]);
 	var SENSITIVE_KEYS = [
-		"al_username",
-		"al_user_id",
-		"al_score_format",
 		"mal_code_verifier",
 		"mal_token",
 		"mal_refresh_token",
 		"mal_expires_at"
+	];
+	var SESSION_CACHE_KEYS = [
+		"al_token",
+		"al_username",
+		"al_user_id",
+		"al_score_format"
 	];
 	var PBKDF2_ITERATIONS = 1e5;
 	function matchesMagic(bytes, magic) {
@@ -3014,9 +3033,9 @@
 		if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Backup data is invalid or empty.");
 		let applied = 0;
 		let secretsApplied = 0;
-		store$1.del("al_token");
+		for (const k of SESSION_CACHE_KEYS) store$1.del(k);
 		for (const [key, rawValue] of Object.entries(data)) {
-			if (key === "al_token") continue;
+			if (SESSION_CACHE_KEYS.includes(key)) continue;
 			if (SENSITIVE_KEYS.includes(key)) {
 				if (rawValue !== void 0 && rawValue !== null) {
 					store$1.set(key, rawValue);
@@ -10704,6 +10723,9 @@
 	}
 	var ALL_KEYS = [
 		...SENSITIVE_KEYS,
+		"al_username",
+		"al_user_id",
+		"al_score_format",
 		"al_token_auth",
 		"sync_lock_heartbeat",
 		"sync_onboarded",

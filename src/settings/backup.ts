@@ -12,13 +12,17 @@ export const SALT_LENGTH = 16;
 export const IV_LENGTH = 12;
 
 export const SENSITIVE_KEYS = [
-  'al_username',
-  'al_user_id',
-  'al_score_format',
   'mal_code_verifier',
   'mal_token',
   'mal_refresh_token',
   'mal_expires_at'
+] as const;
+
+export const SESSION_CACHE_KEYS = [
+  'al_token',
+  'al_username',
+  'al_user_id',
+  'al_score_format'
 ] as const;
 
 export interface CryptoEnvelope {
@@ -260,11 +264,12 @@ export function applyVersion1Settings(data: Record<string, any>): ImportResult {
   let applied = 0;
   let secretsApplied = 0;
 
-  // Explicitly purge any legacy AniList OAuth token found in backup or storage
-  store.del('al_token');
+  for (const k of SESSION_CACHE_KEYS) {
+    store.del(k);
+  }
 
   for (const [key, rawValue] of Object.entries(data)) {
-    if (key === 'al_token') continue;
+    if ((SESSION_CACHE_KEYS as readonly string[]).includes(key)) continue;
     if ((SENSITIVE_KEYS as readonly string[]).includes(key)) {
       if (rawValue !== undefined && rawValue !== null) {
         store.set(key, rawValue);
