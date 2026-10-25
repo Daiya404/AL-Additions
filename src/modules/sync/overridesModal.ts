@@ -1059,7 +1059,7 @@ export function openOverridesModal(): void {
     try {
       const viewer = await AniList.viewer();
       if (!viewer) {
-        orphansBox.innerHTML = `<div class="ala-ov-empty" style="color:rgb(var(--color-red,224,85,85))">AniList user not found. Please connect AniList first.</div>`;
+        orphansBox.innerHTML = `<div class="ala-ov-empty" style="color:rgb(var(--color-red,224,85,85))">AniList user not found. Please log in to AniList first.</div>`;
         return;
       }
 

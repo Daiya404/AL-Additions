@@ -997,6 +997,59 @@
 		}
 		return 0;
 	}
+	var STANDALONE = {
+		fastLoad: {
+			name: "AniList Fast Load",
+			settingKey: "fastLoadEnabled"
+		},
+		tierLabels: {
+			name: "AniList Tier Labels",
+			settingKey: "tierLabelsEnabled"
+		}
+	};
+	var STANDALONE_IDS_LIST = Object.keys(STANDALONE);
+	var PROBE_ATTR = "data-ala-probe";
+	var builtInRunning = new Set();
+	var markBuiltIn = (id) => {
+		builtInRunning.add(id);
+	};
+	var pageWin = () => typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+	function detectFastLoad() {
+		const w = pageWin();
+		return !!(w.__ANILIST_FAST_LOAD__ || w.__ANILIST_FAST_LOAD_V4__) && !builtInRunning.has("fastLoad");
+	}
+	async function probeTierLabels(timeoutMs = 600) {
+		if (!document.body) return false;
+		const probe = document.createElement("div");
+		probe.className = "score";
+		probe.hidden = true;
+		probe.setAttribute("score", "9");
+		probe.setAttribute(PROBE_ATTR, "1");
+		probe.textContent = "9";
+		document.body.appendChild(probe);
+		try {
+			const end = Date.now() + timeoutMs;
+			while (Date.now() < end) {
+				await sleep(50);
+				if (probe.hasAttribute("data-tier-modified")) return true;
+			}
+			return false;
+		} finally {
+			probe.remove();
+		}
+	}
+	var CACHE_MS = 3e4;
+	var cache = new Map();
+	function detectStandalone(id) {
+		const hit = cache.get(id);
+		if (hit && Date.now() - hit.at < CACHE_MS) return hit.result;
+		const result = (id === "fastLoad" ? Promise.resolve(detectFastLoad()) : probeTierLabels()).catch(() => false);
+		cache.set(id, {
+			at: Date.now(),
+			result
+		});
+		return result;
+	}
 	var KNOWN_LIST_FIELDS = [
 		"mediaId",
 		"id",
@@ -1617,59 +1670,6 @@
 			save
 		};
 	})();
-	var STANDALONE = {
-		fastLoad: {
-			name: "AniList Fast Load",
-			settingKey: "fastLoadEnabled"
-		},
-		tierLabels: {
-			name: "AniList Tier Labels",
-			settingKey: "tierLabelsEnabled"
-		}
-	};
-	var STANDALONE_IDS_LIST = Object.keys(STANDALONE);
-	var PROBE_ATTR = "data-ala-probe";
-	var builtInRunning = new Set();
-	var markBuiltIn = (id) => {
-		builtInRunning.add(id);
-	};
-	var pageWin = () => typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
-	function detectFastLoad() {
-		const w = pageWin();
-		return !!(w.__ANILIST_FAST_LOAD__ || w.__ANILIST_FAST_LOAD_V4__) && !builtInRunning.has("fastLoad");
-	}
-	async function probeTierLabels(timeoutMs = 600) {
-		if (!document.body) return false;
-		const probe = document.createElement("div");
-		probe.className = "score";
-		probe.hidden = true;
-		probe.setAttribute("score", "9");
-		probe.setAttribute(PROBE_ATTR, "1");
-		probe.textContent = "9";
-		document.body.appendChild(probe);
-		try {
-			const end = Date.now() + timeoutMs;
-			while (Date.now() < end) {
-				await sleep(50);
-				if (probe.hasAttribute("data-tier-modified")) return true;
-			}
-			return false;
-		} finally {
-			probe.remove();
-		}
-	}
-	var CACHE_MS = 3e4;
-	var cache = new Map();
-	function detectStandalone(id) {
-		const hit = cache.get(id);
-		if (hit && Date.now() - hit.at < CACHE_MS) return hit.result;
-		const result = (id === "fastLoad" ? Promise.resolve(detectFastLoad()) : probeTierLabels()).catch(() => false);
-		cache.set(id, {
-			at: Date.now(),
-			result
-		});
-		return result;
-	}
 	var TYPES = ["ANIME", "MANGA"];
 	var typeLabel = (t) => t === "ANIME" ? "Anime" : "Manga";
 	var SETTLED_TTL_MS = 3888e6;
@@ -2562,7 +2562,8 @@
 		logDebug("[SYNC]", "runSync initiated for types:", types, "options:", opts);
 		if (syncStatus.syncing) return log("Sync already running.");
 		if (!onAniList()) return log("Open AniList to run a sync — it needs your AniList login.", "warn");
-		if (!AniList.hasAuth() || !store$1.get("mal_token")) return log("Connect both AniList and MAL first.");
+		if (!AniList.hasAuth()) return log("Log in to AniList first.");
+		if (!store$1.get("mal_token")) return log("Connect MyAnimeList first.");
 		if (navigator.onLine === false) return log("You appear to be offline; sync skipped.");
 		syncStatus.syncing = true;
 		syncStatus.cancelled = false;
@@ -4232,7 +4233,7 @@
 			try {
 				const viewer = await AniList.viewer();
 				if (!viewer) {
-					orphansBox.innerHTML = `<div class="ala-ov-empty" style="color:rgb(var(--color-red,224,85,85))">AniList user not found. Please connect AniList first.</div>`;
+					orphansBox.innerHTML = `<div class="ala-ov-empty" style="color:rgb(var(--color-red,224,85,85))">AniList user not found. Please log in to AniList first.</div>`;
 					return;
 				}
 				const overrides = getManualOverrides();
@@ -5071,24 +5072,13 @@
   </div>`;
 	};
 	function accountsHtml() {
-		const alLoggedIn = AniList.hasAuth();
-		const alUser = store$1.get("al_username", null);
 		const malConnected = !!store$1.get("mal_token", null);
-		const alStatus = alLoggedIn ? alUser ? `Logged in as <b>${esc(alUser)}</b>` : "Active browser session" : "Not logged in to AniList";
-		const malStatus = malConnected ? "Connected" : "Not connected";
 		return `<h3 class="ala-section-title">Connected Accounts</h3>
   <div class="ala-section">
     <div class="ala-row ala-account-row">
       <span class="ala-text">
-        <span class="ala-title">AniList</span>
-        <span class="ala-help" id="ala-status-al">${alStatus}</span>
-      </span>
-      ${alLoggedIn ? `<span class="ala-help" style="font-weight:600;color:rgb(var(--color-green))">${icon("check", 12)} Active</span>` : `<a class="ala-btn ala-btn--primary" href="/login" target="_blank" style="text-decoration:none;">Log in</a>`}
-    </div>
-    <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
-      <span class="ala-text">
         <span class="ala-title">MyAnimeList</span>
-        <span class="ala-help" id="ala-status-mal">${malStatus}</span>
+        <span class="ala-help" id="ala-status-mal">${malConnected ? "Connected" : "Not connected"}</span>
       </span>
       <button type="button" class="ala-btn ${malConnected ? "ala-btn--danger" : "ala-btn--primary"}" id="ala-btn-mal">
         ${malConnected ? "Disconnect" : "Connect to MAL"}
@@ -5116,7 +5106,7 @@
           <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
             <span class="ala-text">
               <span class="ala-title">Export with Credentials</span>
-              <span class="ala-help">Include AniList and MyAnimeList tokens. A password is required.</span>
+              <span class="ala-help">Include MyAnimeList tokens. A password is required.</span>
             </span>
             <button type="button" class="ala-btn ala-btn--danger" id="ala-btn-export-secrets">Export with Secrets</button>
           </div>
@@ -5505,20 +5495,15 @@
 		};
 		document.addEventListener("keydown", backdrop._onKey);
 		const updateAccountUI = () => {
-			const alStatus = panel.querySelector("#ala-status-al");
 			const malBtn = panel.querySelector("#ala-btn-mal");
 			const malStatus = panel.querySelector("#ala-status-mal");
-			const alLoggedIn = AniList.hasAuth();
-			const alUser = store$1.get("al_username", null);
 			const malConnected = !!store$1.get("mal_token", null);
-			if (alStatus) alStatus.innerHTML = alLoggedIn ? alUser ? `Logged in as <b>${esc(alUser)}</b>` : "Active browser session" : "Not logged in to AniList";
 			if (malBtn && malStatus) {
 				malBtn.textContent = malConnected ? "Disconnect" : "Connect to MAL";
 				malBtn.className = `ala-btn ${malConnected ? "ala-btn--danger" : "ala-btn--primary"}`;
 				malStatus.textContent = malConnected ? "Connected" : "Not connected";
 			}
 		};
-		if (AniList.hasAuth() && !store$1.get("al_username", null)) tryOr(() => AniList.viewer()).then(() => updateAccountUI());
 		panel.querySelector("#ala-btn-mal")?.addEventListener("click", () => {
 			if (!!store$1.get("mal_token", null)) {
 				if (confirm("Disconnect MyAnimeList? You will need to reconnect to use AniList → MAL Sync.")) {
@@ -5564,7 +5549,7 @@
 			}
 		});
 		panel.querySelector("#ala-btn-export-secrets")?.addEventListener("click", async () => {
-			if (!confirm("⚠️ Warning: This export includes your AniList and MyAnimeList authentication credentials.\n\nAnyone with access to this file will have full access to your connected accounts.\n\nDo you want to continue?")) return;
+			if (!confirm("⚠️ Warning: This export includes your MyAnimeList authentication credentials.\n\nAnyone with access to this file will have full access to your connected MyAnimeList account.\n\nDo you want to continue?")) return;
 			const pwd = await promptPasswordModal({
 				title: "Export Credentials (Encrypted)",
 				description: "A password is required to encrypt your credentials and protect your accounts.",
@@ -10410,12 +10395,11 @@
 	var refreshTimes = () => document.querySelectorAll("#almal-panel time[data-ts]").forEach((el) => {
 		el.textContent = ago(Number(el.dataset.ts));
 	});
-	function connItem(svc, connected) {
-		const name = svc === "al" ? "AniList" : "MyAnimeList";
-		const manual = svc === "mal" && ui.manual && !connected ? `<div class="almal-manual"><input id="almal-mal-manual" type="text" placeholder="Paste code" aria-label="MyAnimeList authorization code" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="almal-btn almal-btn--sm" data-act="mal-manual-save">Save</button></div>` : "";
+	function connItem(connected) {
+		const manual = ui.manual && !connected ? `<div class="almal-manual"><input id="almal-mal-manual" type="text" placeholder="Paste code" aria-label="MyAnimeList authorization code" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="almal-btn almal-btn--sm" data-act="mal-manual-save">Save</button></div>` : "";
 		const status = connected ? `<span class="almal-ok">${icon("check", 12)}Connected</span>` : "";
-		const connect = connected ? "" : svc === "al" ? `<a class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" href="/login" target="_blank" style="text-decoration:none;color:#fff;">Log in to AniList</a>` : `<button class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" data-act="mal-connect">Connect MyAnimeList</button>`;
-		return `<div class="almal-conn-item"><div class="almal-conn-row">${chip(svc, true)}<span class="almal-conn-name"><span>${name}</span>${status}</span></div>${connect}${manual}</div>`;
+		const connect = connected ? "" : `<button class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" data-act="mal-connect">Connect MyAnimeList</button>`;
+		return `<div class="almal-conn-item"><div class="almal-conn-row">${chip("mal", true)}<span class="almal-conn-name"><span>MyAnimeList</span>${status}</span></div>${connect}${manual}</div>`;
 	}
 	function renderPanel() {
 		const panelEl = document.getElementById("almal-panel");
@@ -10439,8 +10423,16 @@
       </div>`;
 			if (syncStatus.syncing) html += "<div class=\"almal-progress\" role=\"progressbar\" aria-label=\"Sync progress\"><div id=\"almal-progress-fill\"></div></div><div id=\"almal-progress-text\">Starting…</div>";
 			html += `<div class="almal-meta">${rows}</div>`;
-		} else html += `<p class="almal-intro">Connect both accounts to copy your AniList list to MyAnimeList.</p>
-      <div class="almal-conn">${connItem("al", alOk)}${connItem("mal", malOk)}</div>
+		} else if (!alOk) html += `<p class="almal-intro">Log in to AniList to sync your list to MyAnimeList.</p>
+      <div class="almal-conn">
+        <a class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" href="/login" target="_blank" style="text-decoration:none;color:#fff;text-align:center;">Log in to AniList</a>
+      </div>
+      <div id="almal-hint" class="almal-hint" role="status">${esc(lastNotice)}</div>
+      <div class="almal-foot">
+        <button class="almal-link" data-act="logs" aria-expanded="${ui.showLogs}">${ui.showLogs ? "Hide logs" : "Logs"}</button>
+      </div>`;
+		else html += `<p class="almal-intro">Connect your MyAnimeList account to copy your AniList list to MyAnimeList.</p>
+      <div class="almal-conn">${connItem(malOk)}</div>
       <div id="almal-hint" class="almal-hint" role="status">${esc(lastNotice)}</div>
       <div class="almal-foot">
         <button class="almal-link" data-act="manual-toggle" aria-expanded="${ui.manual}">${ui.manual ? "Hide manual entry" : "Trouble connecting?"}</button>
@@ -10552,11 +10544,8 @@
 			if (a && a.dataset.act && ACTIONS[a.dataset.act]) ACTIONS[a.dataset.act]();
 		});
 		panelEl.addEventListener("keydown", (e) => {
-			const svc = {
-				"almal-al-manual": "al",
-				"almal-mal-manual": "mal"
-			}[e.target?.id || ""];
-			if (e.key === "Enter" && svc) ACTIONS[`${svc}-manual-save`]();
+			const target = e.target;
+			if (e.key === "Enter" && target?.id === "almal-mal-manual") ACTIONS["mal-manual-save"]();
 		});
 		anchor.insertAdjacentElement("afterend", panelEl);
 		renderPanel();

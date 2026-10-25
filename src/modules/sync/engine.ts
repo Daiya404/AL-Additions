@@ -397,7 +397,8 @@ export async function runSync(types: SyncMediaType[] = [...TYPES], opts: { full?
   logDebug('[SYNC]', 'runSync initiated for types:', types, 'options:', opts);
   if (syncStatus.syncing) return log('Sync already running.');
   if (!onAniList()) return log('Open AniList to run a sync — it needs your AniList login.', 'warn');
-  if (!AniList.hasAuth() || !store.get('mal_token')) return log('Connect both AniList and MAL first.');
+  if (!AniList.hasAuth()) return log('Log in to AniList first.');
+  if (!store.get('mal_token')) return log('Connect MyAnimeList first.');
   if (navigator.onLine === false) return log('You appear to be offline; sync skipped.');
   syncStatus.syncing = true;
   syncStatus.cancelled = false;

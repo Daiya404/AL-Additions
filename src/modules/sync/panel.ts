@@ -181,22 +181,19 @@ const refreshTimes = (): void =>
     el.textContent = ago(Number(el.dataset.ts));
   });
 
-function connItem(svc: 'al' | 'mal', connected: boolean): string {
-  const name = svc === 'al' ? 'AniList' : 'MyAnimeList';
+function connItem(connected: boolean): string {
   const manual =
-    svc === 'mal' && ui.manual && !connected
+    ui.manual && !connected
       ? `<div class="almal-manual"><input id="almal-mal-manual" type="text" placeholder="Paste code" aria-label="MyAnimeList authorization code" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="almal-btn almal-btn--sm" data-act="mal-manual-save">Save</button></div>`
       : '';
   const status = connected ? `<span class="almal-ok">${icon('check', 12)}Connected</span>` : '';
   const connect = connected
     ? ''
-    : svc === 'al'
-    ? `<a class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" href="/login" target="_blank" style="text-decoration:none;color:#fff;">Log in to AniList</a>`
     : `<button class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" data-act="mal-connect">Connect MyAnimeList</button>`;
   return `<div class="almal-conn-item"><div class="almal-conn-row">${chip(
-    svc,
+    'mal',
     true
-  )}<span class="almal-conn-name"><span>${name}</span>${status}</span></div>${connect}${manual}</div>`;
+  )}<span class="almal-conn-name"><span>MyAnimeList</span>${status}</span></div>${connect}${manual}</div>`;
 }
 
 export function renderPanel(): void {
@@ -244,9 +241,18 @@ export function renderPanel(): void {
       html +=
         '<div class="almal-progress" role="progressbar" aria-label="Sync progress"><div id="almal-progress-fill"></div></div><div id="almal-progress-text">Starting…</div>';
     html += `<div class="almal-meta">${rows}</div>`;
+  } else if (!alOk) {
+    html += `<p class="almal-intro">Log in to AniList to sync your list to MyAnimeList.</p>
+      <div class="almal-conn">
+        <a class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" href="/login" target="_blank" style="text-decoration:none;color:#fff;text-align:center;">Log in to AniList</a>
+      </div>
+      <div id="almal-hint" class="almal-hint" role="status">${esc(lastNotice)}</div>
+      <div class="almal-foot">
+        <button class="almal-link" data-act="logs" aria-expanded="${ui.showLogs}">${ui.showLogs ? 'Hide logs' : 'Logs'}</button>
+      </div>`;
   } else {
-    html += `<p class="almal-intro">Connect both accounts to copy your AniList list to MyAnimeList.</p>
-      <div class="almal-conn">${connItem('al', alOk)}${connItem('mal', malOk)}</div>
+    html += `<p class="almal-intro">Connect your MyAnimeList account to copy your AniList list to MyAnimeList.</p>
+      <div class="almal-conn">${connItem(malOk)}</div>
       <div id="almal-hint" class="almal-hint" role="status">${esc(lastNotice)}</div>
       <div class="almal-foot">
         <button class="almal-link" data-act="manual-toggle" aria-expanded="${ui.manual}">${
@@ -378,8 +384,7 @@ export function mountPanel(): void {
   });
   panelEl.addEventListener('keydown', (e) => {
     const target = e.target as HTMLElement | null;
-    const svc = { 'almal-al-manual': 'al', 'almal-mal-manual': 'mal' }[target?.id || ''];
-    if (e.key === 'Enter' && svc) ACTIONS[`${svc}-manual-save`]();
+    if (e.key === 'Enter' && target?.id === 'almal-mal-manual') ACTIONS['mal-manual-save']();
   });
   anchor.insertAdjacentElement('afterend', panelEl);
   renderPanel();
