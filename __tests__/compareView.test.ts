@@ -213,5 +213,39 @@ describe('compareView: DOM structure & score formatting', () => {
     expect(scores[0].textContent).toBe('0');
     expect(scores[1].textContent).toBe('0');
   });
+
+  it('correctly distinguishes your and other score/status when label attributes are absent', () => {
+    const row = document.createElement('div');
+    row.className = 'entry';
+    row.innerHTML = `
+      <div class="title"><a href="/anime/500">Hunter x Hunter</a></div>
+      <div class="score" score="9"><span>9</span></div>
+      <div class="score" score="7"><span>7</span></div>
+      <div class="status"><span>Completed</span></div>
+      <div class="status"><span>Paused</span></div>
+    `;
+
+    const data = getEntryData(row);
+    expect(data.yourScore).toBe(9);
+    expect(data.otherScore).toBe(7);
+    expect(data.yourStatus).toBe('Completed');
+    expect(data.otherStatus).toBe('Paused');
+  });
+
+  it('safely escapes special characters in usernames in compare view markup', () => {
+    const rawName = 'User" <script>alert(1)</script>';
+    const safeName = rawName.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+
+    const row = document.createElement('div');
+    row.innerHTML = `
+      <div class="score" label="${safeName}'s Score" score="8"><span class="ala-header-label">${safeName}'s Score</span></div>
+      <div class="status" label="${safeName}'s Status"><span>Completed</span></div>
+    `;
+
+    expect(row.querySelector('script')).toBeNull();
+    const scoreEl = row.querySelector('.score');
+    expect(scoreEl?.getAttribute('label')).toBe('User" <script>alert(1)</script>\'s Score');
+    expect(scoreEl?.querySelector('.ala-header-label')?.textContent).toBe('User" <script>alert(1)</script>\'s Score');
+  });
 });
 

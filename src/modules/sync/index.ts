@@ -134,7 +134,9 @@ defineFeature(
       renderPanel();
     });
 
-    initSyncPanel();
+    if (location.hostname === 'anilist.co') {
+      initSyncPanel();
+    }
   }
 );
 

@@ -124,7 +124,23 @@ export const onIn = function (this: any, ev: MessageEvent) {
   if (p.key && d.error == null && p.epoch === rpcEpoch) {
     attempt(() => {
       const cached = { time: Date.now(), msg: clone(d) };
-      const keysToSet = [p.key!, ...(p.extraKeys || [])];
+      let moreKeys: string[] = [];
+      const mlcUser = d.result?.MediaListCollection?.user || d.result?.data?.MediaListCollection?.user;
+      const uid = mlcUser?.id ? Number(mlcUser.id) : undefined;
+      const uname = mlcUser?.name ? String(mlcUser.name) : undefined;
+      if (uid && uname) {
+        rememberUser(uname, uid);
+      }
+      const m = p.key?.match(/^rpc:MediaListCollection:([A-Z]+):([^:]+):/i);
+      if (m) {
+        const type = m[1];
+        const target = m[2];
+        const isNumeric = /^\d+$/.test(target);
+        const resolvedUserId = isNumeric ? Number(target) : uid || userMap.get(target.toLowerCase());
+        const resolvedUserName = !isNumeric ? target : uname || (resolvedUserId ? idToUserMap.get(resolvedUserId) : undefined);
+        moreKeys = getMediaListKeys(type, resolvedUserId, resolvedUserName);
+      }
+      const keysToSet = [p.key!, ...(p.extraKeys || []), ...moreKeys];
       for (const k of keysToSet) {
         rpcCache.delete(k);
         rpcCache.set(k, cached);
@@ -365,7 +381,8 @@ export function hookWorker(yielded: () => boolean) {
           const blocker = win.__ALFL_RPC_BLOCK__;
           if (typeof blocker === 'function' && blocker(String(data.params[1]), data.params[2])) {
             logDebug('[FASTLOAD RPC] Blocked request:', JSON.stringify(data.params[2]).slice(0, 60));
-            const pageId = data.params[2]?.id ? `listComparison-${data.params[2].id}` : 'listComparison';
+            const targetId = data.params[2]?.id || data.params[2]?.userId;
+            const pageId = data.params[4]?.page?.id || (targetId ? `listComparison-${targetId}` : 'listComparison');
             const pageNum = data.params[2]?.page || 1;
             const dummyResult = {
               entities: {

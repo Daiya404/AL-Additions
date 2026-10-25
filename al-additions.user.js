@@ -1358,6 +1358,33 @@
 						}
 					} catch (_) {}
 				}
+				for (const [k, cached] of gqlStore.entries()) {
+					if (!k.startsWith(`gql:MediaListCollection:${t}:`)) continue;
+					const matchId = resolvedId && k.includes(`:${resolvedId}:`);
+					const matchName = resolvedName && k.toLowerCase().includes(`:${resolvedName.toLowerCase()}:`);
+					if ((matchId || matchName) && cached && Date.now() - cached.time < 3e5 && cached.snap?.buf) try {
+						const raw = new TextDecoder().decode(cached.snap.buf);
+						const json = JSON.parse(raw);
+						const mlc = json?.data?.MediaListCollection || json?.MediaListCollection;
+						if (mlc && Array.isArray(mlc.lists)) {
+							logDebug("[ANILIST API] 🎯 Cache HIT for MediaListCollection via FastLoad GQL store (scan):", k);
+							const result = formatMediaListResult(mlc);
+							if (resolvedId) entityCache.set(`MediaListCollection:${t}:${resolvedId}`, {
+								time: Date.now(),
+								data: { MediaListCollection: mlc },
+								isSuperset: true,
+								fields: new Set(KNOWN_LIST_FIELDS)
+							});
+							if (resolvedName) entityCache.set(`MediaListCollection:${t}:${resolvedName}`, {
+								time: Date.now(),
+								data: { MediaListCollection: mlc },
+								isSuperset: true,
+								fields: new Set(KNOWN_LIST_FIELDS)
+							});
+							return result;
+						}
+					} catch (_) {}
+				}
 			}
 			const rpcCache = win.__ALFL_RPC_CACHE__;
 			if (rpcCache) {
@@ -6236,7 +6263,24 @@
 				time: Date.now(),
 				msg: clone(d)
 			};
-			const keysToSet = [p.key, ...p.extraKeys || []];
+			let moreKeys = [];
+			const mlcUser = d.result?.MediaListCollection?.user || d.result?.data?.MediaListCollection?.user;
+			const uid = mlcUser?.id ? Number(mlcUser.id) : void 0;
+			const uname = mlcUser?.name ? String(mlcUser.name) : void 0;
+			if (uid && uname) rememberUser(uname, uid);
+			const m = p.key?.match(/^rpc:MediaListCollection:([A-Z]+):([^:]+):/i);
+			if (m) {
+				const type = m[1];
+				const target = m[2];
+				const isNumeric = /^\d+$/.test(target);
+				const resolvedUserId = isNumeric ? Number(target) : uid || userMap.get(target.toLowerCase());
+				moreKeys = getMediaListKeys(type, resolvedUserId, !isNumeric ? target : uname || (resolvedUserId ? idToUserMap.get(resolvedUserId) : void 0));
+			}
+			const keysToSet = [
+				p.key,
+				...p.extraKeys || [],
+				...moreKeys
+			];
 			for (const k of keysToSet) {
 				rpcCache.delete(k);
 				rpcCache.set(k, cached);
@@ -6465,7 +6509,8 @@
 						const blocker = win.__ALFL_RPC_BLOCK__;
 						if (typeof blocker === "function" && blocker(String(data.params[1]), data.params[2])) {
 							logDebug("[FASTLOAD RPC] Blocked request:", JSON.stringify(data.params[2]).slice(0, 60));
-							const pageId = data.params[2]?.id ? `listComparison-${data.params[2].id}` : "listComparison";
+							const targetId = data.params[2]?.id || data.params[2]?.userId;
+							const pageId = data.params[4]?.page?.id || (targetId ? `listComparison-${targetId}` : "listComparison");
 							const pageNum = data.params[2]?.page || 1;
 							const dummyResult = {
 								entities: { page: { [pageId]: {
@@ -9192,7 +9237,7 @@
 		const title = (el.querySelector(".title a, .title")?.textContent || "").trim();
 		const scores = el.querySelectorAll(".score");
 		const yourScoreEl = el.querySelector(".score[label=\"Score\"]") || scores[0];
-		const otherScoreEl = el.querySelector(".score:not([label=\"Score\"])") || scores[1];
+		const otherScoreEl = Array.from(scores).find((s) => s !== yourScoreEl) || scores[1];
 		const yourScoreAttr = yourScoreEl?.getAttribute("score");
 		let yourScore = yourScoreAttr ? parseFloat(yourScoreAttr) : parseFloat(yourScoreEl?.textContent?.replace(/[^\d.]/g, "") || "0");
 		if (!Number.isFinite(yourScore)) yourScore = 0;
@@ -9201,7 +9246,7 @@
 		if (!Number.isFinite(otherScore)) otherScore = 0;
 		const statuses = el.querySelectorAll(".status");
 		const yourStatusEl = el.querySelector(".status[label=\"Your Status\"]") || statuses[0];
-		const otherStatusEl = el.querySelector(".status:not([label=\"Your Status\"])") || statuses[1];
+		const otherStatusEl = Array.from(statuses).find((s) => s !== yourStatusEl) || statuses[1];
 		const yourStatus = normalizeStatus(yourStatusEl?.textContent || "");
 		const otherStatus = normalizeStatus(otherStatusEl?.textContent || "");
 		const data = {
@@ -9543,8 +9588,12 @@
 		const setRpcBlock = (fn) => {
 			pageWin.__ALFL_RPC_BLOCK__ = fn;
 		};
+		const compareBlocker = (q, vars) => isComparePage() && (/\bcompareWithAuthList\b/i.test(q || "") || Boolean(vars?.compareWithAuthList));
+		const installBlocker = () => {
+			setRpcBlock(compareBlocker);
+		};
 		function disableNativeScrollers(listContainer) {
-			(listContainer || document).querySelectorAll(".scroller").forEach((el) => {
+			(listContainer?.parentElement || listContainer || document).querySelectorAll(".scroller").forEach((el) => {
 				try {
 					const v = el.__vue__;
 					if (v) {
@@ -9583,11 +9632,15 @@
 				if (queryUser) otherName = queryUser;
 			}
 			const vue = getCompareVue();
-			if (!otherName && vue) {
-				otherName = vue.user?.name || vue.userName || void 0;
-				otherId = vue.user?.id || vue.userId || void 0;
+			if (vue) {
+				if (!otherName) otherName = vue.user?.name || vue.userName || void 0;
+				if (!otherId) otherId = Number(vue.user?.id || vue.userId) || void 0;
 			}
 			if (otherName && !otherId && userMap) otherId = userMap.get(otherName.toLowerCase());
+			if (otherName && otherId) {
+				if (userMap) userMap.set(otherName.toLowerCase(), otherId);
+				if (win.__ALFL_ID_MAP__) win.__ALFL_ID_MAP__.set(otherId, otherName);
+			}
 			let viewerId = Number(store$1.get("al_user_id", 0)) || void 0;
 			let viewerName = store$1.get("al_username", null) || void 0;
 			if (!viewerId || !viewerName) {
@@ -9684,7 +9737,7 @@
 				if (show) visibleCount++;
 			}
 			let emptyEl = listContainer.querySelector(".ala-compare-empty");
-			if (visibleCount === 0) {
+			if (visibleCount === 0 && entries.length > 0) {
 				if (!emptyEl) {
 					emptyEl = document.createElement("div");
 					emptyEl.className = "ala-compare-empty";
@@ -9695,6 +9748,7 @@
 			} else if (emptyEl) emptyEl.style.display = "none";
 		}
 		function applySort(listContainer, entries, col, dir) {
+			if (entries.length > 0) listContainer.querySelector(".no-results")?.remove();
 			entries.sort((a, b) => {
 				return compareEntries(getEntryData(a), getEntryData(b), col, dir);
 			});
@@ -9804,13 +9858,16 @@
 				if (abortState.abort || !isComparePage()) return;
 				const myMap = new Map();
 				for (const entry of myListRes.allEntries) myMap.set(entry.mediaId, entry);
-				const displayOtherName = otherListRes.user?.name || otherName || "User";
+				const safeOtherName = esc(otherListRes.user?.name || otherName || "User");
 				const scopeAttr = Array.from(compareRoot.attributes).map((a) => a.name).find((n) => /^data-v-[a-f0-9]+$/i.test(n));
+				const seenMediaIds = new Set();
 				const matchedNodes = [];
 				for (const otherEntry of otherListRes.allEntries) {
-					const myEntry = myMap.get(otherEntry.mediaId);
-					if (!myEntry) continue;
 					const mediaId = otherEntry.mediaId;
+					if (seenMediaIds.has(mediaId)) continue;
+					const myEntry = myMap.get(mediaId);
+					if (!myEntry) continue;
+					seenMediaIds.add(mediaId);
 					const title = otherEntry.media?.title?.userPreferred || otherEntry.media?.title?.romaji || otherEntry.media?.title?.english || myEntry.media?.title?.userPreferred || "Unknown";
 					const yourScore = myEntry.score || 0;
 					const otherScore = otherEntry.score || 0;
@@ -9824,9 +9881,9 @@
               <a href="/${type.toLowerCase()}/${mediaId}/" class=""${scopeAttr ? ` ${scopeAttr}=""` : ""}></a>
             </div>
             <div class="score" label="Score" score="${yourScore}"${scopeAttr ? ` ${scopeAttr}=""` : ""}><span>${yourScore > 0 ? yourScore : "0"}</span></div>
-            <div class="score" label="${displayOtherName}'s Score" score="${otherScore}"${scopeAttr ? ` ${scopeAttr}=""` : ""}><span>${otherScore > 0 ? otherScore : "0"}</span></div>
+            <div class="score" label="${safeOtherName}'s Score" score="${otherScore}"${scopeAttr ? ` ${scopeAttr}=""` : ""}><span>${otherScore > 0 ? otherScore : "0"}</span></div>
             <div class="status" label="Your Status"${scopeAttr ? ` ${scopeAttr}=""` : ""}><span>${yourStatus}</span></div>
-            <div class="status" label="${displayOtherName}'s Status"${scopeAttr ? ` ${scopeAttr}=""` : ""}><span>${otherStatus}</span></div>
+            <div class="status" label="${safeOtherName}'s Status"${scopeAttr ? ` ${scopeAttr}=""` : ""}><span>${otherStatus}</span></div>
           `;
 					const link = row.querySelector(".title a");
 					if (link) link.textContent = title;
@@ -9864,13 +9921,13 @@
               <div class="ala-header-wrap"><span class="ala-header-label">Your Score</span></div>
             </div>
             <div class="score ala-sortable-header"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
-              <div class="ala-header-wrap"><span class="ala-header-label">${displayOtherName}'s Score</span></div>
+              <div class="ala-header-wrap"><span class="ala-header-label">${safeOtherName}'s Score</span></div>
             </div>
             <div class="status"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
               <span class="ala-header-label">Your Status</span>
             </div>
             <div class="status"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
-              <span class="ala-header-label">${displayOtherName}'s Status</span>
+              <span class="ala-header-label">${safeOtherName}'s Status</span>
             </div>
           `;
 					customTable.appendChild(customHeader);
@@ -9899,6 +9956,10 @@
 						empty.textContent = `You don't have any ${type.toLowerCase()} in common ｡ﾟヽ(ﾟ´Д｀)ﾉﾟ｡`;
 						customTable.appendChild(empty);
 					}
+					customHeader.style.display = "none";
+				} else {
+					customTable.querySelector(".no-results")?.remove();
+					customHeader.style.display = "";
 				}
 				const emptyEl = customTable.querySelector(".ala-compare-empty");
 				if (emptyEl) customTable.appendChild(emptyEl);
@@ -9907,11 +9968,12 @@
 				disableNativeScrollers(compareRoot);
 				lastProcessedCount = matchedNodes.length;
 				isCompareLoaded = true;
-				setRpcBlock((q) => isComparePage() && /\bcompareWithAuthList\b/i.test(q || ""));
+				installBlocker();
 				updateStatusCounts(sidebar, matchedNodes);
 				applyFilter(customTable, matchedNodes);
 			} catch (err) {
 				loadFailed = true;
+				setRpcBlock();
 				console.error("[AL-Additions] CompareView getMediaList error:", err);
 			} finally {
 				isLoadingAll = false;
@@ -9920,7 +9982,8 @@
 			}
 		}
 		function cleanup() {
-			setRpcBlock();
+			if (!isComparePage()) setRpcBlock();
+			else installBlocker();
 			if (indicatorTimer) {
 				clearTimeout(indicatorTimer);
 				indicatorTimer = null;
@@ -10100,7 +10163,7 @@
 				applyFilter(compareRoot, entries);
 				applySort(compareRoot, entries, activeSortCol, activeSortDir);
 			}
-			setRpcBlock((q) => isComparePage() && /\bcompareWithAuthList\b/i.test(q || ""));
+			installBlocker();
 			if (!isLoadingAll && !isCompareLoaded && !loadFailed && sidebar) loadAllEntriesViaMediaList(compareRoot, sidebar);
 		}
 		const checkView = debounce(() => {
@@ -10119,6 +10182,7 @@
 				activeSortDir = "desc";
 				for (const s of STATUSES) activeStatuses.add(s);
 				cleanup();
+				installBlocker();
 			}
 			if (isCompareLoaded) return;
 			const compareRoot = document.querySelector(".compare:not(#ala-compare-table)");
@@ -10130,9 +10194,6 @@
 				setupCompareView(compareRoot, header, entries);
 			}
 		}, 60);
-		const installBlocker = () => {
-			setRpcBlock((q) => isComparePage() && /\bcompareWithAuthList\b/i.test(q || ""));
-		};
 		installBlocker();
 		Core.ready(checkView);
 		Core.onNavigate(() => {
@@ -10723,7 +10784,7 @@
 			log("MAL disconnected.");
 			renderPanel();
 		});
-		initSyncPanel();
+		if (location.hostname === "anilist.co") initSyncPanel();
 	});
 	defineFeature({
 		id: "manualOverrides",

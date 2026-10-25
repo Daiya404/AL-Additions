@@ -1,7 +1,7 @@
 import { defineFeature } from '../core/registry';
 import { Core } from '../core/observer';
 import { addStyle } from '../utils/dom';
-import { debounce, logDebug, store } from '../utils/helpers';
+import { debounce, logDebug, store, esc } from '../utils/helpers';
 import { unsafeWindow } from 'vite-plugin-monkey/dist/client';
 import { AniList, type MediaListEntryItem } from '../api/anilist';
 
@@ -43,7 +43,7 @@ export function getEntryData(el: HTMLElement): EntryData {
 
   const scores = el.querySelectorAll<HTMLElement>('.score');
   const yourScoreEl = el.querySelector<HTMLElement>('.score[label="Score"]') || scores[0];
-  const otherScoreEl = el.querySelector<HTMLElement>('.score:not([label="Score"])') || scores[1];
+  const otherScoreEl = Array.from(scores).find((s) => s !== yourScoreEl) || scores[1];
 
   const yourScoreAttr = yourScoreEl?.getAttribute('score');
   let yourScore = yourScoreAttr
@@ -59,7 +59,7 @@ export function getEntryData(el: HTMLElement): EntryData {
 
   const statuses = el.querySelectorAll<HTMLElement>('.status');
   const yourStatusEl = el.querySelector<HTMLElement>('.status[label="Your Status"]') || statuses[0];
-  const otherStatusEl = el.querySelector<HTMLElement>('.status:not([label="Your Status"])') || statuses[1];
+  const otherStatusEl = Array.from(statuses).find((s) => s !== yourStatusEl) || statuses[1];
 
   const yourStatus = normalizeStatus(yourStatusEl?.textContent || '');
   const otherStatus = normalizeStatus(otherStatusEl?.textContent || '');
@@ -416,8 +416,15 @@ defineFeature(
       pageWin.__ALFL_RPC_BLOCK__ = fn;
     };
 
+    const compareBlocker = (q?: string, vars?: any): boolean =>
+      isComparePage() && (/\bcompareWithAuthList\b/i.test(q || '') || Boolean(vars?.compareWithAuthList));
+
+    const installBlocker = () => {
+      setRpcBlock(compareBlocker);
+    };
+
     function disableNativeScrollers(listContainer?: HTMLElement): void {
-      const root = listContainer || document;
+      const root = listContainer?.parentElement || listContainer || document;
       root.querySelectorAll<HTMLElement>('.scroller').forEach((el) => {
         try {
           const v = (el as any).__vue__;
@@ -470,13 +477,18 @@ defineFeature(
       }
 
       const vue = getCompareVue();
-      if (!otherName && vue) {
-        otherName = vue.user?.name || vue.userName || undefined;
-        otherId = vue.user?.id || vue.userId || undefined;
+      if (vue) {
+        if (!otherName) otherName = vue.user?.name || vue.userName || undefined;
+        if (!otherId) otherId = Number(vue.user?.id || vue.userId) || undefined;
       }
 
       if (otherName && !otherId && userMap) {
         otherId = userMap.get(otherName.toLowerCase());
+      }
+
+      if (otherName && otherId) {
+        if (userMap) userMap.set(otherName.toLowerCase(), otherId);
+        if (win.__ALFL_ID_MAP__) win.__ALFL_ID_MAP__.set(otherId, otherName);
       }
 
       let viewerId = Number(store.get('al_user_id', 0)) || undefined;
@@ -604,7 +616,7 @@ defineFeature(
       }
 
       let emptyEl = listContainer.querySelector<HTMLElement>('.ala-compare-empty');
-      if (visibleCount === 0) {
+      if (visibleCount === 0 && entries.length > 0) {
         if (!emptyEl) {
           emptyEl = document.createElement('div');
           emptyEl.className = 'ala-compare-empty';
@@ -623,6 +635,10 @@ defineFeature(
       col: 'title' | 'yourScore' | 'otherScore',
       dir: 'asc' | 'desc'
     ): void {
+      if (entries.length > 0) {
+        listContainer.querySelector('.no-results')?.remove();
+      }
+
       entries.sort((a, b) => {
         const dataA = getEntryData(a);
         const dataB = getEntryData(b);
@@ -776,16 +792,20 @@ defineFeature(
         }
 
         const displayOtherName = otherListRes.user?.name || otherName || 'User';
+        const safeOtherName = esc(displayOtherName);
         const scopeAttr = Array.from(compareRoot.attributes)
           .map((a) => a.name)
           .find((n) => /^data-v-[a-f0-9]+$/i.test(n));
 
+        const seenMediaIds = new Set<number>();
         const matchedNodes: HTMLElement[] = [];
         for (const otherEntry of otherListRes.allEntries) {
-          const myEntry = myMap.get(otherEntry.mediaId);
-          if (!myEntry) continue;
-
           const mediaId = otherEntry.mediaId;
+          if (seenMediaIds.has(mediaId)) continue;
+          const myEntry = myMap.get(mediaId);
+          if (!myEntry) continue;
+          seenMediaIds.add(mediaId);
+
           const title =
             otherEntry.media?.title?.userPreferred ||
             otherEntry.media?.title?.romaji ||
@@ -806,9 +826,9 @@ defineFeature(
               <a href="/${type.toLowerCase()}/${mediaId}/" class=""${scopeAttr ? ` ${scopeAttr}=""` : ''}></a>
             </div>
             <div class="score" label="Score" score="${yourScore}"${scopeAttr ? ` ${scopeAttr}=""` : ''}><span>${yourScore > 0 ? yourScore : '0'}</span></div>
-            <div class="score" label="${displayOtherName}'s Score" score="${otherScore}"${scopeAttr ? ` ${scopeAttr}=""` : ''}><span>${otherScore > 0 ? otherScore : '0'}</span></div>
+            <div class="score" label="${safeOtherName}'s Score" score="${otherScore}"${scopeAttr ? ` ${scopeAttr}=""` : ''}><span>${otherScore > 0 ? otherScore : '0'}</span></div>
             <div class="status" label="Your Status"${scopeAttr ? ` ${scopeAttr}=""` : ''}><span>${yourStatus}</span></div>
-            <div class="status" label="${displayOtherName}'s Status"${scopeAttr ? ` ${scopeAttr}=""` : ''}><span>${otherStatus}</span></div>
+            <div class="status" label="${safeOtherName}'s Status"${scopeAttr ? ` ${scopeAttr}=""` : ''}><span>${otherStatus}</span></div>
           `;
 
           const link = row.querySelector<HTMLAnchorElement>('.title a');
@@ -853,13 +873,13 @@ defineFeature(
               <div class="ala-header-wrap"><span class="ala-header-label">Your Score</span></div>
             </div>
             <div class="score ala-sortable-header"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
-              <div class="ala-header-wrap"><span class="ala-header-label">${displayOtherName}'s Score</span></div>
+              <div class="ala-header-wrap"><span class="ala-header-label">${safeOtherName}'s Score</span></div>
             </div>
             <div class="status"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
               <span class="ala-header-label">Your Status</span>
             </div>
             <div class="status"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
-              <span class="ala-header-label">${displayOtherName}'s Status</span>
+              <span class="ala-header-label">${safeOtherName}'s Status</span>
             </div>
           `;
           customTable.appendChild(customHeader);
@@ -898,6 +918,10 @@ defineFeature(
             empty.textContent = `You don't have any ${type.toLowerCase()} in common ｡ﾟヽ(ﾟ´Д｀)ﾉﾟ｡`;
             customTable.appendChild(empty);
           }
+          customHeader.style.display = 'none';
+        } else {
+          customTable.querySelector('.no-results')?.remove();
+          customHeader.style.display = '';
         }
 
         const emptyEl = customTable.querySelector('.ala-compare-empty');
@@ -910,12 +934,13 @@ defineFeature(
         lastProcessedCount = matchedNodes.length;
         isCompareLoaded = true;
 
-        setRpcBlock((q) => isComparePage() && /\bcompareWithAuthList\b/i.test(q || ''));
+        installBlocker();
 
         updateStatusCounts(sidebar, matchedNodes);
         applyFilter(customTable, matchedNodes);
       } catch (err) {
         loadFailed = true;
+        setRpcBlock();
         console.error('[AL-Additions] CompareView getMediaList error:', err);
       } finally {
         isLoadingAll = false;
@@ -925,7 +950,11 @@ defineFeature(
     }
 
     function cleanup(): void {
-      setRpcBlock();
+      if (!isComparePage()) {
+        setRpcBlock();
+      } else {
+        installBlocker();
+      }
       if (indicatorTimer) {
         clearTimeout(indicatorTimer);
         indicatorTimer = null;
@@ -1165,7 +1194,7 @@ defineFeature(
         applySort(compareRoot, entries, activeSortCol, activeSortDir);
       }
 
-      setRpcBlock((q) => isComparePage() && /\bcompareWithAuthList\b/i.test(q || ''));
+      installBlocker();
 
       if (!isLoadingAll && !isCompareLoaded && !loadFailed && sidebar) {
         loadAllEntriesViaMediaList(compareRoot, sidebar);
@@ -1189,6 +1218,7 @@ defineFeature(
         activeSortDir = 'desc';
         for (const s of STATUSES) activeStatuses.add(s);
         cleanup();
+        installBlocker();
       }
 
       if (isCompareLoaded) return;
@@ -1204,10 +1234,6 @@ defineFeature(
         setupCompareView(compareRoot, header, entries);
       }
     }, 60);
-
-    const installBlocker = () => {
-      setRpcBlock((q) => isComparePage() && /\bcompareWithAuthList\b/i.test(q || ''));
-    };
 
     installBlocker();
     Core.ready(checkView);

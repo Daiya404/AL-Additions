@@ -552,6 +552,39 @@ export const AniList = (() => {
           } catch (_) {}
         }
       }
+      for (const [k, cached] of gqlStore.entries()) {
+        if (!k.startsWith(`gql:MediaListCollection:${t}:`)) continue;
+        const matchId = resolvedId && k.includes(`:${resolvedId}:`);
+        const matchName = resolvedName && k.toLowerCase().includes(`:${resolvedName.toLowerCase()}:`);
+        if ((matchId || matchName) && cached && Date.now() - cached.time < 5 * 60_000 && cached.snap?.buf) {
+          try {
+            const raw = new TextDecoder().decode(cached.snap.buf);
+            const json = JSON.parse(raw);
+            const mlc = json?.data?.MediaListCollection || json?.MediaListCollection;
+            if (mlc && Array.isArray(mlc.lists)) {
+              logDebug('[ANILIST API] 🎯 Cache HIT for MediaListCollection via FastLoad GQL store (scan):', k);
+              const result = formatMediaListResult(mlc);
+              if (resolvedId) {
+                entityCache.set(`MediaListCollection:${t}:${resolvedId}`, {
+                  time: Date.now(),
+                  data: { MediaListCollection: mlc },
+                  isSuperset: true,
+                  fields: new Set(KNOWN_LIST_FIELDS)
+                });
+              }
+              if (resolvedName) {
+                entityCache.set(`MediaListCollection:${t}:${resolvedName}`, {
+                  time: Date.now(),
+                  data: { MediaListCollection: mlc },
+                  isSuperset: true,
+                  fields: new Set(KNOWN_LIST_FIELDS)
+                });
+              }
+              return result;
+            }
+          } catch (_) {}
+        }
+      }
     }
 
     // 3. Check FastLoad RPC Cache (Prefetched by Web Worker)
