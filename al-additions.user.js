@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AL Additions
 // @namespace    daiya.al-additions-v3
-// @version      0.8.2
+// @version      0.9.0
 // @author       Daiya
 // @description  A userscript that adds extra tools to AniList, including a one-way AniList → MyAnimeList sync, a score and progress editor, airing indicators, OP/ED songs and quick links to other sites.
 // @license      GPL-3.0-or-later
