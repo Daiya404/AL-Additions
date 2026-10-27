@@ -2,10 +2,7 @@ import { RateLimiter } from '../utils/limiter';
 import { store, gm, sleep, memo, openTab, authError, safe, randomString, logDebug } from '../utils/helpers';
 import { strictTitle } from '../utils/matching';
 import { Core } from '../core/observer';
-import { AniList } from './anilist';
 
-export const AL_AUTH_URL = 'https://anilist.co/api/v2/oauth/authorize';
-export const AL_CLIENT_ID = '50247';
 export const MAL_AUTH_URL = 'https://myanimelist.net/v1/oauth2/authorize';
 export const MAL_TOKEN_URL = 'https://myanimelist.net/v1/oauth2/token';
 export const MAL_API = 'https://api.myanimelist.net/v2';
@@ -55,11 +52,6 @@ export function toast(msg: string, isError?: boolean, closeTab?: boolean): void 
 
 export const clearMalAuth = (): void => {
   ['mal_token', 'mal_refresh_token', 'mal_expires_at'].forEach((k) => store.del(k));
-};
-
-export const clearAniListAuth = (): void => {
-  store.del('al_token');
-  AniList.clearViewer();
 };
 
 export async function malTokenRequest(params: Record<string, string>): Promise<string> {
@@ -114,11 +106,6 @@ export async function malEnsureToken(): Promise<string> {
   return malRefresh;
 }
 
-export function alConnect(): void {
-  openTab(`${AL_AUTH_URL}?client_id=${encodeURIComponent(AL_CLIENT_ID)}&response_type=token`);
-  log('Opened AniList authorization in a new tab. Finish connecting there, then return to your list.');
-}
-
 export function malConnect(): void {
   const verifier = randomString(96);
   store.set('mal_code_verifier', verifier);
@@ -130,27 +117,8 @@ export function malConnect(): void {
   log('Opened MAL authorization in a new tab. Finish connecting there, then return to your list.');
 }
 
-export function saveAniListToken(token: string): void {
-  store.set('al_token', token);
-  AniList.clearViewer();
-}
-
 export function captureCredentials(): void {
   const HOST = location.hostname;
-  if (HOST === 'anilist.co' && location.hash) {
-    const params = new URLSearchParams(location.hash.substring(1));
-    const token = params.get('access_token');
-    const err = params.get('error');
-    if (token || err) {
-      history.replaceState(null, '', location.pathname + location.search);
-      if (token) {
-        saveAniListToken(token);
-        toast('AniList connected! You can close this tab.', false, true);
-      } else {
-        toast(`AniList auth failed: ${err}. Check the app's redirect URL matches https://anilist.co/ exactly.`, true);
-      }
-    }
-  }
   if (HOST === 'myanimelist.net') {
     const code = new URLSearchParams(location.search).get('code');
     if (!code || !store.get('mal_code_verifier')) return;

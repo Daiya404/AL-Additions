@@ -12,14 +12,17 @@ export const SALT_LENGTH = 16;
 export const IV_LENGTH = 12;
 
 export const SENSITIVE_KEYS = [
-  'al_token',
-  'al_username',
-  'al_user_id',
-  'al_score_format',
   'mal_code_verifier',
   'mal_token',
   'mal_refresh_token',
   'mal_expires_at'
+] as const;
+
+export const SESSION_CACHE_KEYS = [
+  'al_token',
+  'al_username',
+  'al_user_id',
+  'al_score_format'
 ] as const;
 
 export interface CryptoEnvelope {
@@ -216,6 +219,31 @@ export async function createBackup(
   }
 }
 
+export function createRawBackup(overrides?: Record<string, any>): string {
+  const data: Record<string, any> = {};
+
+  for (const r of Object.values(ROWS)) {
+    const rawVal = overrides && r.key in overrides ? overrides[r.key] : store.get(PREFIX + r.key, r.def);
+    data[r.key] = rawVal;
+  }
+
+  for (const key of SENSITIVE_KEYS) {
+    const val = store.get(key, undefined);
+    if (val !== undefined && val !== null) {
+      data[key] = val;
+    }
+  }
+
+  const exportedAt = Date.now();
+  const plainPayload = {
+    version: BACKUP_VERSION,
+    exportedAt,
+    data
+  };
+
+  return JSON.stringify(plainPayload, null, 2);
+}
+
 export function downloadBackupFile(bytes: Uint8Array, filename = BACKUP_FILENAME): void {
   const blob = new Blob([bytes as unknown as BufferSource], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
@@ -236,7 +264,12 @@ export function applyVersion1Settings(data: Record<string, any>): ImportResult {
   let applied = 0;
   let secretsApplied = 0;
 
+  for (const k of SESSION_CACHE_KEYS) {
+    store.del(k);
+  }
+
   for (const [key, rawValue] of Object.entries(data)) {
+    if ((SESSION_CACHE_KEYS as readonly string[]).includes(key)) continue;
     if ((SENSITIVE_KEYS as readonly string[]).includes(key)) {
       if (rawValue !== undefined && rawValue !== null) {
         store.set(key, rawValue);

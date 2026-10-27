@@ -1,10 +1,11 @@
 import { defineFeature } from '../core/registry';
 import { Core } from '../core/observer';
 import { addStyle } from '../utils/dom';
-import { debounce, logDebug } from '../utils/helpers';
+import { debounce, logDebug, store, esc } from '../utils/helpers';
 import { unsafeWindow } from 'vite-plugin-monkey/dist/client';
+import { AniList, type MediaListEntryItem } from '../api/anilist';
 
-interface EntryData {
+export interface EntryData {
   el: HTMLElement;
   title: string;
   yourScore: number;
@@ -13,19 +14,27 @@ interface EntryData {
   otherStatus: string;
 }
 
-const STATUSES = ['Completed', 'Planning', 'Current', 'Paused', 'Dropped'] as const;
+export const STATUSES = ['Completed', 'Planning', 'Current', 'Paused', 'Dropped'] as const;
 
-function normalizeStatus(raw: string): string {
-  const s = raw.trim().toLowerCase();
+export function normalizeStatus(raw: string): string {
+  const s = (raw || '').trim().toLowerCase();
   if (s.includes('plan')) return 'Planning';
   if (s.includes('complete')) return 'Completed';
   if (s.includes('current') || s.includes('watch') || s.includes('read') || s.includes('repeat')) return 'Current';
   if (s.includes('pause') || s.includes('hold')) return 'Paused';
   if (s.includes('drop')) return 'Dropped';
-  return raw.trim();
+  return raw ? raw.trim() : 'Planning';
 }
 
-function getEntryData(el: HTMLElement): EntryData {
+export function getEntryMediaId(el: HTMLElement): number | null {
+  const link = el.querySelector<HTMLAnchorElement>('.title a, a.title');
+  if (!link) return null;
+  const href = link.getAttribute('href') || link.pathname || '';
+  const m = href.match(/\/(?:anime|manga)\/(\d+)/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+export function getEntryData(el: HTMLElement): EntryData {
   const cached = (el as any)._alaCompareData as EntryData | undefined;
   if (cached) return cached;
 
@@ -34,7 +43,7 @@ function getEntryData(el: HTMLElement): EntryData {
 
   const scores = el.querySelectorAll<HTMLElement>('.score');
   const yourScoreEl = el.querySelector<HTMLElement>('.score[label="Score"]') || scores[0];
-  const otherScoreEl = el.querySelector<HTMLElement>('.score:not([label="Score"])') || scores[1];
+  const otherScoreEl = Array.from(scores).find((s) => s !== yourScoreEl) || scores[1];
 
   const yourScoreAttr = yourScoreEl?.getAttribute('score');
   let yourScore = yourScoreAttr
@@ -50,7 +59,7 @@ function getEntryData(el: HTMLElement): EntryData {
 
   const statuses = el.querySelectorAll<HTMLElement>('.status');
   const yourStatusEl = el.querySelector<HTMLElement>('.status[label="Your Status"]') || statuses[0];
-  const otherStatusEl = el.querySelector<HTMLElement>('.status:not([label="Your Status"])') || statuses[1];
+  const otherStatusEl = Array.from(statuses).find((s) => s !== yourStatusEl) || statuses[1];
 
   const yourStatus = normalizeStatus(yourStatusEl?.textContent || '');
   const otherStatus = normalizeStatus(otherStatusEl?.textContent || '');
@@ -60,7 +69,7 @@ function getEntryData(el: HTMLElement): EntryData {
   return data;
 }
 
-function compareEntries(
+export function compareEntries(
   a: EntryData,
   b: EntryData,
   col: 'title' | 'yourScore' | 'otherScore',
@@ -382,8 +391,12 @@ defineFeature(
     let lastProcessedCount = -1;
     let currentRoute = '';
     let isLoadingAll = false;
+    let isCompareLoaded = false;
+    let loadFailed = false;
+    let isMutatingDOM = false;
     let loadAbortState: { abort: boolean } | null = null;
     let resizeCleanup: (() => void) | null = null;
+    let indicatorTimer: ReturnType<typeof setTimeout> | null = null;
 
     function getCompareVue(): any {
       const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
@@ -396,6 +409,112 @@ defineFeature(
         return (compareEl as any).__vue__;
       }
       return null;
+    }
+
+    const pageWin = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+    const setRpcBlock = (fn?: (query: string, vars: any) => boolean): void => {
+      pageWin.__ALFL_RPC_BLOCK__ = fn;
+    };
+
+    const compareBlocker = (q?: string, vars?: any): boolean =>
+      isComparePage() && (/\bcompareWithAuthList\b/i.test(q || '') || Boolean(vars?.compareWithAuthList));
+
+    const installBlocker = () => {
+      setRpcBlock(compareBlocker);
+    };
+
+    function disableNativeScrollers(listContainer?: HTMLElement): void {
+      const root = listContainer?.parentElement || listContainer || document;
+      root.querySelectorAll<HTMLElement>('.scroller').forEach((el) => {
+        try {
+          const v = (el as any).__vue__;
+          if (v) {
+            if (typeof v.check === 'function') {
+              window.removeEventListener('scroll', v.check);
+              window.removeEventListener('resize', v.check);
+              v._scrollContainer?.removeEventListener?.('scroll', v.check);
+              v._scrollContainer?.removeEventListener?.('resize', v.check);
+            }
+            v.execute = () => {};
+            v.handler = () => {};
+            if (v.$parent) {
+              v.$parent.complete = true;
+              v.$parent.loading = false;
+            }
+            v.$destroy?.();
+          }
+        } catch {}
+        el.remove();
+      });
+    }
+
+    async function resolveCompareUsers(): Promise<{
+      viewerId?: number;
+      viewerName?: string;
+      otherId?: number;
+      otherName?: string;
+      type: 'ANIME' | 'MANGA';
+    }> {
+      const type: 'ANIME' | 'MANGA' = location.pathname.toLowerCase().includes('mangalist') ? 'MANGA' : 'ANIME';
+      const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) as any;
+      const userMap: Map<string, number> | undefined = win.__ALFL_USER_MAP__;
+
+      let otherName: string | undefined;
+      let otherId: number | undefined;
+
+      const urlMatch = location.pathname.match(/\/user\/([^/]+)\/(animelist|mangalist)\/compare/i);
+      if (urlMatch) {
+        try {
+          otherName = decodeURIComponent(urlMatch[1]);
+        } catch {
+          otherName = urlMatch[1];
+        }
+      }
+
+      if (!otherName) {
+        const queryUser = new URLSearchParams(location.search).get('user');
+        if (queryUser) otherName = queryUser;
+      }
+
+      const vue = getCompareVue();
+      if (vue) {
+        if (!otherName) otherName = vue.user?.name || vue.userName || undefined;
+        if (!otherId) otherId = Number(vue.user?.id || vue.userId) || undefined;
+      }
+
+      if (otherName && !otherId && userMap) {
+        otherId = userMap.get(otherName.toLowerCase());
+      }
+
+      if (otherName && otherId) {
+        if (userMap) userMap.set(otherName.toLowerCase(), otherId);
+        if (win.__ALFL_ID_MAP__) win.__ALFL_ID_MAP__.set(otherId, otherName);
+      }
+
+      let viewerId = Number(store.get('al_user_id', 0)) || undefined;
+      let viewerName = store.get<string | null>('al_username', null) || undefined;
+
+      if (!viewerId || !viewerName) {
+        const nuxtUser = win.__NUXT__?.state?.auth?.user || win.__NUXT__?.state?.user;
+        if (nuxtUser) {
+          if (!viewerId && nuxtUser.id) viewerId = Number(nuxtUser.id);
+          if (!viewerName && nuxtUser.name) viewerName = String(nuxtUser.name);
+        }
+      }
+
+      if (!viewerId || !viewerName) {
+        const viewer = await AniList.viewer();
+        if (viewer) {
+          viewerId = viewer.id;
+          viewerName = viewer.name;
+        }
+      }
+
+      if (!viewerId && viewerName && userMap) {
+        viewerId = userMap.get(viewerName.toLowerCase());
+      }
+
+      return { viewerId, viewerName, otherId, otherName, type };
     }
 
     function updateHeaderHoverColor(): void {
@@ -495,10 +614,9 @@ defineFeature(
 
         if (show) visibleCount++;
       }
-      logDebug('[COMPARE]', 'Filter applied:', { activeStatuses: [...activeStatuses], visibleCount, total: entries.length });
 
       let emptyEl = listContainer.querySelector<HTMLElement>('.ala-compare-empty');
-      if (visibleCount === 0) {
+      if (visibleCount === 0 && entries.length > 0) {
         if (!emptyEl) {
           emptyEl = document.createElement('div');
           emptyEl.className = 'ala-compare-empty';
@@ -517,22 +635,27 @@ defineFeature(
       col: 'title' | 'yourScore' | 'otherScore',
       dir: 'asc' | 'desc'
     ): void {
+      if (entries.length > 0) {
+        listContainer.querySelector('.no-results')?.remove();
+      }
+
       entries.sort((a, b) => {
         const dataA = getEntryData(a);
         const dataB = getEntryData(b);
         return compareEntries(dataA, dataB, col, dir);
       });
 
+      const frag = document.createDocumentFragment();
       for (const el of entries) {
-        listContainer.appendChild(el);
+        frag.appendChild(el);
       }
+
+      isMutatingDOM = true;
+      listContainer.appendChild(frag);
 
       const emptyEl = listContainer.querySelector('.ala-compare-empty');
       if (emptyEl) listContainer.appendChild(emptyEl);
-
-      const scroller = listContainer.querySelector('.scroller');
-      if (scroller) listContainer.appendChild(scroller);
-      logDebug('[COMPARE]', 'Sort applied:', { col, dir, totalEntries: entries.length });
+      isMutatingDOM = false;
     }
 
     function updateStatusCounts(sidebar: HTMLElement, entries: HTMLElement[]): void {
@@ -565,9 +688,13 @@ defineFeature(
     }
 
     function setLoadIndicator(sidebar: HTMLElement, text: string | null): void {
+      if (indicatorTimer) {
+        clearTimeout(indicatorTimer);
+        indicatorTimer = null;
+      }
       let indicator = sidebar.querySelector<HTMLElement>('#ala-compare-load-indicator');
       if (!text) {
-        if (indicator) indicator.style.display = 'none';
+        indicator?.remove();
         return;
       }
       if (!indicator) {
@@ -586,109 +713,285 @@ defineFeature(
       if (textEl) textEl.textContent = text;
     }
 
-    async function autoLoadAllEntries(
-      listContainer: HTMLElement,
+    function getActiveCompareContainer(fallback?: HTMLElement): HTMLElement | null {
+      return document.getElementById('ala-compare-table') || fallback || document.querySelector('.ala-compare-main .compare') || null;
+    }
+
+    function triggerFilterUpdate(sidebar: HTMLElement, fallback?: HTMLElement): void {
+      const badge = sidebar.querySelector<HTMLElement>('.ala-compare-active-badge');
+      if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
+      const target = getActiveCompareContainer(fallback);
+      if (!target) return;
+      const currentEntries = Array.from(target.querySelectorAll<HTMLElement>('.entry:not(.header)'));
+      applyFilter(target, currentEntries);
+    }
+
+    function triggerSort(col: 'title' | 'yourScore' | 'otherScore', fallback?: HTMLElement): void {
+      if (activeSortCol === col) {
+        activeSortDir = activeSortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        activeSortCol = col;
+        activeSortDir = col === 'title' ? 'asc' : 'desc';
+      }
+      const target = getActiveCompareContainer(fallback);
+      if (!target) return;
+      const currentHeader = target.querySelector<HTMLElement>('.entry.header');
+      if (currentHeader) {
+        const titleH = currentHeader.querySelector<HTMLElement>('.title');
+        const scores = currentHeader.querySelectorAll<HTMLElement>('.score');
+        updateSortArrows(titleH, scores[0] || null, scores[1] || null, activeSortCol, activeSortDir);
+      }
+      const currentEntries = Array.from(target.querySelectorAll<HTMLElement>('.entry:not(.header)'));
+      applySort(target, currentEntries, activeSortCol, activeSortDir);
+    }
+
+    async function loadAllEntriesViaMediaList(
+      compareRoot: HTMLElement,
       sidebar: HTMLElement
     ): Promise<void> {
-      if (isLoadingAll) return;
+      if (isLoadingAll || isCompareLoaded || loadFailed) return;
       isLoadingAll = true;
       const abortState = { abort: false };
       loadAbortState = abortState;
 
-      try {
-        let iterations = 0;
-        const MAX_PAGES = 100; // Up to ~3000 entries safety cap
-
-        while (!abortState.abort && isComparePage() && iterations < MAX_PAGES) {
-          iterations++;
-
-          const scrollerEl = document.querySelector<HTMLElement>('.scroller');
-          const vue = getCompareVue();
-
-          if (vue) {
-            const currentEntries = listContainer.querySelectorAll('.entry:not(.header)').length;
-
-            if (currentEntries > 0) {
-              setLoadIndicator(sidebar, `Loading all entries (${currentEntries})...`);
-            } else if (scrollerEl) {
-              setLoadIndicator(sidebar, 'Loading all entries...');
-            }
-
-            if (vue.hasNextPage === false || vue.complete) {
-              break;
-            }
-
-            if (vue.loading) {
-              await new Promise((r) => setTimeout(r, 100));
-              continue;
-            }
-
-            try {
-              if (typeof vue.scrollHandler === 'function') {
-                await vue.scrollHandler();
-              } else if (typeof (scrollerEl as any)?.__vue__?.handler === 'function') {
-                await (scrollerEl as any).__vue__.handler();
-              }
-            } catch (_) {}
-
-            await new Promise((r) => setTimeout(r, 140));
-          } else if (scrollerEl) {
-            const currentEntries = listContainer.querySelectorAll('.entry:not(.header)').length;
-            if (currentEntries > 0) {
-              setLoadIndicator(sidebar, `Loading all entries (${currentEntries})...`);
-            } else {
-              setLoadIndicator(sidebar, 'Loading all entries...');
-            }
-            const prevCount = currentEntries;
-            scrollerEl.scrollIntoView({ behavior: 'auto', block: 'end' });
-            window.dispatchEvent(new Event('scroll'));
-            await new Promise((r) => setTimeout(r, 300));
-            const newCount = listContainer.querySelectorAll('.entry:not(.header)').length;
-            if (newCount === prevCount) {
-              await new Promise((r) => setTimeout(r, 400));
-              if (listContainer.querySelectorAll('.entry:not(.header)').length === prevCount) {
-                break;
-              }
-            }
-          } else {
-            break;
-          }
+      indicatorTimer = setTimeout(() => {
+        if (!abortState.abort && isComparePage()) {
+          setLoadIndicator(sidebar, 'Loading full compare list...');
         }
+      }, 250);
+
+      try {
+        const { viewerId, viewerName, otherId, otherName, type } = await resolveCompareUsers();
+        if (abortState.abort || !isComparePage()) return;
+
+        const viewerTarget = viewerId || viewerName;
+        const otherTarget = otherId || otherName;
+
+        if (!viewerTarget || !otherTarget) {
+          logDebug('[COMPARE] Missing viewer or other user for getMediaList, keeping fallback');
+          loadFailed = true;
+          return;
+        }
+
+        const [myListRes, otherListRes] = await Promise.all([
+          AniList.getMediaList(viewerTarget, type, {
+            userId: viewerId,
+            userName: viewerId ? undefined : viewerName
+          }),
+          AniList.getMediaList(otherTarget, type, {
+            userId: otherId,
+            userName: otherId ? undefined : otherName
+          })
+        ]);
+
+        if (abortState.abort || !isComparePage()) return;
+
+        const myMap = new Map<number, MediaListEntryItem>();
+        for (const entry of myListRes.allEntries) {
+          myMap.set(entry.mediaId, entry);
+        }
+
+        const displayOtherName = otherListRes.user?.name || otherName || 'User';
+        const safeOtherName = esc(displayOtherName);
+        const scopeAttr = Array.from(compareRoot.attributes)
+          .map((a) => a.name)
+          .find((n) => /^data-v-[a-f0-9]+$/i.test(n));
+
+        const seenMediaIds = new Set<number>();
+        const matchedNodes: HTMLElement[] = [];
+        for (const otherEntry of otherListRes.allEntries) {
+          const mediaId = otherEntry.mediaId;
+          if (seenMediaIds.has(mediaId)) continue;
+          const myEntry = myMap.get(mediaId);
+          if (!myEntry) continue;
+          seenMediaIds.add(mediaId);
+
+          const title =
+            otherEntry.media?.title?.userPreferred ||
+            otherEntry.media?.title?.romaji ||
+            otherEntry.media?.title?.english ||
+            myEntry.media?.title?.userPreferred ||
+            'Unknown';
+
+          const yourScore = myEntry.score || 0;
+          const otherScore = otherEntry.score || 0;
+          const yourStatus = normalizeStatus(myEntry.status);
+          const otherStatus = normalizeStatus(otherEntry.status);
+
+          const row = document.createElement('div');
+          row.className = 'entry';
+          if (scopeAttr) row.setAttribute(scopeAttr, '');
+          row.innerHTML = `
+            <div class="title"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
+              <a href="/${type.toLowerCase()}/${mediaId}/" class=""${scopeAttr ? ` ${scopeAttr}=""` : ''}></a>
+            </div>
+            <div class="score" label="Score" score="${yourScore}"${scopeAttr ? ` ${scopeAttr}=""` : ''}><span>${yourScore > 0 ? yourScore : '0'}</span></div>
+            <div class="score" label="${safeOtherName}'s Score" score="${otherScore}"${scopeAttr ? ` ${scopeAttr}=""` : ''}><span>${otherScore > 0 ? otherScore : '0'}</span></div>
+            <div class="status" label="Your Status"${scopeAttr ? ` ${scopeAttr}=""` : ''}><span>${yourStatus}</span></div>
+            <div class="status" label="${safeOtherName}'s Status"${scopeAttr ? ` ${scopeAttr}=""` : ''}><span>${otherStatus}</span></div>
+          `;
+
+          const link = row.querySelector<HTMLAnchorElement>('.title a');
+          if (link) link.textContent = title;
+
+          const data: EntryData = {
+            el: row,
+            title,
+            yourScore,
+            otherScore,
+            yourStatus,
+            otherStatus
+          };
+          (row as any)._alaCompareData = data;
+          matchedNodes.push(row);
+        }
+
+        logDebug('[COMPARE] Matched entries via MediaListCollection:', matchedNodes.length);
+
+        const main = compareRoot.parentElement || document.querySelector('.ala-compare-main');
+        if (!main) return;
+
+        let customTable = main.querySelector<HTMLElement>('#ala-compare-table');
+        if (!customTable) {
+          customTable = document.createElement('div');
+          customTable.id = 'ala-compare-table';
+          customTable.className = 'compare';
+          if (scopeAttr) customTable.setAttribute(scopeAttr, '');
+          main.appendChild(customTable);
+        }
+
+        let customHeader = customTable.querySelector<HTMLElement>('.entry.header');
+        if (!customHeader) {
+          customHeader = document.createElement('div');
+          customHeader.className = 'entry header';
+          if (scopeAttr) customHeader.setAttribute(scopeAttr, '');
+          customHeader.innerHTML = `
+            <div class="title ala-sortable-header"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
+              <div class="ala-header-wrap"><span class="ala-header-label">Title</span></div>
+            </div>
+            <div class="score ala-sortable-header"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
+              <div class="ala-header-wrap"><span class="ala-header-label">Your Score</span></div>
+            </div>
+            <div class="score ala-sortable-header"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
+              <div class="ala-header-wrap"><span class="ala-header-label">${safeOtherName}'s Score</span></div>
+            </div>
+            <div class="status"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
+              <span class="ala-header-label">Your Status</span>
+            </div>
+            <div class="status"${scopeAttr ? ` ${scopeAttr}=""` : ''}>
+              <span class="ala-header-label">${safeOtherName}'s Status</span>
+            </div>
+          `;
+          customTable.appendChild(customHeader);
+
+          const titleH = customHeader.querySelector<HTMLElement>('.title');
+          const scores = customHeader.querySelectorAll<HTMLElement>('.score');
+          titleH?.addEventListener('click', () => triggerSort('title', compareRoot));
+          scores[0]?.addEventListener('click', () => triggerSort('yourScore', compareRoot));
+          scores[1]?.addEventListener('click', () => triggerSort('otherScore', compareRoot));
+        }
+
+        const titleH = customHeader.querySelector<HTMLElement>('.title');
+        const scores = customHeader.querySelectorAll<HTMLElement>('.score');
+        updateSortArrows(titleH, scores[0] || null, scores[1] || null, activeSortCol, activeSortDir);
+
+        matchedNodes.sort((a, b) => {
+          const dataA = getEntryData(a);
+          const dataB = getEntryData(b);
+          return compareEntries(dataA, dataB, activeSortCol, activeSortDir);
+        });
+
+        isMutatingDOM = true;
+        customTable.querySelectorAll('.entry:not(.header)').forEach((el) => el.remove());
+
+        const frag = document.createDocumentFragment();
+        for (const el of matchedNodes) {
+          frag.appendChild(el);
+        }
+        customTable.appendChild(frag);
+
+        if (matchedNodes.length === 0) {
+          let empty = customTable.querySelector<HTMLElement>('.no-results');
+          if (!empty) {
+            empty = document.createElement('div');
+            empty.className = 'no-results';
+            empty.textContent = `You don't have any ${type.toLowerCase()} in common ｡ﾟヽ(ﾟ´Д｀)ﾉﾟ｡`;
+            customTable.appendChild(empty);
+          }
+          customHeader.style.display = 'none';
+        } else {
+          customTable.querySelector('.no-results')?.remove();
+          customHeader.style.display = '';
+        }
+
+        const emptyEl = customTable.querySelector('.ala-compare-empty');
+        if (emptyEl) customTable.appendChild(emptyEl);
+        isMutatingDOM = false;
+
+        compareRoot.style.display = 'none';
+        disableNativeScrollers(compareRoot);
+
+        lastProcessedCount = matchedNodes.length;
+        isCompareLoaded = true;
+
+        installBlocker();
+
+        updateStatusCounts(sidebar, matchedNodes);
+        applyFilter(customTable, matchedNodes);
+      } catch (err) {
+        loadFailed = true;
+        setRpcBlock();
+        console.error('[AL-Additions] CompareView getMediaList error:', err);
       } finally {
         isLoadingAll = false;
         loadAbortState = null;
         setLoadIndicator(sidebar, null);
-
-        if (isComparePage()) {
-          const finalEntries = Array.from(listContainer.querySelectorAll<HTMLElement>('.entry:not(.header)'));
-          if (finalEntries.length > 0) {
-            updateStatusCounts(sidebar, finalEntries);
-            applyFilter(listContainer, finalEntries);
-            applySort(listContainer, finalEntries, activeSortCol, activeSortDir);
-          }
-        }
       }
     }
 
     function cleanup(): void {
+      if (!isComparePage()) {
+        setRpcBlock();
+      } else {
+        installBlocker();
+      }
+      if (indicatorTimer) {
+        clearTimeout(indicatorTimer);
+        indicatorTimer = null;
+      }
       if (loadAbortState) {
         loadAbortState.abort = true;
         loadAbortState = null;
       }
       isLoadingAll = false;
+      isCompareLoaded = false;
+      loadFailed = false;
+      isMutatingDOM = false;
       if (resizeCleanup) {
         resizeCleanup();
         resizeCleanup = null;
       }
 
+      const customTable = document.getElementById('ala-compare-table');
+      if (customTable) customTable.remove();
+
       const wrap = document.getElementById('ala-compare-wrap');
       if (wrap) {
         const main = wrap.querySelector('.ala-compare-main');
-        const compareRoot = main?.firstElementChild;
+        const compareRoot = main?.querySelector<HTMLElement>('.compare:not(#ala-compare-table)') || main?.firstElementChild;
         if (compareRoot && wrap.parentElement) {
+          if ((compareRoot as HTMLElement).style) {
+            (compareRoot as HTMLElement).style.display = '';
+          }
           wrap.parentElement.insertBefore(compareRoot, wrap);
         }
         wrap.remove();
+      } else {
+        const compareRoot = document.querySelector<HTMLElement>('.compare:not(#ala-compare-table)');
+        if (compareRoot) {
+          delete compareRoot.dataset.alaCompareInit;
+          compareRoot.style.display = '';
+        }
       }
 
       document.querySelectorAll('.ala-compare-page-container').forEach((el) => {
@@ -699,7 +1002,7 @@ defineFeature(
         el.classList.remove('ala-hidden');
       });
 
-      const header = document.querySelector<HTMLElement>('.entry.header');
+      const header = document.querySelector<HTMLElement>('.compare:not(#ala-compare-table) .entry.header, .entry.header');
       if (header) {
         delete (header as any)._alaHeaderBound;
         delete header.dataset.alaCompareInit;
@@ -718,32 +1021,35 @@ defineFeature(
       lastProcessedCount = -1;
     }
 
-    function setupCompareView(header: HTMLElement, listContainer: HTMLElement, entries: HTMLElement[]): void {
-      logDebug('[COMPARE]', 'Setting up Compare View UI with', entries.length, 'entries');
-      header.querySelectorAll<HTMLElement>('.status').forEach((statusEl) => {
-        if (!statusEl.querySelector('.ala-header-label')) {
-          const text = statusEl.textContent?.trim() || '';
-          statusEl.innerHTML = `<span class="ala-header-label">${text}</span>`;
-        }
-      });
+    function setupCompareView(compareRoot: HTMLElement, header: HTMLElement | null, entries: HTMLElement[]): void {
+      if (header) {
+        header.querySelectorAll<HTMLElement>('.status').forEach((statusEl) => {
+          if (!statusEl.querySelector('.ala-header-label')) {
+            const text = statusEl.textContent?.trim() || '';
+            statusEl.innerHTML = `<span class="ala-header-label">${text}</span>`;
+          }
+        });
+      }
 
-      const headerCells = Array.from(header.children) as HTMLElement[];
-      if (headerCells.length < 3) return;
-
+      const headerCells = header ? (Array.from(header.children) as HTMLElement[]) : [];
       const titleHeader =
-        header.querySelector<HTMLElement>('.title') ||
-        headerCells.find((el) => /title/i.test(el.textContent || '')) ||
-        headerCells[0];
+        headerCells.length >= 3
+          ? header!.querySelector<HTMLElement>('.title') ||
+            headerCells.find((el) => /title/i.test(el.textContent || '')) ||
+            headerCells[0]
+          : null;
       const yourScoreHeader =
-        headerCells.find((el) => /your score/i.test(el.textContent || '')) ||
-        header.querySelector<HTMLElement>('.score:first-of-type') ||
-        headerCells[1];
+        headerCells.length >= 3
+          ? headerCells.find((el) => /your score/i.test(el.textContent || '')) ||
+            header!.querySelector<HTMLElement>('.score:first-of-type') ||
+            headerCells[1]
+          : null;
       const otherScoreHeader =
-        headerCells.find((el) => el !== yourScoreHeader && /score/i.test(el.textContent || '')) ||
-        header.querySelectorAll<HTMLElement>('.score')[1] ||
-        headerCells[2];
-
-      const compareRoot = header.closest<HTMLElement>('.compare') || listContainer;
+        headerCells.length >= 3
+          ? headerCells.find((el) => el !== yourScoreHeader && /score/i.test(el.textContent || '')) ||
+            header!.querySelectorAll<HTMLElement>('.score')[1] ||
+            headerCells[2]
+          : null;
 
       const container = compareRoot.closest<HTMLElement>('.content.container') || compareRoot.parentElement;
       if (container) {
@@ -830,51 +1136,34 @@ defineFeature(
             const st = cb.dataset.status!;
             if (cb.checked) activeStatuses.add(st);
             else activeStatuses.delete(st);
-            const badge = sidebar?.querySelector<HTMLElement>('.ala-compare-active-badge');
-            if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
-            const currentEntries = Array.from(listContainer.querySelectorAll<HTMLElement>('.entry:not(.header)'));
-            applyFilter(listContainer, currentEntries);
+            triggerFilterUpdate(sidebar!, compareRoot);
           });
         });
 
         sidebar.querySelector('#ala-compare-all')?.addEventListener('click', () => {
           for (const s of STATUSES) activeStatuses.add(s);
           sidebar?.querySelectorAll<HTMLInputElement>('.ala-compare-cb').forEach((cb) => (cb.checked = true));
-          const badge = sidebar?.querySelector<HTMLElement>('.ala-compare-active-badge');
-          if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
-          const currentEntries = Array.from(listContainer.querySelectorAll<HTMLElement>('.entry:not(.header)'));
-          applyFilter(listContainer, currentEntries);
+          triggerFilterUpdate(sidebar!, compareRoot);
         });
 
         sidebar.querySelector('#ala-compare-none')?.addEventListener('click', () => {
           activeStatuses.clear();
           sidebar?.querySelectorAll<HTMLInputElement>('.ala-compare-cb').forEach((cb) => (cb.checked = false));
-          const badge = sidebar?.querySelector<HTMLElement>('.ala-compare-active-badge');
-          if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
-          const currentEntries = Array.from(listContainer.querySelectorAll<HTMLElement>('.entry:not(.header)'));
-          applyFilter(listContainer, currentEntries);
+          triggerFilterUpdate(sidebar!, compareRoot);
         });
       }
 
-      if (sidebar) {
+      if (sidebar && entries.length > 0) {
         updateStatusCounts(sidebar, entries);
       }
 
-      if (!(header as any)._alaHeaderBound) {
+      if (header && titleHeader && yourScoreHeader && otherScoreHeader && !(header as any)._alaHeaderBound) {
         (header as any)._alaHeaderBound = true;
 
         const attachSortClick = (el: HTMLElement | null, col: 'title' | 'yourScore' | 'otherScore') => {
           if (!el) return;
           el.addEventListener('click', () => {
-            if (activeSortCol === col) {
-              activeSortDir = activeSortDir === 'asc' ? 'desc' : 'asc';
-            } else {
-              activeSortCol = col;
-              activeSortDir = col === 'title' ? 'asc' : 'desc';
-            }
-            updateSortArrows(titleHeader, yourScoreHeader, otherScoreHeader, activeSortCol, activeSortDir);
-            const currentEntries = Array.from(listContainer.querySelectorAll<HTMLElement>('.entry:not(.header)'));
-            applySort(listContainer, currentEntries, activeSortCol, activeSortDir);
+            triggerSort(col, compareRoot);
           });
         };
 
@@ -883,17 +1172,37 @@ defineFeature(
         attachSortClick(otherScoreHeader, 'otherScore');
       }
 
-      header.dataset.alaCompareInit = 'true';
-      updateSortArrows(titleHeader, yourScoreHeader, otherScoreHeader, activeSortCol, activeSortDir);
-      applyFilter(listContainer, entries);
-      applySort(listContainer, entries, activeSortCol, activeSortDir);
+      if (header && titleHeader) {
+        header.dataset.alaCompareInit = 'true';
+        updateSortArrows(titleHeader, yourScoreHeader, otherScoreHeader, activeSortCol, activeSortDir);
+      }
+      compareRoot.dataset.alaCompareInit = 'true';
 
-      if (!isLoadingAll && sidebar) {
-        autoLoadAllEntries(listContainer, sidebar);
+      entries.forEach((el) => {
+        el.querySelectorAll<HTMLElement>('.score').forEach((scoreEl) => {
+          const text = scoreEl.textContent?.trim();
+          if (!text || text === '') {
+            scoreEl.textContent = '0';
+          }
+        });
+      });
+
+      disableNativeScrollers(compareRoot);
+
+      if (entries.length > 0) {
+        applyFilter(compareRoot, entries);
+        applySort(compareRoot, entries, activeSortCol, activeSortDir);
+      }
+
+      installBlocker();
+
+      if (!isLoadingAll && !isCompareLoaded && !loadFailed && sidebar) {
+        loadAllEntriesViaMediaList(compareRoot, sidebar);
       }
     }
 
     const checkView = debounce(() => {
+      if (isMutatingDOM) return;
       const path = location.pathname;
       if (!isComparePage()) {
         if (currentRoute) {
@@ -909,29 +1218,32 @@ defineFeature(
         activeSortDir = 'desc';
         for (const s of STATUSES) activeStatuses.add(s);
         cleanup();
+        installBlocker();
       }
 
-      const header = document.querySelector<HTMLElement>('.entry.header');
-      if (!header) return;
+      if (isCompareLoaded) return;
 
-      const listContainer = header.parentElement;
-      if (!listContainer) return;
+      const compareRoot = document.querySelector<HTMLElement>('.compare:not(#ala-compare-table)');
+      if (!compareRoot) return;
 
-      const entries = Array.from(listContainer.querySelectorAll<HTMLElement>('.entry:not(.header)'));
-      if (entries.length === 0) return;
+      const header = compareRoot.querySelector<HTMLElement>('.entry.header');
+      const entries = Array.from(compareRoot.querySelectorAll<HTMLElement>('.entry:not(.header)'));
 
-      if (!header.dataset.alaCompareInit || entries.length !== lastProcessedCount) {
+      if (!compareRoot.dataset.alaCompareInit || (!isCompareLoaded && entries.length !== lastProcessedCount)) {
         lastProcessedCount = entries.length;
-        setupCompareView(header, listContainer, entries);
+        setupCompareView(compareRoot, header, entries);
       }
     }, 60);
 
+    installBlocker();
     Core.ready(checkView);
     Core.onNavigate(() => {
+      installBlocker();
       checkView();
     });
     Core.onBodyMutation(() => {
-      if (isComparePage()) {
+      if (isComparePage() && !isMutatingDOM) {
+        installBlocker();
         checkView();
       }
     });

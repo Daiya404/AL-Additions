@@ -1,10 +1,9 @@
 import { defineFeature } from '../core/registry';
 import { Core } from '../core/observer';
 import { AniList, MediaData } from '../api/anilist';
-import { alConnect } from '../api/mal';
 import { externalReleased } from '../api/scrapers';
 import { addStyle, mediaRoute } from '../utils/dom';
-import { tryOr, safe, store, logDebug } from '../utils/helpers';
+import { tryOr, safe, logDebug } from '../utils/helpers';
 import type { MediaRoute } from '../types';
 
 defineFeature(
@@ -99,17 +98,26 @@ defineFeature(
       timer = setTimeout(() => render(), ms);
     };
 
-    function renderConnect(key: string): void {
+    function renderConnect(key: string, reason: 'none' | 'rejected' = 'none'): void {
       const spot = findSpot();
       if (!spot) return void schedule(800);
       const box = document.createElement('div');
       box.id = ID;
       box.dataset.mode = 'connect';
-      box.innerHTML = `<div style="margin-bottom:10px;color:rgb(var(--color-text-lighter))">Connect AniList to edit your score and progress here.</div><button class="ala-mi-save" type="button">Connect AniList</button>`;
-      box.querySelector('button')!.addEventListener('click', alConnect);
+      const msg =
+        reason === 'rejected'
+          ? "Couldn't verify your AniList session. Log in to AniList to edit your score and progress."
+          : 'Log in to AniList to edit your score and progress here.';
+      box.innerHTML = `<div style="margin-bottom:10px;color:rgb(var(--color-text-lighter))">${msg}</div><a class="ala-mi-save" href="/login" style="display:inline-block;text-decoration:none;color:#fff;text-align:center;">Log in to AniList</a>`;
       panel()?.remove();
       spot.parent.insertBefore(box, spot.before);
       shown = key;
+
+      if (reason === 'none') {
+        setTimeout(() => {
+          if (panel()?.dataset.mode === 'connect' && AniList.hasAuth()) render(true);
+        }, 3000);
+      }
     }
 
     function changeProgress(delta: number, input: HTMLInputElement, limit: number | null): void {
@@ -185,22 +193,33 @@ defineFeature(
         if (Date.now() - routeAt < 15000) schedule(800);
         return;
       }
-      if (!store.get('al_token', null)) return renderConnect(key);
+
+      if (!AniList.hasAuth()) return renderConnect(key, 'none');
 
       const g = gen;
       const stale = (): boolean => g !== gen || mediaRoute()?.id !== route.id;
       rendering = true;
       logDebug('[MEDIAINFO]', 'Rendering media info panel for:', key);
       try {
-        const info = await MediaData.get(route.id, route.type);
+        let info: any = null;
+        let fmt: string | null = null;
+        try {
+          info = await MediaData.get(route.id, route.type, { throwAuth: true });
+          if (stale()) return;
+          if (info) fmt = (await AniList.viewer())?.scoreFormat || null;
+        } catch (e: any) {
+          if (stale()) return;
+          if (e?.auth) return renderConnect(key, 'rejected');
+          info = null;
+        }
+
         if (stale()) return;
-        if (!info) {
+        if (!info || !fmt) {
+          if (!AniList.hasAuth()) return renderConnect(key, 'none');
           retry = { key, at: Date.now() + 15000, count: retry.key === key ? retry.count + 1 : 1 };
           if (retry.count < MAX_FAILURES) schedule(15500);
           return;
         }
-        const fmt = await scoreFormat();
-        if (stale()) return;
         const spot = findSpot();
         if (!spot) {
           schedule(800);
@@ -406,7 +425,7 @@ defineFeature(
       schedule(500);
     });
     window.addEventListener('focus', () => {
-      if (panel()?.dataset.mode === 'connect' && store.get('al_token', null)) render(true);
+      if (panel()?.dataset.mode === 'connect' && AniList.hasAuth()) render(true);
     });
   }
 );

@@ -235,4 +235,10 @@ describe('Settings: Legacy Migration (Settings.migrate)', () => {
 
     expect(Settings.get(TEST_KEY)).toBe(77);
   });
+
+  it('purges legacy al_token during Settings.migrate()', () => {
+    store.set('al_token', 'legacy_oauth_token_val');
+    Settings.migrate();
+    expect(store.get('al_token', null)).toBeNull();
+  });
 });

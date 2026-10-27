@@ -1,13 +1,12 @@
 import { Settings, TYPES, ROWS, features } from './settings';
 import { creditsHtml } from './credits';
 import { addStyle, findExactText, icon } from '../utils/dom';
-import { debounce, store, esc, tryOr } from '../utils/helpers';
-import { alConnect, malConnect, clearAniListAuth, clearMalAuth } from '../api/mal';
-import { AniList } from '../api/anilist';
+import { debounce, store, esc } from '../utils/helpers';
+import { malConnect, clearMalAuth } from '../api/mal';
 import { Core } from '../core/observer';
 import { STANDALONE, STANDALONE_IDS_LIST, detectStandalone, type StandaloneId } from '../utils/standalone';
 import { maybeAutoSync } from '../modules/sync/engine';
-import { createBackup, downloadBackupFile, importBackup, readFileAsBytes } from './backup';
+import { createBackup, createRawBackup, downloadBackupFile, importBackup, readFileAsBytes } from './backup';
 import { promptPasswordModal } from './passwordModal';
 import type { SettingRow, RegisteredFeature } from '../types';
 import { DEFAULT_TIERS, validateTiers, normalizeHexColor, type TierConfig } from '../utils/tiers';
@@ -173,25 +172,12 @@ const featureHtml = (f: RegisteredFeature): string => {
 };
 
 function accountsHtml(): string {
-  const alConnected = !!store.get('al_token', null);
-  const alUser = store.get<string | null>('al_username', null);
   const malConnected = !!store.get('mal_token', null);
-
-  const alStatus = alConnected ? (alUser ? `Connected as <b>${esc(alUser)}</b>` : 'Connected') : 'Not connected';
   const malStatus = malConnected ? 'Connected' : 'Not connected';
 
   return `<h3 class="ala-section-title">Connected Accounts</h3>
   <div class="ala-section">
     <div class="ala-row ala-account-row">
-      <span class="ala-text">
-        <span class="ala-title">AniList</span>
-        <span class="ala-help" id="ala-status-al">${alStatus}</span>
-      </span>
-      <button type="button" class="ala-btn ${alConnected ? 'ala-btn--danger' : 'ala-btn--primary'}" id="ala-btn-al">
-        ${alConnected ? 'Disconnect' : 'Connect to AniList'}
-      </button>
-    </div>
-    <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
       <span class="ala-text">
         <span class="ala-title">MyAnimeList</span>
         <span class="ala-help" id="ala-status-mal">${malStatus}</span>
@@ -204,6 +190,7 @@ function accountsHtml(): string {
 }
 
 function backupRestoreHtml(): string {
+  const isDev = !!Settings.get('devModeEnabled');
   return `<details class="ala-section-dropdown" data-section="backup" open>
     <summary class="ala-section-summary">
       <span class="ala-section-title">Backup &amp; Restore</span>
@@ -222,9 +209,16 @@ function backupRestoreHtml(): string {
           <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
             <span class="ala-text">
               <span class="ala-title">Export with Credentials</span>
-              <span class="ala-help">Include AniList and MyAnimeList tokens. A password is required.</span>
+              <span class="ala-help">Include MyAnimeList tokens. A password is required.</span>
             </span>
             <button type="button" class="ala-btn ala-btn--danger" id="ala-btn-export-secrets">Export with Secrets</button>
+          </div>
+          <div class="ala-row ala-account-row" id="ala-row-export-raw" style="border-top:1px solid rgba(var(--color-text-lighter),.12);${isDev ? '' : 'display:none;'}">
+            <span class="ala-text">
+              <span class="ala-title">Export Raw JSON</span>
+              <span class="ala-help">Export unminified raw JSON including all settings and credentials without encryption (for testing/verification).</span>
+            </span>
+            <button type="button" class="ala-btn ala-btn--danger" id="ala-btn-export-raw">Export Raw JSON</button>
           </div>
           <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
             <span class="ala-text">
@@ -605,12 +599,22 @@ export function showPanel(): void {
     });
   };
 
+  const devRow = panel.querySelector<HTMLElement>('#ala-row-export-raw');
+  const syncDevBackupVisibility = () => {
+    if (!devRow) return;
+    const devToggle = panel.querySelector<HTMLInputElement>('input[data-key="devModeEnabled"]');
+    const isDevOn = devToggle ? devToggle.checked : !!Settings.get('devModeEnabled');
+    devRow.style.display = isDevOn ? '' : 'none';
+  };
+
   panel.querySelectorAll<HTMLElement>('.ala-feature').forEach(syncFeature);
+  syncDevBackupVisibility();
   initDropdownAnimations(panel);
   panel.addEventListener('change', (e) => {
     const target = e.target as HTMLElement | null;
     const card = target?.closest<HTMLElement>('.ala-feature');
     if (card) syncFeature(card);
+    syncDevBackupVisibility();
   });
 
   panel.querySelector('.ala-save')?.addEventListener('click', () => {
@@ -636,6 +640,7 @@ export function showPanel(): void {
       }
     });
     panel.querySelectorAll<HTMLElement>('.ala-feature').forEach(syncFeature);
+    syncDevBackupVisibility();
     setStatus('Defaults restored. Press Save to apply them.');
   });
 
@@ -649,44 +654,16 @@ export function showPanel(): void {
   document.addEventListener('keydown', backdrop._onKey);
 
   const updateAccountUI = () => {
-    const alBtn = panel.querySelector<HTMLButtonElement>('#ala-btn-al');
-    const alStatus = panel.querySelector<HTMLElement>('#ala-status-al');
     const malBtn = panel.querySelector<HTMLButtonElement>('#ala-btn-mal');
     const malStatus = panel.querySelector<HTMLElement>('#ala-status-mal');
-
-    const alConnected = !!store.get('al_token', null);
-    const alUser = store.get<string | null>('al_username', null);
     const malConnected = !!store.get('mal_token', null);
 
-    if (alBtn && alStatus) {
-      alBtn.textContent = alConnected ? 'Disconnect' : 'Connect to AniList';
-      alBtn.className = `ala-btn ${alConnected ? 'ala-btn--danger' : 'ala-btn--primary'}`;
-      alStatus.innerHTML = alConnected ? (alUser ? `Connected as <b>${esc(alUser)}</b>` : 'Connected') : 'Not connected';
-    }
     if (malBtn && malStatus) {
       malBtn.textContent = malConnected ? 'Disconnect' : 'Connect to MAL';
       malBtn.className = `ala-btn ${malConnected ? 'ala-btn--danger' : 'ala-btn--primary'}`;
       malStatus.textContent = malConnected ? 'Connected' : 'Not connected';
     }
   };
-
-  if (store.get('al_token', null) && !store.get('al_username', null)) {
-    tryOr(() => AniList.viewer()).then(() => updateAccountUI());
-  }
-
-  panel.querySelector('#ala-btn-al')?.addEventListener('click', () => {
-    const alConnected = !!store.get('al_token', null);
-    if (alConnected) {
-      if (confirm('Disconnect AniList? You will need to reconnect to use the List Score Editor or Sync.')) {
-        clearAniListAuth();
-        updateAccountUI();
-        setStatus('AniList disconnected.');
-      }
-    } else {
-      alConnect();
-      setStatus('Opened AniList authorization tab…');
-    }
-  });
 
   panel.querySelector('#ala-btn-mal')?.addEventListener('click', () => {
     const malConnected = !!store.get('mal_token', null);
@@ -739,8 +716,8 @@ export function showPanel(): void {
 
   panel.querySelector('#ala-btn-export-secrets')?.addEventListener('click', async () => {
     const confirmed = confirm(
-      '⚠️ Warning: This export includes your AniList and MyAnimeList authentication credentials.\n\n' +
-      'Anyone with access to this file will have full access to your connected accounts.\n\n' +
+      '⚠️ Warning: This export includes your MyAnimeList authentication credentials.\n\n' +
+      'Anyone with access to this file will have full access to your connected MyAnimeList account.\n\n' +
       'Do you want to continue?'
     );
     if (!confirmed) return;
@@ -763,6 +740,18 @@ export function showPanel(): void {
       const envelope = await createBackup(true, pwd, getPanelOverrides());
       downloadBackupFile(envelope);
       setStatus('Settings and credentials exported successfully.');
+    } catch (e: any) {
+      setStatus('Export failed: ' + (e.message || e), true);
+    }
+  });
+
+  panel.querySelector('#ala-btn-export-raw')?.addEventListener('click', () => {
+    try {
+      setStatus('Generating raw backup…');
+      const rawJson = createRawBackup(getPanelOverrides());
+      const bytes = new TextEncoder().encode(rawJson);
+      downloadBackupFile(bytes);
+      setStatus('Raw JSON settings exported successfully.');
     } catch (e: any) {
       setStatus('Export failed: ' + (e.message || e), true);
     }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AL Additions
 // @namespace    daiya.al-additions-v3
-// @version      0.8.2
+// @version      0.9.0
 // @author       Daiya
 // @description  A userscript that adds extra tools to AniList, including a one-way AniList → MyAnimeList sync, a score and progress editor, airing indicators, OP/ED songs and quick links to other sites.
 // @license      GPL-3.0-or-later
@@ -115,7 +115,7 @@
 		a.click();
 		a.remove();
 	}
-	var store = {
+	var store$1 = {
 		get: (k, d) => _GM_getValue(k, d),
 		set: (k, v) => _GM_setValue(k, v),
 		del: (k) => _GM_deleteValue(k)
@@ -132,12 +132,12 @@
 		try {
 			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
 			if (win.__ALA_DEBUG__ || win.__ALFL_DEBUG__) return true;
-			if (!store.get("ala_setting_devModeEnabled", false)) return false;
+			if (!store$1.get("ala_setting_devModeEnabled", false)) return false;
 			if (!module) return true;
 			const settingKey = MODULE_SETTING_MAP[module];
 			if (settingKey) {
 				const def = module === "fastLoad";
-				return store.get(settingKey, def);
+				return store$1.get(settingKey, def);
 			}
 			return true;
 		} catch {
@@ -157,14 +157,14 @@
 	}
 	function jsonGet(key, fallback) {
 		try {
-			const v = store.get(key, null);
+			const v = store$1.get(key, null);
 			if (v == null) return fallback;
 			return typeof v === "string" ? JSON.parse(v) : v;
 		} catch (_) {
 			return fallback;
 		}
 	}
-	var jsonSet = (key, value) => store.set(key, JSON.stringify(value));
+	var jsonSet = (key, value) => store$1.set(key, JSON.stringify(value));
 	function persistent(key, prune) {
 		let data = jsonGet(key, {});
 		if (!data || typeof data !== "object" || Array.isArray(data)) data = {};
@@ -416,18 +416,19 @@
 	function get(key) {
 		const r = ROWS[key];
 		if (!r) throw new Error(`Unknown setting: ${key}`);
-		return TYPES$1[r.type].normalize(store.get(PREFIX + key, r.def), r);
+		return TYPES$1[r.type].normalize(store$1.get(PREFIX + key, r.def), r);
 	}
 	function set(key, raw) {
-		store.set(PREFIX + key, raw);
-		store.set(PREFIX + key, get(key));
+		store$1.set(PREFIX + key, raw);
+		store$1.set(PREFIX + key, get(key));
 	}
 	function migrate() {
 		safe(() => {
+			store$1.del("al_token");
 			for (const r of Object.values(ROWS)) {
-				if (store.get("ala_setting_" + r.key, void 0) !== void 0) continue;
+				if (store$1.get("ala_setting_" + r.key, void 0) !== void 0) continue;
 				for (const name of r.legacy) {
-					let v = store.get(PREFIX + name, void 0);
+					let v = store$1.get(PREFIX + name, void 0);
 					if (v === void 0) {
 						const raw = localStorage.getItem("ALAdditions:" + name);
 						if (raw != null) try {
@@ -437,7 +438,7 @@
 						}
 					}
 					if (v !== void 0) {
-						store.set(PREFIX + r.key, v);
+						store$1.set(PREFIX + r.key, v);
 						break;
 					}
 				}
@@ -580,7 +581,7 @@
 			this.queue = Promise.resolve();
 		}
 		get resumeAt() {
-			const stored = this.persistKey ? Number(store.get(this.persistKey, 0)) || 0 : 0;
+			const stored = this.persistKey ? Number(store$1.get(this.persistKey, 0)) || 0 : 0;
 			const at = Math.max(this.until, stored);
 			return at > Date.now() ? at : 0;
 		}
@@ -624,7 +625,7 @@
 			if (this.adaptive) this.setRate(Math.floor(this.rate / 2));
 			if (!(ms > 0)) return;
 			this.until = Math.max(this.until, Date.now() + ms * (this.jitter ? .9 + Math.random() * .3 : 1));
-			if (this.persistKey) safe(() => store.set(this.persistKey, this.until), "persist cooldown");
+			if (this.persistKey) safe(() => store$1.set(this.persistKey, this.until), "persist cooldown");
 		}
 	};
 	var normTitle = (s) => String(s || "").toLowerCase().normalize("NFKC").replace(/[’‘'`]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\b(the|a|an)\b/g, " ").replace(/\s+/g, " ").trim();
@@ -663,146 +664,6 @@
 		}
 		return best && bestScore >= min ? best : null;
 	}
-	var AniList = (() => {
-		const API = "https://graphql.anilist.co";
-		const limiter = new RateLimiter({
-			rate: 25,
-			max: 90,
-			burst: 1,
-			persistKey: "ala_anilist_api_resume_at"
-		});
-		const header = (res, name) => {
-			try {
-				return res?.headers?.get?.(name) ?? null;
-			} catch (_) {
-				return null;
-			}
-		};
-		function resetDelay(res) {
-			const retry = Number(header(res, "Retry-After"));
-			if (retry > 0) return Math.min(retry * 1e3, 12e4);
-			const reset = Number(header(res, "X-RateLimit-Reset"));
-			if (reset > 0) return Math.min((reset > 0xe8d4a51000 ? reset : reset * 1e3) - Date.now(), 12e4);
-			return 0;
-		}
-		function handle(res) {
-			const advertised = Number(header(res, "X-RateLimit-Limit"));
-			if (advertised > 0) limiter.setRate(Math.floor(advertised * .85));
-			if (res?.status === 429) return limiter.limit(resetDelay(res) || 6e4);
-			const remaining = header(res, "X-RateLimit-Remaining");
-			if (remaining != null && Number(remaining) <= 1) limiter.limit(resetDelay(res));
-		}
-		async function query(q, variables = {}, retries = 3) {
-			const token = store.get("al_token", null);
-			const backoff = () => sleep(1500 * (4 - retries));
-			let res;
-			try {
-				await limiter.acquire();
-				res = await fetch(API, {
-					method: "POST",
-					headers: {
-						"Content-Type": "application/json",
-						Accept: "application/json",
-						...token ? { Authorization: `Bearer ${token}` } : {}
-					},
-					body: JSON.stringify({
-						query: q,
-						variables
-					})
-				});
-			} catch (e) {
-				if (retries > 0) {
-					await backoff();
-					return query(q, variables, retries - 1);
-				}
-				throw new Error(`AniList network error: ${e?.message || e}`);
-			}
-			handle(res);
-			if ((res.status === 429 || res.status >= 500) && retries > 0) {
-				if (res.status >= 500) await backoff();
-				return query(q, variables, retries - 1);
-			}
-			let json = null;
-			try {
-				json = await res.json();
-			} catch (_) {}
-			const message = json?.errors?.length ? json.errors.map((e) => e.message).join("; ") : "";
-			if (res.status === 401 || token && /invalid token|unauthenticated|unauthorized/i.test(message)) throw authError("AniList", "AniList rejected the access token — reconnect AniList.");
-			if (message) throw new Error(message);
-			if (!res.ok || !json) throw new Error(`AniList API HTTP ${res.status}`);
-			return json.data;
-		}
-		async function viewer() {
-			const name = store.get("al_username", null);
-			const fmt = store.get("al_score_format", null);
-			const id = Number(store.get("al_user_id", 0));
-			if (name && fmt && id) return {
-				id,
-				name,
-				scoreFormat: fmt
-			};
-			if (!store.get("al_token", null)) return null;
-			const d = await query("query { Viewer { id name mediaListOptions { scoreFormat } } }", {});
-			store.set("al_user_id", d.Viewer.id);
-			store.set("al_username", d.Viewer.name);
-			store.set("al_score_format", d.Viewer.mediaListOptions.scoreFormat);
-			return {
-				id: d.Viewer.id,
-				name: d.Viewer.name,
-				scoreFormat: d.Viewer.mediaListOptions.scoreFormat
-			};
-		}
-		const clearViewer = () => {
-			store.del("al_username");
-			store.del("al_user_id");
-			store.del("al_score_format");
-		};
-		const resumeAt = () => limiter.resumeAt;
-		return {
-			query,
-			viewer,
-			clearViewer,
-			resumeAt
-		};
-	})();
-	var MediaData = (() => {
-		const fetchMedia = memo(async (id, type) => {
-			return (await tryOr(() => AniList.query(`query($id:Int,$type:MediaType){ Media(id:$id,type:$type){
-            id idMal format title { userPreferred english romaji }
-            episodes chapters status nextAiringEpisode { episode }
-            mediaListEntry { score progress status completedAt { year month day } }
-          } }`, {
-				id,
-				type
-			})))?.Media || null;
-		}, {
-			keepNull: false,
-			ttl: 6e4
-		});
-		const get = (id, type) => fetchMedia(`${type}:${id}`, Number(id), type);
-		async function save(id, type, c) {
-			const entry = (await AniList.query(`mutation($mediaId:Int!,$score:Float,$progress:Int,$status:MediaListStatus,$completedAt:FuzzyDateInput){
-        SaveMediaListEntry(mediaId:$mediaId,score:$score,progress:$progress,status:$status,completedAt:$completedAt){
-          score progress status completedAt { year month day }
-        } }`, {
-				mediaId: Number(id),
-				score: c.score,
-				progress: c.progress,
-				status: c.status,
-				completedAt: c.completedAt
-			}))?.SaveMediaListEntry || null;
-			(typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window).__ALFL_CLEAR__?.();
-			const media = await get(id, type);
-			if (media && entry) media.mediaListEntry = entry;
-			return entry;
-		}
-		return {
-			get,
-			save
-		};
-	})();
-	var AL_AUTH_URL = "https://anilist.co/api/v2/oauth/authorize";
-	var AL_CLIENT_ID = "50247";
 	var MAL_AUTH_URL = "https://myanimelist.net/v1/oauth2/authorize";
 	var MAL_TOKEN_URL = "https://myanimelist.net/v1/oauth2/token";
 	var MAL_API = "https://api.myanimelist.net/v2";
@@ -852,11 +713,7 @@
 			"mal_token",
 			"mal_refresh_token",
 			"mal_expires_at"
-		].forEach((k) => store.del(k));
-	};
-	var clearAniListAuth = () => {
-		store.del("al_token");
-		AniList.clearViewer();
+		].forEach((k) => store$1.del(k));
 	};
 	async function malTokenRequest(params) {
 		const body = new URLSearchParams({
@@ -883,26 +740,26 @@
 			}
 			throw new Error(json.hint || json.message || json.error || res.responseText || `HTTP ${res.status}`);
 		}
-		store.set("mal_token", json.access_token);
-		if (json.refresh_token) store.set("mal_refresh_token", json.refresh_token);
-		store.set("mal_expires_at", Date.now() + (Number(json.expires_in) || 3600) * 1e3);
+		store$1.set("mal_token", json.access_token);
+		if (json.refresh_token) store$1.set("mal_refresh_token", json.refresh_token);
+		store$1.set("mal_expires_at", Date.now() + (Number(json.expires_in) || 3600) * 1e3);
 		return json.access_token;
 	}
 	async function exchangeMalCode(code) {
 		const token = await malTokenRequest({
 			code,
-			code_verifier: store.get("mal_code_verifier", ""),
+			code_verifier: store$1.get("mal_code_verifier", ""),
 			grant_type: "authorization_code",
 			redirect_uri: MAL_REDIRECT
 		});
-		store.del("mal_code_verifier");
+		store$1.del("mal_code_verifier");
 		return token;
 	}
 	var malRefresh = null;
 	async function malEnsureToken() {
-		if (Date.now() < store.get("mal_expires_at", 0) - 6e4) return store.get("mal_token");
+		if (Date.now() < store$1.get("mal_expires_at", 0) - 6e4) return store$1.get("mal_token");
 		if (!malRefresh) malRefresh = (async () => {
-			const refresh = store.get("mal_refresh_token", null);
+			const refresh = store$1.get("mal_refresh_token", null);
 			if (!refresh) throw authError("MAL", "No MAL refresh token stored — reconnect MAL.");
 			return malTokenRequest({
 				grant_type: "refresh_token",
@@ -913,37 +770,16 @@
 		});
 		return malRefresh;
 	}
-	function alConnect() {
-		openTab(`${AL_AUTH_URL}?client_id=${encodeURIComponent(AL_CLIENT_ID)}&response_type=token`);
-		log("Opened AniList authorization in a new tab. Finish connecting there, then return to your list.");
-	}
 	function malConnect() {
 		const verifier = randomString(96);
-		store.set("mal_code_verifier", verifier);
+		store$1.set("mal_code_verifier", verifier);
 		openTab(`${MAL_AUTH_URL}?response_type=code&client_id=${encodeURIComponent(MAL_CLIENT_ID)}&code_challenge=${encodeURIComponent(verifier)}&code_challenge_method=plain&redirect_uri=${encodeURIComponent(MAL_REDIRECT)}`);
 		log("Opened MAL authorization in a new tab. Finish connecting there, then return to your list.");
 	}
-	function saveAniListToken(token) {
-		store.set("al_token", token);
-		AniList.clearViewer();
-	}
 	function captureCredentials() {
-		const HOST = location.hostname;
-		if (HOST === "anilist.co" && location.hash) {
-			const params = new URLSearchParams(location.hash.substring(1));
-			const token = params.get("access_token");
-			const err = params.get("error");
-			if (token || err) {
-				history.replaceState(null, "", location.pathname + location.search);
-				if (token) {
-					saveAniListToken(token);
-					toast("AniList connected! You can close this tab.", false, true);
-				} else toast(`AniList auth failed: ${err}. Check the app's redirect URL matches https://anilist.co/ exactly.`, true);
-			}
-		}
-		if (HOST === "myanimelist.net") {
+		if (location.hostname === "myanimelist.net") {
 			const code = new URLSearchParams(location.search).get("code");
-			if (!code || !store.get("mal_code_verifier")) return;
+			if (!code || !store$1.get("mal_code_verifier")) return;
 			exchangeMalCode(code).then(() => {
 				const url = new URL(location.href);
 				url.searchParams.delete("code");
@@ -1053,7 +889,7 @@
 					throw authError("MAL", "MAL rejected the access token — reconnect MAL.");
 				}
 				refreshed = true;
-				store.set("mal_expires_at", 0);
+				store$1.set("mal_expires_at", 0);
 				continue;
 			}
 			if (!looksLimited(res) && res.status < 500) return res;
@@ -1214,6 +1050,626 @@
 		});
 		return result;
 	}
+	var KNOWN_LIST_FIELDS = [
+		"mediaId",
+		"id",
+		"score",
+		"status",
+		"progress",
+		"progressVolumes",
+		"notes",
+		"startedAt",
+		"completedAt",
+		"repeat",
+		"priority",
+		"private",
+		"hiddenFromStatusLists",
+		"customLists",
+		"advancedScores",
+		"updatedAt",
+		"media",
+		"title",
+		"coverImage",
+		"format",
+		"episodes",
+		"volumes",
+		"chapters",
+		"averageScore",
+		"popularity",
+		"genres",
+		"tags",
+		"bannerImage"
+	];
+	var KNOWN_MEDIA_FIELDS = [
+		"id",
+		"idMal",
+		"type",
+		"title",
+		"format",
+		"episodes",
+		"chapters",
+		"status",
+		"mediaListEntry",
+		"season",
+		"seasonYear",
+		"nextAiringEpisode",
+		"synonyms",
+		"isAdult",
+		"genres",
+		"tags",
+		"bannerImage",
+		"coverImage",
+		"description"
+	];
+	function parseEntityMeta(query, vars) {
+		const clean = query.replace(/#[^\n\r]*/g, " ").replace(/\s+/g, " ");
+		if (/\bMediaListCollection\b/i.test(clean)) {
+			const type = (vars.type || "ANIME").toUpperCase();
+			const who = vars.userId || (vars.userName ? String(vars.userName).toLowerCase() : "me");
+			const chunkPart = vars.chunk != null ? `:${vars.chunk}` : "";
+			const isSuperset = (clean.match(/[{,]\s*([a-zA-Z0-9_]+)/g) || []).length > 12;
+			const requiredFields = new Set();
+			for (const f of KNOWN_LIST_FIELDS) if (new RegExp(`\\b${f}\\b`).test(clean)) requiredFields.add(f);
+			return {
+				entityKey: `MediaListCollection:${type}:${who}${chunkPart}`,
+				isSuperset,
+				requiredFields
+			};
+		}
+		const mediaMatch = clean.match(/\bMedia\s*\(\s*id\s*:\s*\$([a-zA-Z0-9_]+)/i);
+		if (mediaMatch && vars[mediaMatch[1]]) {
+			const id = vars[mediaMatch[1]];
+			const fieldCount = (clean.match(/[{,]\s*([a-zA-Z0-9_]+)/g) || []).length;
+			const requiredFields = new Set();
+			for (const f of KNOWN_MEDIA_FIELDS) if (new RegExp(`\\b${f}\\b`).test(clean)) requiredFields.add(f);
+			return {
+				entityKey: `Media:${id}`,
+				isSuperset: fieldCount > 10,
+				requiredFields
+			};
+		}
+		if (/\bViewer\b/i.test(clean)) return {
+			entityKey: "Viewer",
+			isSuperset: clean.includes("mediaListOptions"),
+			requiredFields: new Set(["id", "name"])
+		};
+		return null;
+	}
+	function isSubsetOf(subset, superset) {
+		for (const item of subset) if (!superset.has(item)) return false;
+		return true;
+	}
+	var AniList = (() => {
+		const limiter = new RateLimiter({
+			rate: 25,
+			max: 90,
+			burst: 1,
+			persistKey: "ala_anilist_api_resume_at"
+		});
+		const entityCache = new Map();
+		const inflightExact = new Map();
+		const inflightEntities = new Map();
+		const ENTITY_TTL = 18e4;
+		function getCsrfToken() {
+			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+			if (typeof win.al_token === "string" && win.al_token) return win.al_token;
+			try {
+				const meta = win.document?.querySelector("meta[name=\"csrf-token\"]");
+				if (meta?.content) return meta.content;
+			} catch (_) {}
+			try {
+				const scripts = win.document?.querySelectorAll("head script") || [];
+				for (const s of scripts) {
+					const m = s.textContent?.match(/window\.al_token\s*=\s*['"]([^'"]+)['"]/);
+					if (m && m[1]) return m[1];
+				}
+			} catch (_) {}
+			return null;
+		}
+		function isBrowserLoggedIn() {
+			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+			const doc = win.document || document;
+			if (doc?.querySelector?.("nav a[href=\"/login\"], .nav a[href=\"/login\"]")) {
+				clearViewer();
+				return false;
+			}
+			if ((win.__NUXT__?.state?.auth?.user || win.__NUXT__?.state?.user)?.id) return true;
+			if (doc?.querySelector?.("nav a[href^=\"/user/\"], .nav-wrap a[href^=\"/user/\"], .user-wrap .avatar")) return true;
+			return Boolean(Number(store$1.get("al_user_id", 0)) > 0 && store$1.get("al_username", null));
+		}
+		const header = (res, name) => {
+			try {
+				return res?.headers?.get?.(name) ?? null;
+			} catch (_) {
+				return null;
+			}
+		};
+		function resetDelay(res) {
+			const retry = Number(header(res, "Retry-After"));
+			if (retry > 0) return Math.min(retry * 1e3, 12e4);
+			const reset = Number(header(res, "X-RateLimit-Reset"));
+			if (reset > 0) return Math.min((reset > 0xe8d4a51000 ? reset : reset * 1e3) - Date.now(), 12e4);
+			return 0;
+		}
+		function handle(res) {
+			const advertised = Number(header(res, "X-RateLimit-Limit"));
+			if (advertised > 0) limiter.setRate(Math.floor(advertised * .85));
+			if (res?.status === 429) return limiter.limit(resetDelay(res) || 6e4);
+			const remaining = header(res, "X-RateLimit-Remaining");
+			if (remaining != null && Number(remaining) <= 1) limiter.limit(resetDelay(res));
+		}
+		async function executeNetworkRequest(q, variables, retries, forceFresh = false) {
+			const csrfToken = getCsrfToken();
+			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+			const fetchFn = (typeof win.fetch === "function" ? win.fetch : fetch).bind(win);
+			const backoff = () => sleep(1500 * (4 - retries));
+			const endpoint = `${win.location?.origin || "https://anilist.co"}/graphql`;
+			const headers = {
+				"Content-Type": "application/json",
+				Accept: "application/json",
+				...forceFresh ? { "Cache-Control": "no-cache" } : {}
+			};
+			if (csrfToken) headers["X-CSRF-TOKEN"] = csrfToken;
+			let res;
+			try {
+				await limiter.acquire();
+				res = await fetchFn(endpoint, {
+					method: "POST",
+					headers,
+					cache: forceFresh ? "no-store" : void 0,
+					credentials: "include",
+					body: JSON.stringify({
+						query: q,
+						variables
+					})
+				});
+			} catch (e) {
+				if (retries > 0) {
+					await backoff();
+					return executeNetworkRequest(q, variables, retries - 1, forceFresh);
+				}
+				throw new Error(`AniList network error: ${e?.message || e}`);
+			}
+			handle(res);
+			if (!res) throw new Error("AniList network error: empty response");
+			if ((res.status === 429 || res.status >= 500) && retries > 0) {
+				if (res.status >= 500) await backoff();
+				return executeNetworkRequest(q, variables, retries - 1, forceFresh);
+			}
+			let json = null;
+			try {
+				json = await res.json();
+			} catch (_) {}
+			const message = json?.errors?.length ? json.errors.map((e) => e.message).join("; ") : "";
+			if (res.status === 401 || /invalid token|unauthenticated|unauthorized/i.test(message)) {
+				clearViewer();
+				throw authError("AniList", "AniList session unauthenticated — please log in to AniList.");
+			}
+			if (message) throw new Error(message);
+			if (!res.ok || !json) throw new Error(`AniList API HTTP ${res.status}`);
+			return json.data;
+		}
+		async function query(q, variables = {}, optionsOrRetries) {
+			const opts = typeof optionsOrRetries === "number" ? { retries: optionsOrRetries } : optionsOrRetries || {};
+			const retries = opts.retries ?? 3;
+			if (/\bmutation\b/i.test(q)) {
+				invalidate();
+				return executeNetworkRequest(q, variables, retries);
+			}
+			const meta = parseEntityMeta(q, variables);
+			const now = Date.now();
+			const exactKey = `${q}\u0001${JSON.stringify(variables)}`;
+			if (!opts.forceFresh && meta) {
+				const cached = entityCache.get(meta.entityKey);
+				if (cached && now - cached.time < ENTITY_TTL && isSubsetOf(meta.requiredFields, cached.fields)) {
+					logDebug("[ANILIST API] 🎯 Cache HIT via Subset matching:", meta.entityKey);
+					return cached.data;
+				}
+			}
+			if (meta && !opts.forceFresh) {
+				const flyingEntity = inflightEntities.get(meta.entityKey);
+				if (flyingEntity && isSubsetOf(meta.requiredFields, flyingEntity.fields)) {
+					logDebug("[ANILIST API] 🔗 Attached to in-flight Superset request:", meta.entityKey);
+					return flyingEntity.promise;
+				}
+			}
+			const flyingExact = inflightExact.get(exactKey);
+			if (flyingExact && !opts.forceFresh) return flyingExact;
+			const networkPromise = executeNetworkRequest(q, variables, retries, opts.forceFresh).then((data) => {
+				if (meta && data) entityCache.set(meta.entityKey, {
+					time: Date.now(),
+					data,
+					isSuperset: meta.isSuperset,
+					fields: meta.requiredFields
+				});
+				return data;
+			}).finally(() => {
+				inflightExact.delete(exactKey);
+				if (meta && inflightEntities.get(meta.entityKey)?.promise === networkPromise) inflightEntities.delete(meta.entityKey);
+			});
+			inflightExact.set(exactKey, networkPromise);
+			if (meta) {
+				const existing = inflightEntities.get(meta.entityKey);
+				if (!existing || !existing.isSuperset && meta.isSuperset) inflightEntities.set(meta.entityKey, {
+					promise: networkPromise,
+					isSuperset: meta.isSuperset,
+					fields: meta.requiredFields
+				});
+			}
+			return networkPromise;
+		}
+		function formatMediaListResult(mlc) {
+			const mergedCollection = {
+				user: mlc.user,
+				lists: mlc.lists || []
+			};
+			const seenEntryIds = new Set();
+			const allEntries = [];
+			for (const list of mergedCollection.lists) for (const entry of list.entries || []) if (!seenEntryIds.has(entry.id)) {
+				seenEntryIds.add(entry.id);
+				allEntries.push(entry);
+			}
+			return {
+				collection: mergedCollection,
+				lists: mergedCollection.lists,
+				allEntries,
+				user: mergedCollection.user
+			};
+		}
+		function parseRpcMediaList(payload) {
+			if (!payload || typeof payload !== "object") return null;
+			const mlc = payload.MediaListCollection || payload.data?.MediaListCollection;
+			if (mlc && Array.isArray(mlc.lists)) return formatMediaListResult(mlc);
+			const entities = payload.entities || payload;
+			const entriesMap = entities?.listEntry || entities?.mediaListEntry;
+			if (entriesMap && typeof entriesMap === "object") {
+				const mediaMap = entities.media || entities.listEntryMedia || {};
+				const allEntries = [];
+				for (const rawEntry of Object.values(entriesMap)) {
+					if (!rawEntry || typeof rawEntry !== "object") continue;
+					const mediaId = rawEntry.mediaId || (typeof rawEntry.media === "number" ? rawEntry.media : rawEntry.media?.id);
+					if (!mediaId) continue;
+					const mediaObj = typeof rawEntry.media === "object" && rawEntry.media !== null ? rawEntry.media : mediaMap[mediaId] || { id: mediaId };
+					allEntries.push({
+						...rawEntry,
+						mediaId,
+						media: mediaObj
+					});
+				}
+				if (allEntries.length === 0) return null;
+				const userObj = entities.user ? Object.values(entities.user)[0] : void 0;
+				const lists = [];
+				if (entities.listSection && typeof entities.listSection === "object") for (const sec of Object.values(entities.listSection)) {
+					if (!sec) continue;
+					lists.push({
+						name: sec.name || "",
+						isCustomList: !!sec.isCustomList,
+						status: sec.status,
+						entries: Array.isArray(sec.entries) ? sec.entries.map((id) => entriesMap[id]).filter(Boolean) : []
+					});
+				}
+				const user = userObj && userObj.id ? {
+					id: Number(userObj.id),
+					name: String(userObj.name || "")
+				} : void 0;
+				return {
+					collection: {
+						lists,
+						user
+					},
+					allEntries,
+					lists,
+					user
+				};
+			}
+			return null;
+		}
+		function tryGetCachedMediaList(target, type, userId, userName) {
+			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+			const t = type.toUpperCase();
+			const isId = typeof target === "number" || /^\d+$/.test(String(target));
+			const id = userId || (isId ? Number(target) : void 0);
+			const name = userName || (!isId ? String(target).trim().toLowerCase() : void 0);
+			const userMap = win.__ALFL_USER_MAP__;
+			const idMap = win.__ALFL_ID_MAP__;
+			const resolvedId = id || (name && userMap ? userMap.get(name) : void 0);
+			const resolvedName = name || (resolvedId && idMap ? idMap.get(resolvedId)?.toLowerCase() : void 0);
+			const entityKeys = [];
+			if (resolvedId) entityKeys.push(`MediaListCollection:${t}:${resolvedId}`);
+			if (resolvedName) entityKeys.push(`MediaListCollection:${t}:${resolvedName}`);
+			for (const k of entityKeys) {
+				const cached = entityCache.get(k);
+				if (cached && Date.now() - cached.time < ENTITY_TTL && cached.data?.MediaListCollection) {
+					logDebug("[ANILIST API] 🎯 Cache HIT for MediaListCollection via entityCache:", k);
+					return formatMediaListResult(cached.data.MediaListCollection);
+				}
+			}
+			const gqlStore = win.__ALFL_GQL_STORE__;
+			if (gqlStore) {
+				const gqlKeys = [];
+				if (resolvedId) gqlKeys.push(`gql:MediaListCollection:${t}:${resolvedId}:{}`);
+				if (resolvedName) gqlKeys.push(`gql:MediaListCollection:${t}:${resolvedName}:{}`);
+				for (const k of gqlKeys) {
+					const cached = gqlStore.get(k);
+					if (cached && Date.now() - cached.time < 3e5 && cached.snap?.buf) try {
+						const raw = new TextDecoder().decode(cached.snap.buf);
+						const json = JSON.parse(raw);
+						const mlc = json?.data?.MediaListCollection || json?.MediaListCollection;
+						if (mlc && Array.isArray(mlc.lists)) {
+							logDebug("[ANILIST API] 🎯 Cache HIT for MediaListCollection via FastLoad GQL store:", k);
+							const result = formatMediaListResult(mlc);
+							if (resolvedId) entityCache.set(`MediaListCollection:${t}:${resolvedId}`, {
+								time: Date.now(),
+								data: { MediaListCollection: mlc },
+								isSuperset: true,
+								fields: new Set(KNOWN_LIST_FIELDS)
+							});
+							if (resolvedName) entityCache.set(`MediaListCollection:${t}:${resolvedName}`, {
+								time: Date.now(),
+								data: { MediaListCollection: mlc },
+								isSuperset: true,
+								fields: new Set(KNOWN_LIST_FIELDS)
+							});
+							return result;
+						}
+					} catch (_) {}
+				}
+				for (const [k, cached] of gqlStore.entries()) {
+					if (!k.startsWith(`gql:MediaListCollection:${t}:`)) continue;
+					const matchId = resolvedId && k.includes(`:${resolvedId}:`);
+					const matchName = resolvedName && k.toLowerCase().includes(`:${resolvedName.toLowerCase()}:`);
+					if ((matchId || matchName) && cached && Date.now() - cached.time < 3e5 && cached.snap?.buf) try {
+						const raw = new TextDecoder().decode(cached.snap.buf);
+						const json = JSON.parse(raw);
+						const mlc = json?.data?.MediaListCollection || json?.MediaListCollection;
+						if (mlc && Array.isArray(mlc.lists)) {
+							logDebug("[ANILIST API] 🎯 Cache HIT for MediaListCollection via FastLoad GQL store (scan):", k);
+							const result = formatMediaListResult(mlc);
+							if (resolvedId) entityCache.set(`MediaListCollection:${t}:${resolvedId}`, {
+								time: Date.now(),
+								data: { MediaListCollection: mlc },
+								isSuperset: true,
+								fields: new Set(KNOWN_LIST_FIELDS)
+							});
+							if (resolvedName) entityCache.set(`MediaListCollection:${t}:${resolvedName}`, {
+								time: Date.now(),
+								data: { MediaListCollection: mlc },
+								isSuperset: true,
+								fields: new Set(KNOWN_LIST_FIELDS)
+							});
+							return result;
+						}
+					} catch (_) {}
+				}
+			}
+			const rpcCache = win.__ALFL_RPC_CACHE__;
+			if (rpcCache) {
+				const rpcKeys = [];
+				if (resolvedId) rpcKeys.push(`rpc:MediaListCollection:${t}:${resolvedId}:{}`);
+				if (resolvedName) rpcKeys.push(`rpc:MediaListCollection:${t}:${resolvedName}:{}`);
+				for (const k of rpcKeys) {
+					const cached = rpcCache.get(k);
+					if (cached && Date.now() - cached.time < 3e5 && cached.msg) {
+						const result = parseRpcMediaList(cached.msg.result ?? cached.msg);
+						if (result && result.allEntries.length > 0) {
+							logDebug("[ANILIST API] 🎯 Cache HIT for MediaListCollection via FastLoad RPC cache:", k);
+							return result;
+						}
+					}
+				}
+				for (const [k, cached] of rpcCache.entries()) {
+					if (!k.startsWith(`rpc:MediaListCollection:${t}:`)) continue;
+					const matchId = resolvedId && k.includes(`:${resolvedId}:`);
+					const matchName = resolvedName && k.toLowerCase().includes(`:${resolvedName.toLowerCase()}:`);
+					if ((matchId || matchName) && cached && Date.now() - cached.time < 3e5 && cached.msg) {
+						const result = parseRpcMediaList(cached.msg.result ?? cached.msg);
+						if (result && result.allEntries.length > 0) {
+							logDebug("[ANILIST API] 🎯 Cache HIT for MediaListCollection via FastLoad RPC cache (scan):", k);
+							return result;
+						}
+					}
+				}
+			}
+			return null;
+		}
+		async function getMediaList(target, type = "ANIME", options) {
+			const isId = typeof target === "number" || /^\d+$/.test(String(target));
+			const userId = options?.userId || (isId ? Number(target) : void 0);
+			const userName = options?.userName || (!isId ? String(target).trim() : void 0);
+			if (!options?.forceFresh) {
+				const cached = tryGetCachedMediaList(target, type, userId, userName);
+				if (cached) return cached;
+			}
+			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+			const rpcInflight = win.__ALFL_RPC_INFLIGHT__;
+			if (rpcInflight && !options?.forceFresh) {
+				const t = type.toUpperCase();
+				const userMap = win.__ALFL_USER_MAP__;
+				const idMap = win.__ALFL_ID_MAP__;
+				const resolvedId = userId || (userName && userMap ? userMap.get(userName.toLowerCase()) : void 0);
+				const resolvedName = userName ? userName.toLowerCase() : resolvedId && idMap ? idMap.get(resolvedId)?.toLowerCase() : void 0;
+				const rpcKeys = [];
+				if (resolvedId) rpcKeys.push(`rpc:MediaListCollection:${t}:${resolvedId}:{}`);
+				if (resolvedName) rpcKeys.push(`rpc:MediaListCollection:${t}:${resolvedName}:{}`);
+				const checkInflight = async (k, flight) => {
+					try {
+						logDebug("[ANILIST API] ⏳ Awaiting in-flight FastLoad RPC prefetch:", k);
+						const msg = await Promise.race([flight.promise, new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 5e3))]);
+						const parsed = parseRpcMediaList(msg?.result ?? msg);
+						if (parsed && parsed.allEntries.length > 0) {
+							logDebug("[ANILIST API] 🎯 Cache HIT from completed in-flight FastLoad RPC prefetch:", k);
+							return parsed;
+						}
+					} catch (_) {}
+					return null;
+				};
+				for (const k of rpcKeys) {
+					const flight = rpcInflight.get(k);
+					if (flight) {
+						const res = await checkInflight(k, flight);
+						if (res) return res;
+					}
+				}
+				for (const [k, flight] of rpcInflight.entries()) {
+					if (!k.startsWith(`rpc:MediaListCollection:${t}:`)) continue;
+					const matchId = resolvedId && k.includes(`:${resolvedId}:`);
+					const matchName = resolvedName && k.toLowerCase().includes(`:${resolvedName.toLowerCase()}:`);
+					if (matchId || matchName) {
+						const res = await checkInflight(k, flight);
+						if (res) return res;
+					}
+				}
+			}
+			const mlc = (await query(`query ($userId: Int, $userName: String, $type: MediaType) {
+      MediaListCollection(userId: $userId, userName: $userName, type: $type) {
+        user { id name }
+        lists {
+          name
+          isCustomList
+          status
+          entries {
+            id
+            mediaId
+            status
+            score
+            progress
+            progressVolumes
+            repeat
+            priority
+            notes
+            customLists
+            startedAt { year month day }
+            completedAt { year month day }
+            media {
+              id
+              idMal
+              format
+              episodes
+              chapters
+              status
+              title { userPreferred english romaji native }
+            }
+          }
+        }
+      }
+    }`, {
+				userId: userId || void 0,
+				userName: userId ? void 0 : userName || void 0,
+				type
+			}, { forceFresh: options?.forceFresh }))?.MediaListCollection;
+			if (!mlc || !Array.isArray(mlc.lists)) throw new Error("Unexpected MediaListCollection response shape");
+			return formatMediaListResult(mlc);
+		}
+		async function viewer(forceFresh = false) {
+			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+			if ((win.document || document)?.querySelector?.("nav a[href=\"/login\"], .nav a[href=\"/login\"]")) {
+				clearViewer();
+				return null;
+			}
+			const nuxtUser = win.__NUXT__?.state?.auth?.user || win.__NUXT__?.state?.user;
+			if (nuxtUser?.id) {
+				const nuxtId = Number(nuxtUser.id);
+				const storedId = Number(store$1.get("al_user_id", 0));
+				if (storedId && storedId !== nuxtId) clearViewer();
+			}
+			if (!forceFresh) {
+				const name = store$1.get("al_username", null);
+				const fmt = store$1.get("al_score_format", null);
+				const id = Number(store$1.get("al_user_id", 0));
+				if (name && fmt && id) return {
+					id,
+					name,
+					scoreFormat: fmt
+				};
+			}
+			if (!hasAuth()) return null;
+			const d = await query("query { Viewer { id name mediaListOptions { scoreFormat } } }", {}).catch((e) => {
+				if (e?.auth) throw e;
+				return null;
+			});
+			if (d?.Viewer) {
+				store$1.set("al_user_id", d.Viewer.id);
+				store$1.set("al_username", d.Viewer.name);
+				store$1.set("al_score_format", d.Viewer.mediaListOptions.scoreFormat);
+				return {
+					id: d.Viewer.id,
+					name: d.Viewer.name,
+					scoreFormat: d.Viewer.mediaListOptions.scoreFormat
+				};
+			}
+			return null;
+		}
+		const clearViewer = () => {
+			store$1.del("al_username");
+			store$1.del("al_user_id");
+			store$1.del("al_score_format");
+		};
+		const invalidate = (entityKeyPrefix) => {
+			if (!entityKeyPrefix) {
+				entityCache.clear();
+				inflightEntities.clear();
+			} else {
+				for (const k of entityCache.keys()) if (k.startsWith(entityKeyPrefix)) entityCache.delete(k);
+				for (const k of inflightEntities.keys()) if (k.startsWith(entityKeyPrefix)) inflightEntities.delete(k);
+			}
+			(typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window).__ALFL_CLEAR__?.();
+		};
+		const invalidateMediaList = (target, type) => {
+			if (!target) return invalidate("MediaListCollection");
+			const t = type ? type.toUpperCase() : "";
+			const prefix = t ? `MediaListCollection:${t}:${String(target).toLowerCase()}` : `MediaListCollection:`;
+			invalidate(prefix);
+		};
+		const hasAuth = () => isBrowserLoggedIn();
+		const resumeAt = () => limiter.resumeAt;
+		return {
+			query,
+			getMediaList,
+			viewer,
+			clearViewer,
+			invalidate,
+			invalidateMediaList,
+			hasAuth,
+			resumeAt
+		};
+	})();
+	var MediaData = (() => {
+		async function get(id, type, opts) {
+			try {
+				return (await AniList.query(`query($id:Int,$type:MediaType){ Media(id:$id,type:$type){
+          id idMal format title { userPreferred english romaji native }
+          episodes chapters status season seasonYear nextAiringEpisode { episode }
+          mediaListEntry { score progress status completedAt { year month day } }
+        } }`, {
+					id: Number(id),
+					type
+				}))?.Media || null;
+			} catch (e) {
+				if (opts?.throwAuth && e?.auth) throw e;
+				logDebug("[MEDIA DATA] fetch failed:", e?.message || e);
+				return null;
+			}
+		}
+		async function save(id, _type, c) {
+			const entry = (await AniList.query(`mutation($mediaId:Int!,$score:Float,$progress:Int,$status:MediaListStatus,$completedAt:FuzzyDateInput){
+        SaveMediaListEntry(mediaId:$mediaId,score:$score,progress:$progress,status:$status,completedAt:$completedAt){
+          score progress status completedAt { year month day }
+        } }`, {
+				mediaId: Number(id),
+				score: c.score,
+				progress: c.progress,
+				status: c.status,
+				completedAt: c.completedAt
+			}))?.SaveMediaListEntry || null;
+			AniList.invalidate(`Media:${id}`);
+			AniList.invalidateMediaList();
+			return entry;
+		}
+		return {
+			get,
+			save
+		};
+	})();
 	var TYPES = ["ANIME", "MANGA"];
 	var typeLabel = (t) => t === "ANIME" ? "Anime" : "Manga";
 	var SETTLED_TTL_MS = 3888e6;
@@ -1299,11 +1755,11 @@
 				"last_sync",
 				"last_run",
 				"last_compare"
-			]) store.del(`${k}_${t}`);
+			]) store$1.del(`${k}_${t}`);
 			clearCache(stores[t].settled);
 		}
-		store.del("sync_retry_at");
-		store.del(PENDING_DELETES_KEY);
+		store$1.del("sync_retry_at");
+		store$1.del(PENDING_DELETES_KEY);
 	}
 	var heartbeat = null;
 	async function acquireLock() {
@@ -1322,7 +1778,7 @@
 	function releaseLock() {
 		if (heartbeat) clearInterval(heartbeat);
 		heartbeat = null;
-		if (jsonGet(LOCK_KEY, null)?.tab === TAB_ID) store.del(LOCK_KEY);
+		if (jsonGet(LOCK_KEY, null)?.tab === TAB_ID) store$1.del(LOCK_KEY);
 	}
 	var STATUS_MAP = {
 		ANIME: {
@@ -1477,7 +1933,7 @@
 	}
 	var OVERRIDES_SETTING_KEY = "syncManualOverrides";
 	function getManualOverrides() {
-		let raw = store.get(PREFIX + OVERRIDES_SETTING_KEY, {});
+		let raw = store$1.get(PREFIX + OVERRIDES_SETTING_KEY, {});
 		if (typeof raw === "string") try {
 			raw = JSON.parse(raw);
 		} catch (_) {
@@ -1487,7 +1943,7 @@
 		return raw;
 	}
 	function saveManualOverrides(overrides) {
-		store.set(PREFIX + OVERRIDES_SETTING_KEY, overrides);
+		store$1.set(PREFIX + OVERRIDES_SETTING_KEY, overrides);
 		const hiddenInput = document.querySelector(`#ala-settings-panel input[data-key="${OVERRIDES_SETTING_KEY}"]`);
 		if (hiddenInput) hiddenInput.value = JSON.stringify(overrides);
 	}
@@ -1798,6 +2254,7 @@
 	var BREAKER_MAX_TRIPS = 3;
 	var RETRY_AFTER_FAILURE_MS = 6e5;
 	var LIST_PATH_RE = /^\/user\/[^/]+\/(anime|manga)list/;
+	var onAniList = () => location.hostname === "anilist.co";
 	var ENTRY_FIELDS = "status score(format: POINT_100) progress progressVolumes repeat notes updatedAt startedAt { year month day } completedAt { year month day }";
 	var MEDIA_FIELDS = "id idMal startDate { year } synonyms title { userPreferred english romaji native }";
 	var toEntry = (row, media) => {
@@ -1833,7 +2290,7 @@
 				userId,
 				type,
 				page
-			}))?.Page;
+			}, { forceFresh: true }))?.Page;
 			let stop = false;
 			for (const row of p?.mediaList || []) {
 				if ((Number(row.updatedAt) || 0) < since) {
@@ -1858,7 +2315,7 @@
 				type,
 				chunk,
 				perChunk: 500
-			}))?.MediaListCollection;
+			}, { forceFresh: true }))?.MediaListCollection;
 			for (const list of c?.lists || []) for (const row of list.entries || []) {
 				const e = toEntry(row, row.media);
 				if (!e.mediaId || seen.has(e.mediaId)) continue;
@@ -1988,8 +2445,8 @@
 			transient: 0,
 			permanent: 0
 		};
-		const lastSync = Number(store.get(`last_sync_${type}`, 0)) || 0;
-		const fullPass = full || !lastSync || Date.now() - Number(store.get(`last_compare_${type}`, 0)) > FULL_COMPARE_MS;
+		const lastSync = Number(store$1.get(`last_sync_${type}`, 0)) || 0;
+		const fullPass = full || !lastSync || Date.now() - Number(store$1.get(`last_compare_${type}`, 0)) > FULL_COMPARE_MS;
 		const isExact = Settings.get("syncMode") === "exact";
 		log(`${label}: starting ${fullPass ? "full library comparison" : "incremental sync"} — fetching AniList entries and your current MAL list.`);
 		logDebug("[SYNC]", `${label}: starting sync pass:`, {
@@ -2062,10 +2519,10 @@
 		const ok = c.transient === 0;
 		if (ok) {
 			if (fullPass) {
-				store.set(`last_compare_${type}`, Date.now());
-				store.set(`last_sync_${type}`, Math.max(1, newest));
-			} else if (newest) store.set(`last_sync_${type}`, Math.max(newest, lastSync));
-			store.set(`last_run_${type}`, Math.floor(Date.now() / 1e3));
+				store$1.set(`last_compare_${type}`, Date.now());
+				store$1.set(`last_sync_${type}`, Math.max(1, newest));
+			} else if (newest) store$1.set(`last_sync_${type}`, Math.max(newest, lastSync));
+			store$1.set(`last_run_${type}`, Math.floor(Date.now() / 1e3));
 		}
 		log(`${label}: finished — ${[
 			`${c.pushed} updated`,
@@ -2097,14 +2554,16 @@
 		}[mode]}.\n\nThis will affect the scores written to MAL during this first sync.\n\nContinue with the first sync?`);
 	}
 	function handleAuthFailure(e) {
-		if (e.auth === "AniList") clearAniListAuth();
+		if (e.auth === "AniList") AniList.clearViewer();
 		else clearMalAuth();
 		log(`⚠ ${e.message}`);
 	}
 	async function runSync(types = [...TYPES], opts = {}) {
 		logDebug("[SYNC]", "runSync initiated for types:", types, "options:", opts);
 		if (syncStatus.syncing) return log("Sync already running.");
-		if (!store.get("al_token") || !store.get("mal_token")) return log("Connect both AniList and MAL first.");
+		if (!onAniList()) return log("Open AniList to run a sync — it needs your AniList login.", "warn");
+		if (!AniList.hasAuth()) return log("Log in to AniList first.");
+		if (!store$1.get("mal_token")) return log("Connect MyAnimeList first.");
 		if (navigator.onLine === false) return log("You appear to be offline; sync skipped.");
 		syncStatus.syncing = true;
 		syncStatus.cancelled = false;
@@ -2113,7 +2572,7 @@
 			return log("Another tab is already syncing, skipped.");
 		}
 		breaker.reset();
-		store.set("sync_onboarded", true);
+		store$1.set("sync_onboarded", true);
 		Object.assign(progress, {
 			phase: "fetching",
 			done: 0,
@@ -2125,15 +2584,15 @@
 		let allOk = false;
 		try {
 			const viewer = await AniList.viewer();
-			if (!viewer) throw authError("AniList", "AniList is not connected.");
+			if (!viewer) throw authError("AniList", "AniList is not logged in.");
 			const me = await malWhoAmI();
 			const account = `${viewer.id}:${me.id}`;
-			const prev = store.get("sync_account", null);
+			const prev = store$1.get("sync_account", null);
 			if (prev && prev !== account) {
 				log("Connected account changed. Resetting sync watermarks and per-account suppression state.", "warn");
 				resetAccountState();
 			}
-			store.set("sync_account", account);
+			store$1.set("sync_account", account);
 			if (opts.full) for (const t of types) clearCache(stores[t].settled);
 			const results = await Promise.allSettled(types.map((t) => syncType(t, viewer.id, !!opts.full)));
 			const fatal = results.find((r) => r.status === "rejected" && (r.reason?.auth || r.reason?.abort));
@@ -2149,13 +2608,13 @@
 			}
 			allOk = results.every((r) => r.status === "fulfilled" && r.value.ok);
 			if (allOk) {
-				store.del("sync_retry_at");
+				store$1.del("sync_retry_at");
 				log(`Synced in ${((Date.now() - startedAt) / 1e3).toFixed(1)}s`);
-			} else if (!syncStatus.cancelled) store.set("sync_retry_at", Date.now() + RETRY_AFTER_FAILURE_MS);
+			} else if (!syncStatus.cancelled) store$1.set("sync_retry_at", Date.now() + RETRY_AFTER_FAILURE_MS);
 		} catch (e) {
 			if (e.auth) handleAuthFailure(e);
 			else log("Sync could not finish: " + (e.message || e), "error");
-			if (!e.auth && !syncStatus.cancelled) store.set("sync_retry_at", Date.now() + RETRY_AFTER_FAILURE_MS);
+			if (!e.auth && !syncStatus.cancelled) store$1.set("sync_retry_at", Date.now() + RETRY_AFTER_FAILURE_MS);
 		} finally {
 			for (const t of types) {
 				stores[t].ids.save();
@@ -2172,27 +2631,27 @@
 		if (syncStatus.syncing) return;
 		const pageType = currentListType();
 		const types = pageType ? [pageType] : [...TYPES];
-		if (types.some((t) => !store.get(`last_sync_${t}`, 0)) && !await confirmDecimalScores()) return log("First sync cancelled.");
+		if (types.some((t) => !store$1.get(`last_sync_${t}`, 0)) && !await confirmDecimalScores()) return log("First sync cancelled.");
 		runSync(types);
 	}
 	async function fullResync() {
 		if (syncStatus.syncing) return;
-		if (!store.get("sync_onboarded", false) && !await confirmDecimalScores()) return log("Full resync cancelled.");
+		if (!store$1.get("sync_onboarded", false) && !await confirmDecimalScores()) return log("Full resync cancelled.");
 		for (const t of TYPES) clearCache(stores[t].ids);
 		log("Full Resync started: checking the entire AniList library and clearing cached match/suppression decisions.");
 		runSync([...TYPES], { full: true });
 	}
 	function maybeAutoSync() {
-		if (!Settings.get("syncEnabled") || syncStatus.syncing || Date.now() < syncStatus.autoSyncRetryAfter || navigator.onLine === false) return;
-		if (!store.get("al_token") || !store.get("mal_token")) return;
-		const retryAt = Number(store.get("sync_retry_at", 0)) || 0;
+		if (!onAniList() || !Settings.get("syncEnabled") || syncStatus.syncing || Date.now() < syncStatus.autoSyncRetryAfter || navigator.onLine === false) return;
+		if (!AniList.hasAuth() || !store$1.get("mal_token")) return;
+		const retryAt = Number(store$1.get("sync_retry_at", 0)) || 0;
 		if (retryAt > 0 && Date.now() < retryAt) return;
 		const dueTypes = [];
 		for (const t of TYPES) {
 			const isAnime = t === "ANIME";
 			if (!Settings.get(isAnime ? "syncAutoAnime" : "syncAutoManga")) continue;
 			const hours = Math.max(1, Number(Settings.get(isAnime ? "syncIntervalAnime" : "syncIntervalManga")) || 6);
-			const last = Number(store.get(`last_run_${t}`, 0)) || 0;
+			const last = Number(store$1.get(`last_run_${t}`, 0)) || 0;
 			if (retryAt > 0 ? !last || Date.now() - last * 1e3 >= RETRY_AFTER_FAILURE_MS : !last || Date.now() - last * 1e3 >= hours * 36e5) dueTypes.push(t);
 		}
 		if (dueTypes.length > 0) {
@@ -2200,7 +2659,7 @@
 			log(retryAt > 0 ? `Auto-sync (${labels}): retrying after an earlier failure…` : `Auto-sync (${labels}): interval reached or initial sync…`);
 			syncStatus.autoSyncRetryAfter = Date.now() + 3e5;
 			runSync(dueTypes);
-		} else if (retryAt > 0 && Date.now() >= retryAt) store.del("sync_retry_at");
+		} else if (retryAt > 0 && Date.now() >= retryAt) store$1.del("sync_retry_at");
 	}
 	var MODAL_CSS = `
   #ala-pwd-backdrop {
@@ -2439,14 +2898,16 @@
 		69
 	]);
 	var SENSITIVE_KEYS = [
-		"al_token",
-		"al_username",
-		"al_user_id",
-		"al_score_format",
 		"mal_code_verifier",
 		"mal_token",
 		"mal_refresh_token",
 		"mal_expires_at"
+	];
+	var SESSION_CACHE_KEYS = [
+		"al_token",
+		"al_username",
+		"al_user_id",
+		"al_score_format"
 	];
 	var PBKDF2_ITERATIONS = 1e5;
 	function matchesMagic(bytes, magic) {
@@ -2502,11 +2963,11 @@
 		if (includeSecrets && !(password && password.trim().length > 0)) throw new Error("A password is required to export credentials.");
 		const data = {};
 		for (const r of Object.values(ROWS)) {
-			const rawVal = overrides && r.key in overrides ? overrides[r.key] : store.get(PREFIX + r.key, r.def);
+			const rawVal = overrides && r.key in overrides ? overrides[r.key] : store$1.get(PREFIX + r.key, r.def);
 			data[r.key] = rawVal;
 		}
 		if (includeSecrets) for (const key of SENSITIVE_KEYS) {
-			const val = store.get(key, void 0);
+			const val = store$1.get(key, void 0);
 			if (val !== void 0 && val !== null) data[key] = val;
 		}
 		const plainPayload = {
@@ -2542,6 +3003,22 @@
 			return out;
 		}
 	}
+	function createRawBackup(overrides) {
+		const data = {};
+		for (const r of Object.values(ROWS)) {
+			const rawVal = overrides && r.key in overrides ? overrides[r.key] : store$1.get(PREFIX + r.key, r.def);
+			data[r.key] = rawVal;
+		}
+		for (const key of SENSITIVE_KEYS) {
+			const val = store$1.get(key, void 0);
+			if (val !== void 0 && val !== null) data[key] = val;
+		}
+		return JSON.stringify({
+			version: 1,
+			exportedAt: Date.now(),
+			data
+		}, null, 2);
+	}
 	function downloadBackupFile(bytes, filename = BACKUP_FILENAME) {
 		const blob = new Blob([bytes], { type: "application/octet-stream" });
 		const url = URL.createObjectURL(blob);
@@ -2557,10 +3034,12 @@
 		if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Backup data is invalid or empty.");
 		let applied = 0;
 		let secretsApplied = 0;
+		for (const k of SESSION_CACHE_KEYS) store$1.del(k);
 		for (const [key, rawValue] of Object.entries(data)) {
+			if (SESSION_CACHE_KEYS.includes(key)) continue;
 			if (SENSITIVE_KEYS.includes(key)) {
 				if (rawValue !== void 0 && rawValue !== null) {
-					store.set(key, rawValue);
+					store$1.set(key, rawValue);
 					secretsApplied++;
 				}
 				continue;
@@ -2569,7 +3048,7 @@
 			const r = ROWS[settingKey];
 			if (r) {
 				const normalized = TYPES$1[r.type].normalize(rawValue, r);
-				store.set(PREFIX + settingKey, normalized);
+				store$1.set(PREFIX + settingKey, normalized);
 				applied++;
 			}
 		}
@@ -3754,7 +4233,7 @@
 			try {
 				const viewer = await AniList.viewer();
 				if (!viewer) {
-					orphansBox.innerHTML = `<div class="ala-ov-empty" style="color:rgb(var(--color-red,224,85,85))">AniList user not found. Please connect AniList first.</div>`;
+					orphansBox.innerHTML = `<div class="ala-ov-empty" style="color:rgb(var(--color-red,224,85,85))">AniList user not found. Please log in to AniList first.</div>`;
 					return;
 				}
 				const overrides = getManualOverrides();
@@ -4593,21 +5072,10 @@
   </div>`;
 	};
 	function accountsHtml() {
-		const alConnected = !!store.get("al_token", null);
-		const alUser = store.get("al_username", null);
-		const malConnected = !!store.get("mal_token", null);
+		const malConnected = !!store$1.get("mal_token", null);
 		return `<h3 class="ala-section-title">Connected Accounts</h3>
   <div class="ala-section">
     <div class="ala-row ala-account-row">
-      <span class="ala-text">
-        <span class="ala-title">AniList</span>
-        <span class="ala-help" id="ala-status-al">${alConnected ? alUser ? `Connected as <b>${esc(alUser)}</b>` : "Connected" : "Not connected"}</span>
-      </span>
-      <button type="button" class="ala-btn ${alConnected ? "ala-btn--danger" : "ala-btn--primary"}" id="ala-btn-al">
-        ${alConnected ? "Disconnect" : "Connect to AniList"}
-      </button>
-    </div>
-    <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
       <span class="ala-text">
         <span class="ala-title">MyAnimeList</span>
         <span class="ala-help" id="ala-status-mal">${malConnected ? "Connected" : "Not connected"}</span>
@@ -4619,6 +5087,7 @@
   </div>`;
 	}
 	function backupRestoreHtml() {
+		const isDev = !!Settings.get("devModeEnabled");
 		return `<details class="ala-section-dropdown" data-section="backup" open>
     <summary class="ala-section-summary">
       <span class="ala-section-title">Backup &amp; Restore</span>
@@ -4637,9 +5106,16 @@
           <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
             <span class="ala-text">
               <span class="ala-title">Export with Credentials</span>
-              <span class="ala-help">Include AniList and MyAnimeList tokens. A password is required.</span>
+              <span class="ala-help">Include MyAnimeList tokens. A password is required.</span>
             </span>
             <button type="button" class="ala-btn ala-btn--danger" id="ala-btn-export-secrets">Export with Secrets</button>
+          </div>
+          <div class="ala-row ala-account-row" id="ala-row-export-raw" style="border-top:1px solid rgba(var(--color-text-lighter),.12);${isDev ? "" : "display:none;"}">
+            <span class="ala-text">
+              <span class="ala-title">Export Raw JSON</span>
+              <span class="ala-help">Export unminified raw JSON including all settings and credentials without encryption (for testing/verification).</span>
+            </span>
+            <button type="button" class="ala-btn ala-btn--danger" id="ala-btn-export-raw">Export Raw JSON</button>
           </div>
           <div class="ala-row ala-account-row" style="border-top:1px solid rgba(var(--color-text-lighter),.12)">
             <span class="ala-text">
@@ -4970,11 +5446,20 @@
 				el.disabled = !on;
 			});
 		};
+		const devRow = panel.querySelector("#ala-row-export-raw");
+		const syncDevBackupVisibility = () => {
+			if (!devRow) return;
+			const devToggle = panel.querySelector("input[data-key=\"devModeEnabled\"]");
+			const isDevOn = devToggle ? devToggle.checked : !!Settings.get("devModeEnabled");
+			devRow.style.display = isDevOn ? "" : "none";
+		};
 		panel.querySelectorAll(".ala-feature").forEach(syncFeature);
+		syncDevBackupVisibility();
 		initDropdownAnimations(panel);
 		panel.addEventListener("change", (e) => {
 			const card = e.target?.closest(".ala-feature");
 			if (card) syncFeature(card);
+			syncDevBackupVisibility();
 		});
 		panel.querySelector(".ala-save")?.addEventListener("click", () => {
 			controls().forEach((el) => {
@@ -4998,6 +5483,7 @@
 				}
 			});
 			panel.querySelectorAll(".ala-feature").forEach(syncFeature);
+			syncDevBackupVisibility();
 			setStatus("Defaults restored. Press Save to apply them.");
 		});
 		panel.querySelector(".ala-close")?.addEventListener("click", closePanel);
@@ -5009,39 +5495,17 @@
 		};
 		document.addEventListener("keydown", backdrop._onKey);
 		const updateAccountUI = () => {
-			const alBtn = panel.querySelector("#ala-btn-al");
-			const alStatus = panel.querySelector("#ala-status-al");
 			const malBtn = panel.querySelector("#ala-btn-mal");
 			const malStatus = panel.querySelector("#ala-status-mal");
-			const alConnected = !!store.get("al_token", null);
-			const alUser = store.get("al_username", null);
-			const malConnected = !!store.get("mal_token", null);
-			if (alBtn && alStatus) {
-				alBtn.textContent = alConnected ? "Disconnect" : "Connect to AniList";
-				alBtn.className = `ala-btn ${alConnected ? "ala-btn--danger" : "ala-btn--primary"}`;
-				alStatus.innerHTML = alConnected ? alUser ? `Connected as <b>${esc(alUser)}</b>` : "Connected" : "Not connected";
-			}
+			const malConnected = !!store$1.get("mal_token", null);
 			if (malBtn && malStatus) {
 				malBtn.textContent = malConnected ? "Disconnect" : "Connect to MAL";
 				malBtn.className = `ala-btn ${malConnected ? "ala-btn--danger" : "ala-btn--primary"}`;
 				malStatus.textContent = malConnected ? "Connected" : "Not connected";
 			}
 		};
-		if (store.get("al_token", null) && !store.get("al_username", null)) tryOr(() => AniList.viewer()).then(() => updateAccountUI());
-		panel.querySelector("#ala-btn-al")?.addEventListener("click", () => {
-			if (!!store.get("al_token", null)) {
-				if (confirm("Disconnect AniList? You will need to reconnect to use the List Score Editor or Sync.")) {
-					clearAniListAuth();
-					updateAccountUI();
-					setStatus("AniList disconnected.");
-				}
-			} else {
-				alConnect();
-				setStatus("Opened AniList authorization tab…");
-			}
-		});
 		panel.querySelector("#ala-btn-mal")?.addEventListener("click", () => {
-			if (!!store.get("mal_token", null)) {
+			if (!!store$1.get("mal_token", null)) {
 				if (confirm("Disconnect MyAnimeList? You will need to reconnect to use AniList → MAL Sync.")) {
 					clearMalAuth();
 					updateAccountUI();
@@ -5085,7 +5549,7 @@
 			}
 		});
 		panel.querySelector("#ala-btn-export-secrets")?.addEventListener("click", async () => {
-			if (!confirm("⚠️ Warning: This export includes your AniList and MyAnimeList authentication credentials.\n\nAnyone with access to this file will have full access to your connected accounts.\n\nDo you want to continue?")) return;
+			if (!confirm("⚠️ Warning: This export includes your MyAnimeList authentication credentials.\n\nAnyone with access to this file will have full access to your connected MyAnimeList account.\n\nDo you want to continue?")) return;
 			const pwd = await promptPasswordModal({
 				title: "Export Credentials (Encrypted)",
 				description: "A password is required to encrypt your credentials and protect your accounts.",
@@ -5103,6 +5567,16 @@
 				setStatus("Generating backup…");
 				downloadBackupFile(await createBackup(true, pwd, getPanelOverrides()));
 				setStatus("Settings and credentials exported successfully.");
+			} catch (e) {
+				setStatus("Export failed: " + (e.message || e), true);
+			}
+		});
+		panel.querySelector("#ala-btn-export-raw")?.addEventListener("click", () => {
+			try {
+				setStatus("Generating raw backup…");
+				const rawJson = createRawBackup(getPanelOverrides());
+				downloadBackupFile(new TextEncoder().encode(rawJson));
+				setStatus("Raw JSON settings exported successfully.");
 			} catch (e) {
 				setStatus("Export failed: " + (e.message || e), true);
 			}
@@ -5234,6 +5708,1682 @@
 			}
 		}
 	}
+	var CFG = {
+		lazyMedia: false,
+		rowSkipping: false,
+		coalesceObservers: false,
+		observerBatchMs: 80,
+		fastInnerText: false,
+		memoSelectorProbes: false,
+		blockTierInData: false,
+		tierAssist: false,
+		tierAssistMs: 250,
+		gqlTtl: 15e3,
+		gqlStaleTtl: 3e5,
+		gqlMaxBytes: 67108864,
+		gqlMaxEntryBytes: 25165824,
+		prefetch: true,
+		earlyStart: false,
+		prefetchMaxPerMin: 12,
+		prefetchDwellMs: 200,
+		learnWindowMs: 8e3,
+		learnMaxReqs: 6
+	};
+	var GQL_ORIGIN = "https://graphql.anilist.co";
+	var MEDIA_ORIGIN = "https://s4.anilist.co";
+	var stats = {
+		graphqlRequests: 0,
+		cacheHits: 0,
+		deduped: 0,
+		staleServed: 0,
+		prefetched: 0,
+		earlyStarts: 0,
+		observerBatches: 0,
+		observerRecordsMerged: 0,
+		probesShared: 0,
+		labelsReleased: 0
+	};
+	var attempt = (fn) => {
+		try {
+			return fn();
+		} catch {}
+	};
+	var idle = (win, fn, timeout = 1500) => "requestIdleCallback" in win ? win.requestIdleCallback(fn, { timeout }) : setTimeout(fn, 0);
+	var win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+	var doc = win.document;
+	var navListeners = [];
+	var onNav = (fn) => navListeners.push(fn);
+	var userMap = new Map();
+	var idToUserMap = new Map();
+	var store = new Map();
+	var inflight = new Map();
+	var bytes = 0;
+	var epoch = 0;
+	var pausedUntil = 0;
+	var freshFloor = 0;
+	function setBytes(val) {
+		bytes = val;
+	}
+	function incEpoch() {
+		epoch++;
+	}
+	function setPausedUntil(val) {
+		pausedUntil = val;
+	}
+	function setFreshFloor(val) {
+		freshFloor = val;
+	}
+	var rpcCache = new Map();
+	var rpcInflight = new Map();
+	var rpcEpoch = 0;
+	var clearAll = () => {
+		epoch++;
+		store.clear();
+		inflight.clear();
+		bytes = 0;
+	};
+	var clearRpc = () => {
+		rpcEpoch++;
+		freshFloor = Date.now();
+		rpcCache.clear();
+		rpcInflight.clear();
+	};
+	var clearGlobalCache = () => {
+		clearAll();
+		clearRpc();
+	};
+	function rememberUser(name, id) {
+		if (!name || !id || typeof id !== "number") return;
+		const normName = String(name).trim().toLowerCase();
+		if (!normName) return;
+		userMap.set(normName, id);
+		idToUserMap.set(id, normName);
+		attempt(() => {
+			const stored = JSON.parse(win.localStorage?.getItem("alfl:userMap") || "{}");
+			if (stored[normName] !== id) {
+				stored[normName] = id;
+				const keys = Object.keys(stored);
+				if (keys.length > 300) delete stored[keys[0]];
+				win.localStorage?.setItem("alfl:userMap", JSON.stringify(stored));
+			}
+		});
+	}
+	function initUserMap() {
+		attempt(() => {
+			const stored = JSON.parse(win.localStorage?.getItem("alfl:userMap") || "{}");
+			for (const [k, v] of Object.entries(stored)) if (typeof v === "number" && v > 0) {
+				userMap.set(k.toLowerCase(), v);
+				idToUserMap.set(v, k.toLowerCase());
+			}
+		});
+	}
+	function getViewerFromWindow() {
+		const res = {
+			id: 0,
+			name: ""
+		};
+		attempt(() => {
+			const nuxt = win.__NUXT__;
+			const user = nuxt?.state?.auth?.user || nuxt?.state?.user;
+			if (user) {
+				if (typeof user.id === "number" && user.id > 0) res.id = user.id;
+				if (typeof user.name === "string" && user.name) res.name = user.name;
+			}
+		});
+		if (!res.id) {
+			const storedId = Number(store$1.get("al_user_id", 0));
+			if (storedId > 0) res.id = storedId;
+		}
+		if (!res.name) {
+			const stored = store$1.get("al_username", null);
+			if (stored) res.name = stored;
+		}
+		if (!res.name && doc) {
+			const m = (doc.querySelector("nav a[href^=\"/user/\"], .nav-wrap a[href^=\"/user/\"], .nav a[href^=\"/user/\"]")?.getAttribute("href"))?.match(/^\/user\/([^/?#]+)/);
+			if (m) try {
+				res.name = decodeURIComponent(m[1]);
+			} catch {}
+		}
+		return res;
+	}
+	function getLocalUsername() {
+		return getViewerFromWindow().name || null;
+	}
+	function registerGlobalBridges() {
+		win.__ALFL_STATS__ = stats;
+		win.__ALFL_CLEAR__ = clearGlobalCache;
+		win.__ALFL_GQL_STORE__ = store;
+		win.__ALFL_RPC_CACHE__ = rpcCache;
+		win.__ALFL_RPC_INFLIGHT__ = rpcInflight;
+		win.__ALFL_USER_MAP__ = userMap;
+		win.__ALFL_ID_MAP__ = idToUserMap;
+	}
+	function installLazyMedia() {
+		const lazify = (el) => {
+			if (!el || el.nodeType !== 1) return;
+			switch (el.localName) {
+				case "img":
+					if (!el.hasAttribute("loading")) el.loading = "lazy";
+					if (!el.hasAttribute("decoding")) el.decoding = "async";
+					break;
+				case "iframe":
+					if (!el.hasAttribute("loading")) el.loading = "lazy";
+					break;
+				case "video": if (!el.hasAttribute("preload")) el.preload = "metadata";
+			}
+		};
+		const patchCreate = (target) => {
+			if (!target) return;
+			const orig = target.createElement;
+			if (typeof orig !== "function") return;
+			const patched = function(tag, options) {
+				const el = orig.call(this, tag, options);
+				try {
+					lazify(el);
+				} catch {}
+				return el;
+			};
+			try {
+				target.createElement = patched;
+			} catch {
+				try {
+					Object.defineProperty(target, "createElement", {
+						value: patched,
+						writable: true,
+						configurable: true
+					});
+				} catch {}
+			}
+		};
+		patchCreate(win.Document?.prototype);
+		patchCreate(win.HTMLDocument?.prototype);
+		patchCreate(Document.prototype);
+		patchCreate(doc);
+		if (typeof document !== "undefined" && document !== doc) patchCreate(document);
+		const MEDIA_TAG = /<(?:img|iframe|video)[\s>/]/i;
+		const MEDIA_SEL = "img:not([loading]),iframe:not([loading]),video:not([preload])";
+		const lazifyTree = (root) => {
+			if (!root || typeof root.querySelectorAll !== "function") return;
+			lazify(root);
+			for (const el of root.querySelectorAll(MEDIA_SEL)) lazify(el);
+		};
+		const ElementProto = win.Element?.prototype || Element.prototype;
+		attempt(() => {
+			const desc = Object.getOwnPropertyDescriptor(ElementProto, "innerHTML");
+			if (!desc || !desc.set || !desc.configurable) return;
+			Object.defineProperty(ElementProto, "innerHTML", {
+				...desc,
+				set(value) {
+					desc.set.call(this, value);
+					if (typeof value === "string" && MEDIA_TAG.test(value)) attempt(() => lazifyTree(this instanceof win.HTMLTemplateElement ? this.content : this));
+				}
+			});
+		});
+		attempt(() => {
+			const native = ElementProto.insertAdjacentHTML;
+			ElementProto.insertAdjacentHTML = function(position, html) {
+				const r = native.call(this, position, html);
+				if (typeof html === "string" && MEDIA_TAG.test(html)) {
+					const outer = /^(?:beforebegin|afterend)$/i.test(position);
+					attempt(() => lazifyTree(outer ? this.parentNode : this));
+				}
+				return r;
+			};
+		});
+	}
+	var ROW_GROUPS = [
+		{
+			selector: ".medialist .entry.row",
+			h: 56
+		},
+		{
+			selector: ".medialist .entry-card",
+			h: 220
+		},
+		{
+			selector: ".activity-entry",
+			h: 160
+		}
+	];
+	function injectCSS(text) {
+		try {
+			if ("adoptedStyleSheets" in doc && typeof win.CSSStyleSheet !== "undefined") {
+				const sheet = new win.CSSStyleSheet();
+				sheet.replaceSync(text);
+				doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet];
+				return;
+			}
+		} catch {}
+		const style = doc.createElement("style");
+		style.textContent = text;
+		(doc.head || doc.documentElement).appendChild(style);
+	}
+	function installRowSkipping() {
+		injectCSS(`@supports (content-visibility: auto) and (contain-intrinsic-height: auto 1px) { ${ROW_GROUPS.map(({ selector, h }, i) => `
+        ${selector} {
+            content-visibility: auto;
+            contain-intrinsic-height: auto var(--alfast-h${i}, ${h}px);
+            overflow-clip-margin: 16px;
+        }
+        ${selector}:hover,
+        ${selector}:focus-within {
+            content-visibility: visible;
+        }`).join("\n")} }`);
+		const measuredFor = ROW_GROUPS.map(() => "");
+		let timers = [];
+		function measure() {
+			const path = win.location.pathname;
+			const vh = win.innerHeight || doc.documentElement.clientHeight;
+			ROW_GROUPS.forEach(({ selector }, i) => {
+				if (measuredFor[i] === path) return;
+				let nodes;
+				try {
+					nodes = doc.querySelectorAll(selector);
+				} catch {
+					return;
+				}
+				let total = 0;
+				let count = 0;
+				for (const el of nodes) {
+					const r = el.getBoundingClientRect();
+					if (r.top > vh) break;
+					if (r.height > 0 && r.bottom > 0) {
+						total += r.height;
+						if (++count >= 6) break;
+					}
+				}
+				if (!count) return;
+				doc.documentElement.style.setProperty(`--alfast-h${i}`, `${Math.max(1, Math.round(total / count))}px`);
+				measuredFor[i] = path;
+			});
+		}
+		function schedule() {
+			timers.forEach(clearTimeout);
+			timers = [
+				500,
+				1800,
+				4500
+			].map((ms) => setTimeout(() => idle(win, () => {
+				if (!doc.hidden) measure();
+			}), ms));
+		}
+		onNav(schedule);
+		if (doc.readyState !== "loading") schedule();
+		else doc.addEventListener("DOMContentLoaded", schedule, { once: true });
+		win.addEventListener("load", schedule, { once: true });
+		let resizeTimer = 0;
+		const onResize = () => {
+			clearTimeout(resizeTimer);
+			resizeTimer = setTimeout(() => {
+				measuredFor.fill("");
+				schedule();
+			}, 200);
+		};
+		win.addEventListener("resize", onResize, { passive: true });
+		win.addEventListener("orientationchange", onResize, { passive: true });
+	}
+	function installObserverCoalescing() {
+		const Native = win.MutationObserver;
+		if (typeof Native !== "function") return;
+		const states = new WeakMap();
+		const ignoresRecords = (fn) => {
+			if (typeof fn !== "function" || fn.length !== 0) return false;
+			try {
+				const src = Function.prototype.toString.call(fn);
+				if (/\barguments\b/.test(src)) return false;
+				const params = /^[^(]*\(([^)]*)\)/.exec(src);
+				return !params || params[1].trim() === "";
+			} catch {
+				return false;
+			}
+		};
+		const isPageRoot = (t) => t === doc || t === doc.documentElement || t === doc.body;
+		function schedule(st) {
+			if (st.timer) return;
+			const wait = Math.max(0, st.last + CFG.observerBatchMs - performance.now());
+			st.timer = setTimeout(() => {
+				st.timer = 0;
+				if (!st.queue.length) return;
+				const records = st.queue.splice(0);
+				stats.observerBatches++;
+				stats.observerRecordsMerged += records.length;
+				try {
+					st.callback.call(st.self, records, st.self);
+				} catch (e) {
+					setTimeout(() => {
+						throw e;
+					});
+				}
+				st.last = performance.now();
+			}, wait);
+		}
+		class CoalescedMutationObserver extends Native {
+			constructor(callback) {
+				const st = {
+					callback,
+					eligible: ignoresRecords(callback),
+					on: false,
+					queue: [],
+					timer: 0,
+					last: -Infinity,
+					self: null
+				};
+				super(typeof callback === "function" ? (records) => {
+					if (!st.on) return callback.call(st.self, records, st.self);
+					for (const r of records) st.queue.push(r);
+					schedule(st);
+				} : callback);
+				st.self = this;
+				states.set(this, st);
+			}
+			observe(target, options) {
+				const st = states.get(this);
+				if (st && st.eligible && options && options.subtree && isPageRoot(target)) st.on = true;
+				return super.observe(target, options);
+			}
+			disconnect() {
+				const st = states.get(this);
+				if (st) {
+					st.queue.length = 0;
+					st.on = false;
+				}
+				return super.disconnect();
+			}
+			takeRecords() {
+				const st = states.get(this);
+				const pending = super.takeRecords();
+				return st ? st.queue.splice(0).concat(pending) : pending;
+			}
+		}
+		try {
+			Object.defineProperty(win, "MutationObserver", {
+				value: CoalescedMutationObserver,
+				writable: true,
+				configurable: true
+			});
+		} catch {
+			win.MutationObserver = CoalescedMutationObserver;
+		}
+	}
+	function installFastInnerText() {
+		const proto = win.HTMLElement?.prototype || HTMLElement.prototype;
+		const desc = Object.getOwnPropertyDescriptor(proto, "innerText");
+		if (!desc || !desc.get || !desc.configurable) return;
+		const LEAF = ".score, .value, .type, .percentage";
+		Object.defineProperty(proto, "innerText", {
+			...desc,
+			get() {
+				try {
+					if (this.childElementCount === 0 && this.matches(LEAF)) return (this.textContent || "").replace(/\s+/g, " ").trim();
+				} catch {}
+				return desc.get.call(this);
+			}
+		});
+	}
+	function installProbeMemo() {
+		const ElementProto = win.Element?.prototype || Element.prototype;
+		const native = ElementProto.querySelector;
+		let memo = null;
+		ElementProto.querySelector = function querySelector(sel) {
+			if (typeof sel === "string" && sel.charCodeAt(0) === 46 && sel.startsWith(".medialist.table.POINT_")) {
+				if (!memo) {
+					memo = new WeakMap();
+					queueMicrotask(() => {
+						memo = null;
+					});
+				}
+				let perEl = memo.get(this);
+				if (!perEl) memo.set(this, perEl = new Map());
+				if (perEl.has(sel)) {
+					stats.probesShared++;
+					return perEl.get(sel);
+				}
+				const r = native.call(this, sel);
+				perEl.set(sel, r);
+				return r;
+			}
+			return native.call(this, sel);
+		};
+	}
+	function installTierSupport() {
+		const DATA_VALUE = ".data .data-set .value";
+		const mark = (node) => {
+			if (!node || node.nodeType !== 1) return;
+			if (node.matches?.(DATA_VALUE)) node.dataset.tierModified = "true";
+			if (node.firstElementChild) for (const el of node.querySelectorAll(DATA_VALUE)) el.dataset.tierModified = "true";
+		};
+		const DONE_SCORE = ".medialist .score[data-tier-modified]";
+		const releases = new WeakMap();
+		let sweepTimer = 0;
+		const needsBadge = (el) => {
+			const attr = el.getAttribute("score");
+			if (!attr || !(parseFloat(attr) > 0)) return false;
+			const badge = el.firstElementChild;
+			return !badge || (badge.firstElementChild?.textContent || "").trim() !== attr.trim();
+		};
+		function sweep() {
+			sweepTimer = 0;
+			if (doc.hidden) return;
+			let released = 0;
+			for (const el of doc.querySelectorAll(DONE_SCORE)) {
+				const n = releases.get(el) || 0;
+				if (n >= 2 || !needsBadge(el)) continue;
+				releases.set(el, n + 1);
+				delete el.dataset.tierModified;
+				released++;
+			}
+			if (!released || !doc.body) return;
+			stats.labelsReleased += released;
+			const wake = doc.createComment("");
+			doc.body.appendChild(wake);
+			wake.remove();
+		}
+		const scheduleSweep = () => {
+			if (!sweepTimer) sweepTimer = setTimeout(() => attempt(sweep), CFG.tierAssistMs);
+		};
+		new (win.MutationObserver || MutationObserver)((records) => {
+			if (CFG.blockTierInData) for (const r of records) for (const n of r.addedNodes) try {
+				mark(n);
+			} catch {}
+			if (CFG.tierAssist) scheduleSweep();
+		}).observe(doc, CFG.tierAssist ? {
+			childList: true,
+			subtree: true,
+			attributes: true,
+			attributeFilter: ["score"]
+		} : {
+			childList: true,
+			subtree: true
+		});
+		if (CFG.tierAssist) doc.addEventListener("visibilitychange", () => {
+			if (!doc.hidden) scheduleSweep();
+		});
+		if (CFG.blockTierInData) attempt(() => mark(doc.documentElement));
+	}
+	var isTaxonomyQuery = (parsed) => /\bGenreCollection\b|\bMediaTagCollection\b/i.test(String(parsed?.query || ""));
+	var isMediaListQuery = (parsed) => /\bMediaListCollection\b/i.test(String(parsed?.query || ""));
+	var isViewerQuery = (parsed) => /\bViewer\b/i.test(String(parsed?.query || ""));
+	var isMutation = (parsed) => /\bmutation\b/i.test(String(parsed?.query || "").replace(/#[^\n\r]*/g, " "));
+	var isVolatile = (parsed) => /\b(?:notifications|activities|Activity|Notification)\s*\(/.test(String(parsed?.query || "").replace(/#[^\n\r]*/g, " "));
+	var noStore = (d) => d.cache === "no-store" || d.cache === "reload" || !!d.headers.get("cache-control")?.toLowerCase().includes("no-store");
+	function normalizeGqlQuery(q) {
+		if (typeof q !== "string") return "";
+		return q.replace(/#[^\n\r]*/g, "").replace(/\s+/g, " ").replace(/\s*([{}():,])\s*/g, "$1").trim();
+	}
+	function stableStringify(obj) {
+		if (obj === null || typeof obj !== "object") return JSON.stringify(obj);
+		if (Array.isArray(obj)) return "[" + obj.map(stableStringify).join(",") + "]";
+		return "{" + Object.keys(obj).sort().map((k) => JSON.stringify(k) + ":" + stableStringify(obj[k])).join(",") + "}";
+	}
+	function normalizeVariables(vars) {
+		if (!vars || typeof vars !== "object") return {};
+		const copy = {};
+		for (const k of Object.keys(vars)) if (vars[k] !== void 0 && vars[k] !== null) copy[k] = vars[k];
+		if (copy.userName && !copy.userId) {
+			const name = String(copy.userName).toLowerCase();
+			const mine = String(store$1.get("al_username", "") || "").toLowerCase();
+			const id = userMap.get(name) || (name === mine ? Number(store$1.get("al_user_id", 0)) : 0);
+			if (id) {
+				copy.userId = id;
+				delete copy.userName;
+			}
+		}
+		if (copy.userId && copy.userName) delete copy.userName;
+		return copy;
+	}
+	function parseBody(body) {
+		try {
+			const parsed = JSON.parse(body);
+			return parsed && typeof parsed === "object" && !Array.isArray(parsed) && typeof parsed.query === "string" ? parsed : null;
+		} catch {
+			return null;
+		}
+	}
+	var workerPending = new WeakMap();
+	var watched = new WeakSet();
+	var workerUrl = null;
+	var workerOpts;
+	var WorkerCtor = null;
+	var lastAuth = "";
+	var RPC_MAX_ENTRIES = 32;
+	var clone = (v) => {
+		try {
+			return (win.structuredClone || structuredClone)(v);
+		} catch {
+			return JSON.parse(JSON.stringify(v));
+		}
+	};
+	var findWorkerUrl = () => workerUrl || performance.getEntriesByType("resource").map((e) => e.name).find((n) => /\.worker\.js(?:\?|$)/.test(n)) || attempt(() => win.localStorage?.getItem("alfl:workerUrl") || store$1.get("alfl:workerUrl", null)) || null;
+	var isRpcFetch = (d) => !!d && d.type === "RPC" && d.method === "fetch" && Array.isArray(d.params) && typeof d.params[1] === "string";
+	var rpcKey = (params) => {
+		const [endpoint, query, variables, headers] = params;
+		const q = {
+			query,
+			variables
+		};
+		if (isMediaListQuery(q)) {
+			const { type = "ANIME", userId, userName, ...rest } = normalizeVariables(variables);
+			let resolvedId = userId;
+			if (!resolvedId && userName) resolvedId = userMap.get(String(userName).toLowerCase());
+			const who = resolvedId || (userName ? String(userName).toLowerCase() : "me");
+			return `rpc:MediaListCollection:${String(type).toUpperCase()}:${who}:${stableStringify(rest)}`;
+		}
+		if (isTaxonomyQuery(q)) return "rpc:Taxonomy";
+		if (isViewerQuery(q)) return "rpc:Viewer";
+		const normQuery = normalizeGqlQuery(query);
+		const normVars = stableStringify(normalizeVariables(variables));
+		return `${endpoint}\u0001${String(headers?.Authorization ?? headers?.authorization ?? "").slice(-16)}\u0001${normQuery}\u0001${normVars}`;
+	};
+	function extractUsersFromRpcResult(res) {
+		if (!res || typeof res !== "object") return;
+		attempt(() => {
+			const scanUsers = (obj, depth = 0) => {
+				if (!obj || typeof obj !== "object" || depth > 5) return;
+				if (typeof obj.name === "string" && obj.avatar && obj.id && (typeof obj.id === "number" || /^\d+$/.test(String(obj.id)))) rememberUser(String(obj.name), Number(obj.id));
+				for (const v of Object.values(obj)) if (v && typeof v === "object") scanUsers(v, depth + 1);
+			};
+			scanUsers(res);
+			const viewer = res.Viewer || res.data?.Viewer;
+			if (viewer && viewer.id && viewer.name) {
+				rememberUser(String(viewer.name), Number(viewer.id));
+				store$1.set("al_user_id", Number(viewer.id));
+				store$1.set("al_username", String(viewer.name));
+			}
+			const user = res.User || res.data?.User || res.MediaListCollection?.user || res.data?.MediaListCollection?.user;
+			if (user && user.id && user.name) rememberUser(String(user.name), Number(user.id));
+		});
+	}
+	var onIn = function(ev) {
+		const d = ev.data;
+		if (!d || d.type !== "RPC") return;
+		const id = String(d.id);
+		const worker = ev.currentTarget || ev.target || this;
+		const pMap = workerPending.get(worker);
+		if (!pMap) return;
+		const p = pMap.get(id);
+		if (!p) return;
+		pMap.delete(id);
+		logDebug("[FASTLOAD RPC] IN", id, Object.keys(d));
+		if (d.result) extractUsersFromRpcResult(d.result);
+		if (p.mutation) return clearGlobalCache();
+		if (p.key && d.error == null && p.epoch === rpcEpoch) attempt(() => {
+			const cached = {
+				time: Date.now(),
+				msg: clone(d)
+			};
+			let moreKeys = [];
+			const mlcUser = d.result?.MediaListCollection?.user || d.result?.data?.MediaListCollection?.user;
+			const uid = mlcUser?.id ? Number(mlcUser.id) : void 0;
+			const uname = mlcUser?.name ? String(mlcUser.name) : void 0;
+			if (uid && uname) rememberUser(uname, uid);
+			const m = p.key?.match(/^rpc:MediaListCollection:([A-Z]+):([^:]+):/i);
+			if (m) {
+				const type = m[1];
+				const target = m[2];
+				const isNumeric = /^\d+$/.test(target);
+				const resolvedUserId = isNumeric ? Number(target) : uid || userMap.get(target.toLowerCase());
+				moreKeys = getMediaListKeys(type, resolvedUserId, !isNumeric ? target : uname || (resolvedUserId ? idToUserMap.get(resolvedUserId) : void 0));
+			}
+			const keysToSet = [
+				p.key,
+				...p.extraKeys || [],
+				...moreKeys
+			];
+			for (const k of keysToSet) {
+				rpcCache.delete(k);
+				rpcCache.set(k, cached);
+			}
+			while (rpcCache.size > RPC_MAX_ENTRIES) rpcCache.delete(rpcCache.keys().next().value);
+		});
+	};
+	var getMediaListKeys = (type, userId, userName) => {
+		const keys = new Set();
+		const t = String(type).toUpperCase();
+		if (userId) {
+			keys.add(`rpc:MediaListCollection:${t}:${userId}:{}`);
+			const mappedName = idToUserMap.get(userId);
+			if (mappedName) keys.add(`rpc:MediaListCollection:${t}:${mappedName}:{}`);
+		}
+		if (userName) {
+			const norm = String(userName).trim().toLowerCase();
+			keys.add(`rpc:MediaListCollection:${t}:${norm}:{}`);
+			const mappedId = userMap.get(norm);
+			if (mappedId) keys.add(`rpc:MediaListCollection:${t}:${mappedId}:{}`);
+		}
+		return [...keys];
+	};
+	var prefetchedWorkerKeys = new Map();
+	function prefetchWorkerList(type, userId, userName) {
+		const url = findWorkerUrl();
+		if (!url || !WorkerCtor) {
+			logDebug("[FASTLOAD RPC] Prefetch skipped: worker script unknown");
+			return;
+		}
+		if (!userId && userName) userId = userMap.get(userName.toLowerCase()) || 0;
+		if (userId && !userName) userName = idToUserMap.get(userId) || void 0;
+		const raw = attempt(() => win.localStorage?.getItem("alfl:rpc:listTpl:v2") || store$1.get("alfl:rpc:listTpl:v2", null));
+		let tpl;
+		if (raw) try {
+			tpl = JSON.parse(raw);
+		} catch {}
+		if (!tpl) {
+			logDebug("[FASTLOAD RPC] Prefetch skipped: no list template yet");
+			return;
+		}
+		const vars = {
+			...tpl.vars || {},
+			type
+		};
+		if (userId) {
+			vars.userId = userId;
+			delete vars.userName;
+		} else if (userName) {
+			vars.userName = userName;
+			delete vars.userId;
+		}
+		const authVal = lastAuth || store$1.get("al_token_auth", "") || (store$1.get("al_token", null) ? `Bearer ${store$1.get("al_token", null)}` : "");
+		const headers = { ...tpl.headers || {} };
+		if (authVal) {
+			headers.Authorization = authVal;
+			headers.authorization = authVal;
+		}
+		const options = tpl.options ? {
+			...tpl.options,
+			...tpl.options.schemaArgs ? { schemaArgs: [type] } : {}
+		} : tpl.options;
+		const params = [
+			tpl.endpoint,
+			tpl.query,
+			vars,
+			headers,
+			options
+		];
+		const key = rpcKey(params);
+		const now = Date.now();
+		const possibleKeys = getMediaListKeys(type, userId, userName);
+		for (const k of possibleKeys) {
+			const hit = rpcCache.get(k);
+			if (hit && hit.time >= freshFloor && now - hit.time < 3e5) return;
+			if (rpcInflight.has(k)) return;
+		}
+		if (now - (prefetchedWorkerKeys.get(key) || 0) < 6e4) return;
+		prefetchedWorkerKeys.set(key, now);
+		for (const k of possibleKeys) prefetchedWorkerKeys.set(k, now);
+		let w;
+		try {
+			w = new WorkerCtor(url, workerOpts);
+		} catch (err) {
+			logDebug("[FASTLOAD RPC] Prefetch worker failed to start", err);
+			return;
+		}
+		const id = `alfl_prefetch_${type}_${now}`;
+		let resolver;
+		let rejecter;
+		const flightPromise = new Promise((resolve, reject) => {
+			resolver = resolve;
+			rejecter = reject;
+		});
+		flightPromise.catch(() => {});
+		const flight = {
+			promise: flightPromise,
+			resolve: resolver,
+			reject: rejecter
+		};
+		rpcInflight.set(key, flight);
+		for (const k of possibleKeys) if (!rpcInflight.has(k)) rpcInflight.set(k, flight);
+		const finish = () => {
+			clearTimeout(timer);
+			for (const k of [key, ...possibleKeys]) {
+				const f = rpcInflight.get(k);
+				if (f) {
+					f.reject(new Error("finished"));
+					rpcInflight.delete(k);
+				}
+			}
+			attempt(() => w.terminate());
+		};
+		const timer = setTimeout(() => {
+			logDebug("[FASTLOAD RPC] Prefetch timed out", type);
+			finish();
+		}, 3e4);
+		const startEpoch = rpcEpoch;
+		w.addEventListener("message", (ev) => {
+			const d = ev.data;
+			if (!d || d.type !== "RPC" || String(d.id) !== id) return;
+			if (startEpoch !== rpcEpoch) {
+				flight.reject(new Error("stale"));
+				clearTimeout(timer);
+				attempt(() => w.terminate());
+				return;
+			}
+			if (d.error == null) {
+				attempt(() => {
+					extractUsersFromRpcResult(d.result);
+					const mlcUser = d.result?.MediaListCollection?.user || d.result?.data?.MediaListCollection?.user;
+					const extractedUserId = mlcUser?.id ? Number(mlcUser.id) : 0;
+					const resolvedUserId = userId || extractedUserId || (userName ? userMap.get(userName.toLowerCase()) : 0) || 0;
+					if (userName && resolvedUserId) rememberUser(userName, resolvedUserId);
+					const resolvedUserName = userName || (resolvedUserId ? idToUserMap.get(resolvedUserId) : void 0);
+					const cached = {
+						time: Date.now(),
+						msg: clone(d)
+					};
+					const allKeys = [...new Set([
+						key,
+						...possibleKeys,
+						...getMediaListKeys(type, resolvedUserId, resolvedUserName)
+					])];
+					for (const k of allKeys) {
+						rpcCache.delete(k);
+						rpcCache.set(k, cached);
+					}
+					while (rpcCache.size > RPC_MAX_ENTRIES) rpcCache.delete(rpcCache.keys().next().value);
+				});
+				logDebug("[FASTLOAD RPC] Prefetch cached", type, Object.keys(d));
+				for (const k of [key, ...possibleKeys]) {
+					const f = rpcInflight.get(k);
+					if (f) {
+						f.resolve(d);
+						rpcInflight.delete(k);
+					}
+				}
+			} else {
+				logDebug("[FASTLOAD RPC] Prefetch failed", d.error);
+				for (const k of [key, ...possibleKeys]) {
+					const f = rpcInflight.get(k);
+					if (f) {
+						f.reject(d.error);
+						rpcInflight.delete(k);
+					}
+				}
+			}
+			clearTimeout(timer);
+			attempt(() => w.terminate());
+		});
+		w.addEventListener("error", (e) => {
+			logDebug("[FASTLOAD RPC] Prefetch worker error", e?.message);
+			attempt(() => {
+				win.localStorage?.removeItem("alfl:workerUrl");
+				store$1.del("alfl:workerUrl");
+			});
+			workerUrl = null;
+			finish();
+		});
+		logDebug("[FASTLOAD RPC] Prefetch dispatching", type, vars);
+		w.postMessage({
+			type: "RPC",
+			id,
+			method: "fetch",
+			params
+		});
+	}
+	function hookWorker(yielded) {
+		attempt(() => {
+			const pageWin = win;
+			const origCtor = pageWin.Worker;
+			WorkerCtor = origCtor;
+			if (origCtor && !origCtor.__alfl_ctor_hooked) try {
+				const ProxiedWorker = function(scriptURL, options) {
+					const instance = Reflect.construct(origCtor, [scriptURL, options], new.target || ProxiedWorker);
+					const urlStr = String(scriptURL || "");
+					if (urlStr.includes("worker.js") && !urlStr.includes("cloudflare")) {
+						attempt(() => {
+							workerUrl = new URL(urlStr, win.location.href).href;
+							win.localStorage?.setItem("alfl:workerUrl", workerUrl);
+							store$1.set("alfl:workerUrl", workerUrl);
+						});
+						workerOpts = options;
+						logDebug("[FASTLOAD RPC] Page worker created:", urlStr);
+					}
+					if (!watched.has(instance)) {
+						watched.add(instance);
+						instance.addEventListener("message", onIn);
+					}
+					return instance;
+				};
+				ProxiedWorker.prototype = origCtor.prototype;
+				ProxiedWorker.__alfl_ctor_hooked = true;
+				pageWin.Worker = ProxiedWorker;
+			} catch {}
+			const W = pageWin.Worker;
+			if (!W?.prototype || W.prototype.__alfl_hooked) return;
+			W.prototype.__alfl_hooked = true;
+			const origPost = W.prototype.postMessage;
+			W.prototype.postMessage = function(data, ...rest) {
+				try {
+					if (!yielded() && isRpcFetch(data)) {
+						const id = String(data.id || "");
+						if (id.startsWith("alfl_prefetch_")) return origPost.apply(this, [data, ...rest]);
+						const blocker = win.__ALFL_RPC_BLOCK__;
+						if (typeof blocker === "function" && blocker(String(data.params[1]), data.params[2])) {
+							logDebug("[FASTLOAD RPC] Blocked request:", JSON.stringify(data.params[2]).slice(0, 60));
+							const targetId = data.params[2]?.id || data.params[2]?.userId;
+							const pageId = data.params[4]?.page?.id || (targetId ? `listComparison-${targetId}` : "listComparison");
+							const pageNum = data.params[2]?.page || 1;
+							const dummyResult = {
+								entities: { page: { [pageId]: {
+									pageInfo: {
+										total: 0,
+										perPage: 30,
+										currentPage: pageNum,
+										lastPage: 1,
+										hasNextPage: false
+									},
+									pageData: []
+								} } },
+								result: pageId,
+								data: { Page: {
+									pageInfo: {
+										total: 0,
+										perPage: 30,
+										currentPage: pageNum,
+										lastPage: 1,
+										hasNextPage: false
+									},
+									mediaList: []
+								} }
+							};
+							setTimeout(() => {
+								try {
+									this.dispatchEvent(new MessageEvent("message", { data: {
+										type: "RPC",
+										id: data.id,
+										result: dummyResult
+									} }));
+								} catch {
+									const ev = (win.document || document).createEvent("Event");
+									ev.initEvent("message", false, false);
+									ev.data = {
+										type: "RPC",
+										id: data.id,
+										result: dummyResult
+									};
+									this.dispatchEvent(ev);
+								}
+							}, 0);
+							return;
+						}
+						if (!watched.has(this)) {
+							watched.add(this);
+							this.addEventListener("message", onIn);
+						}
+						const h = data.params[3] || {};
+						const a = h.Authorization ?? h.authorization;
+						if (a) {
+							lastAuth = String(a);
+							store$1.set("al_token_auth", lastAuth);
+						}
+						const q = {
+							query: data.params[1],
+							variables: data.params[2]
+						};
+						if (isMediaListQuery(q)) attempt(() => {
+							const headers = { ...h };
+							delete headers.Authorization;
+							delete headers.authorization;
+							const tplStr = JSON.stringify({
+								endpoint: data.params[0],
+								query: data.params[1],
+								vars: data.params[2],
+								headers,
+								options: data.params[4]
+							});
+							win.localStorage?.setItem("alfl:rpc:listTpl:v2", tplStr);
+							store$1.set("alfl:rpc:listTpl:v2", tplStr);
+						});
+						if (isMutation(q)) {
+							clearGlobalCache();
+							let pMap = workerPending.get(this);
+							if (!pMap) {
+								pMap = new Map();
+								workerPending.set(this, pMap);
+							}
+							pMap.set(id, {
+								key: null,
+								mutation: true
+							});
+						} else if (!isVolatile(q)) {
+							const key = rpcKey(data.params);
+							const label = String(q.query).replace(/\s+/g, " ").slice(0, 50);
+							let hit = null;
+							let flying = null;
+							let extraKeys;
+							if (isMediaListQuery(q)) {
+								let { type = "ANIME", userId, userName } = normalizeVariables(q.variables);
+								if (!userName && userId) userName = idToUserMap.get(userId);
+								if (!userId && userName) userId = userMap.get(userName.toLowerCase());
+								extraKeys = [key, ...getMediaListKeys(type || "ANIME", userId, userName)];
+								for (const k of extraKeys) {
+									if (!hit) {
+										const h = rpcCache.get(k);
+										if (h && h.time >= freshFloor && Date.now() - h.time < 3e5) hit = h;
+									}
+									if (!flying) {
+										const f = rpcInflight.get(k);
+										if (f) flying = f;
+									}
+								}
+							} else {
+								const h = rpcCache.get(key);
+								if (h && h.time >= freshFloor && Date.now() - h.time < 15e3) hit = h;
+								flying = rpcInflight.get(key);
+							}
+							if (hit) {
+								stats.cacheHits++;
+								logDebug("[FASTLOAD RPC] HIT", label, `${Math.round((Date.now() - hit.time) / 1e3)}s old`);
+								const worker = this;
+								const reply = {
+									...clone(hit.msg),
+									id: data.id
+								};
+								const MessageEventCtor = win.MessageEvent || MessageEvent;
+								setTimeout(() => worker.dispatchEvent(new MessageEventCtor("message", { data: reply })), 0);
+								return;
+							}
+							if (flying) {
+								stats.deduped++;
+								logDebug("[FASTLOAD RPC] Attached to in-flight prefetch:", label);
+								const worker = this;
+								const replyId = data.id;
+								flying.promise.then((msg) => {
+									logDebug("[FASTLOAD RPC] In-flight prefetch delivered to page:", label);
+									const reply = {
+										...clone(msg),
+										id: replyId
+									};
+									const MessageEventCtor = win.MessageEvent || MessageEvent;
+									setTimeout(() => worker.dispatchEvent(new MessageEventCtor("message", { data: reply })), 0);
+								}, () => {
+									origPost.apply(worker, [data, ...rest]);
+								});
+								return;
+							}
+							logDebug("[FASTLOAD RPC] MISS", label, JSON.stringify(q.variables).slice(0, 80));
+							let pMap = workerPending.get(this);
+							if (!pMap) {
+								pMap = new Map();
+								workerPending.set(this, pMap);
+							}
+							pMap.set(id, {
+								key,
+								mutation: false,
+								epoch: rpcEpoch,
+								extraKeys
+							});
+						}
+					}
+				} catch {}
+				return origPost.apply(this, [data, ...rest]);
+			};
+		});
+	}
+	var isGraphQL = (u) => {
+		try {
+			const url = new URL(u, win.location.href);
+			return url.origin === "https://graphql.anilist.co" || url.origin === win.location.origin && url.pathname.replace(/\/$/, "") === "/graphql";
+		} catch {
+			return false;
+		}
+	};
+	var SKIP_HEADERS = /^(?:content-encoding|content-length|transfer-encoding)$/i;
+	var RATE_HEADERS = /^(?:retry-after|x-ratelimit-.+)$/i;
+	function toResponse(snap, live) {
+		const HeadersCtor = win.Headers || Headers;
+		const ResponseCtor = win.Response || Response;
+		const headers = new HeadersCtor(snap.headers);
+		if (live) {
+			for (const [k, v] of live.headers.entries()) if (RATE_HEADERS.test(k)) headers.set(k, v);
+		}
+		return new ResponseCtor(snap.buf, {
+			status: snap.status || 200,
+			statusText: snap.statusText || "OK",
+			headers
+		});
+	}
+	function abortable(promise, signal) {
+		if (!signal) return promise;
+		return new Promise((resolve, reject) => {
+			const fail = () => reject(signal.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+			if (signal.aborted) return fail();
+			signal.addEventListener("abort", fail, { once: true });
+			const done = () => signal.removeEventListener("abort", fail);
+			promise.then((v) => {
+				done();
+				resolve(v);
+			}, (e) => {
+				done();
+				reject(e);
+			});
+		});
+	}
+	function evict() {
+		const now = Date.now();
+		let currentBytes = bytes;
+		for (const [key, entry] of store) {
+			if (now - entry.time <= CFG.gqlStaleTtl && currentBytes <= CFG.gqlMaxBytes) break;
+			currentBytes -= entry.size;
+			store.delete(key);
+		}
+		setBytes(currentBytes);
+	}
+	function put(key, snap) {
+		const old = store.get(key);
+		let currentBytes = bytes;
+		if (old) {
+			currentBytes -= old.size;
+			store.delete(key);
+		}
+		const size = snap.buf.byteLength;
+		if (size > CFG.gqlMaxEntryBytes) return;
+		store.set(key, {
+			time: Date.now(),
+			size,
+			snap
+		});
+		currentBytes += size;
+		setBytes(currentBytes);
+		evict();
+	}
+	var decoder = new TextDecoder();
+	var ERROR_SCAN_BYTES = 2048;
+	function hasGraphQLErrors(buf) {
+		try {
+			const view = new Uint8Array(buf);
+			const head = decoder.decode(view.subarray(0, ERROR_SCAN_BYTES));
+			return /^\s*\{\s*"errors"\s*:/.test(head);
+		} catch {
+			return false;
+		}
+	}
+	function makeKey(d, parsed) {
+		if (isMediaListQuery(parsed)) {
+			const { type = "ANIME", userId, userName, ...rest } = normalizeVariables(parsed?.variables);
+			const who = userId || (userName ? String(userName).toLowerCase() : getViewerFromWindow().id || "me");
+			return `gql:MediaListCollection:${String(type).toUpperCase()}:${who}:${stableStringify(rest)}`;
+		}
+		if (isTaxonomyQuery(parsed)) return "gql:Taxonomy";
+		if (isViewerQuery(parsed)) return "gql:Viewer";
+		const normQuery = normalizeGqlQuery(parsed?.query || "");
+		const normVars = stableStringify(normalizeVariables(parsed?.variables));
+		const auth = d.headers?.get?.("authorization") ? "a" : "";
+		return `${d.url}\u0001${auth}\u0001${normQuery}\u0001${normVars}`;
+	}
+	var TAXONOMY_STORAGE_KEY = "alfl:taxonomy:v1";
+	var TAXONOMY_TTL = 864e5;
+	function getQueryTtl(parsed) {
+		if (isTaxonomyQuery(parsed)) return TAXONOMY_TTL;
+		if (isMediaListQuery(parsed)) return 3e5;
+		if (isViewerQuery(parsed)) return 3e5;
+		return CFG.gqlTtl;
+	}
+	function loadStoredTaxonomy() {
+		try {
+			const raw = win.localStorage?.getItem(TAXONOMY_STORAGE_KEY);
+			if (!raw) return null;
+			const parsed = JSON.parse(raw);
+			if (parsed && typeof parsed.time === "number" && typeof parsed.text === "string") return parsed;
+		} catch {}
+		return null;
+	}
+	function persistStoredTaxonomy(snap) {
+		attempt(() => {
+			const text = decoder.decode(snap.buf);
+			win.localStorage?.setItem(TAXONOMY_STORAGE_KEY, JSON.stringify({
+				time: Date.now(),
+				text,
+				status: snap.status,
+				statusText: snap.statusText,
+				headers: snap.headers
+			}));
+		});
+	}
+	var note429 = (res) => {
+		if (res.status === 429) setPausedUntil(Date.now() + 6e4);
+	};
+	async function classify(input, init) {
+		const isRequest = input instanceof (win.Request || Request);
+		const method = String(init?.method || (isRequest ? input.method : "GET")).toUpperCase();
+		if (method !== "POST") return null;
+		const rawUrl = isRequest ? input.url : input instanceof URL ? input.href : String(input);
+		if (!isGraphQL(rawUrl)) return null;
+		let resolvedUrl = rawUrl;
+		try {
+			resolvedUrl = new URL(rawUrl, win.location.href).href;
+		} catch {}
+		let body = null;
+		if (typeof init?.body === "string") body = init.body;
+		else if (isRequest) try {
+			body = await input.clone().text();
+		} catch {}
+		if (typeof body !== "string") return null;
+		const parsed = parseBody(body);
+		if (!parsed) return null;
+		const HeadersCtor = win.Headers || Headers;
+		const desc = {
+			url: resolvedUrl,
+			method,
+			body,
+			headers: new HeadersCtor(init?.headers ?? (isRequest ? input.headers : void 0)),
+			credentials: init?.credentials ?? (isRequest ? input.credentials : void 0) ?? "same-origin",
+			mode: init?.mode ?? (isRequest ? input.mode : void 0) ?? "cors",
+			cache: init?.cache ?? (isRequest ? input.cache : void 0)
+		};
+		const authHeader = desc.headers.get("authorization");
+		if (authHeader && authHeader.startsWith("Bearer ")) {
+			if (authHeader.slice(7).trim()) store$1.set("al_token_auth", authHeader);
+		}
+		const mediaList = isMediaListQuery(parsed);
+		const bypass = noStore(desc) || !mediaList && isVolatile(parsed);
+		return {
+			desc,
+			parsed,
+			mutation: isMutation(parsed),
+			bypass
+		};
+	}
+	function cachedFetch(nativeFetch, job, input, init, replay = false) {
+		const { desc, parsed } = job;
+		if (init?.signal?.aborted) return nativeFetch(input, init);
+		if (!replay) attempt(() => rememberQuery(desc, parsed));
+		const blocker = win.__ALFL_RPC_BLOCK__;
+		if (typeof blocker === "function" && blocker(parsed?.query, parsed?.variables)) {
+			logDebug("[FASTLOAD] Blocked GQL fetch via __ALFL_RPC_BLOCK__:", JSON.stringify(parsed?.variables));
+			const dummy = { data: { Page: {
+				pageInfo: {
+					total: 0,
+					perPage: 30,
+					currentPage: parsed?.variables?.page || 1,
+					lastPage: 1,
+					hasNextPage: false
+				},
+				mediaList: []
+			} } };
+			const ResponseCtor = win.Response || Response;
+			return Promise.resolve(new ResponseCtor(JSON.stringify(dummy), {
+				status: 200,
+				headers: { "content-type": "application/json" }
+			}));
+		}
+		let key = "";
+		let ttl = CFG.gqlTtl;
+		try {
+			key = makeKey(desc, parsed);
+			ttl = getQueryTtl(parsed);
+		} catch {
+			return nativeFetch(input, init);
+		}
+		const now = Date.now();
+		const cached = store.get(key);
+		if (isTaxonomyQuery(parsed)) {
+			const storedTax = loadStoredTaxonomy();
+			if (storedTax && now - storedTax.time < TAXONOMY_TTL) {
+				stats.cacheHits++;
+				logDebug("[FASTLOAD] Cache HIT (24h localStorage): GenreCollection & MediaTagCollection");
+				const HeadersCtor = win.Headers || Headers;
+				const ResponseCtor = win.Response || Response;
+				return Promise.resolve(new ResponseCtor(storedTax.text, {
+					status: storedTax.status || 200,
+					statusText: storedTax.statusText || "OK",
+					headers: new HeadersCtor(storedTax.headers)
+				}));
+			}
+		}
+		if (cached && cached.time >= freshFloor && now - cached.time < ttl) {
+			stats.cacheHits++;
+			logDebug("[FASTLOAD] Cache HIT (RAM):", isMediaListQuery(parsed) ? "MediaListCollection" : "GraphQL query", `${Math.round((now - cached.time) / 1e3)}s old`);
+			return Promise.resolve(toResponse(cached.snap));
+		}
+		const flying = inflight.get(key);
+		if (flying) {
+			stats.deduped++;
+			logDebug("[FASTLOAD] Attached to in-flight request:", isMediaListQuery(parsed) ? "MediaListCollection" : "GraphQL query");
+			return abortable(flying.then((snap) => toResponse(snap), () => nativeFetch(input, init)), init?.signal);
+		}
+		const myEpoch = epoch;
+		const stale = cached && now - cached.time < CFG.gqlStaleTtl ? cached.snap : null;
+		const opName = parsed.operationName || (isMediaListQuery(parsed) ? "MediaListCollection" : "query");
+		logDebug("[FASTLOAD] Cache MISS (network fetch):", opName, "key:", key);
+		const original = nativeFetch(input, init);
+		const snapshot = original.then(async (res) => {
+			note429(res);
+			if (res.status !== 200) {
+				logDebug("[FASTLOAD] Response not 200:", res.status, opName);
+				throw new Error("not cacheable");
+			}
+			const buf = await res.clone().arrayBuffer();
+			if (hasGraphQLErrors(buf)) {
+				logDebug("[FASTLOAD] Response had GraphQL errors:", opName);
+				throw new Error("graphql errors");
+			}
+			return {
+				buf,
+				status: res.status,
+				statusText: res.statusText,
+				headers: [...res.headers.entries()].filter(([k]) => !SKIP_HEADERS.test(k) && !RATE_HEADERS.test(k))
+			};
+		});
+		inflight.set(key, snapshot);
+		snapshot.then((snap) => {
+			if (inflight.get(key) === snapshot) inflight.delete(key);
+			if (epoch === myEpoch) {
+				put(key, snap);
+				logDebug("[FASTLOAD] Cached in RAM:", opName, `${Math.round(snap.buf.byteLength / 1024)} KB`);
+			}
+			attempt(() => {
+				if (isViewerQuery(parsed)) extractUsersFromRpcResult(JSON.parse(decoder.decode(snap.buf))?.data);
+			});
+			if (isTaxonomyQuery(parsed) && snap.status === 200) persistStoredTaxonomy(snap);
+		}, () => {
+			if (inflight.get(key) === snapshot) inflight.delete(key);
+		});
+		if (!stale) return original;
+		return original.then((res) => {
+			if (res.status === 429 || res.status >= 500) {
+				stats.staleServed++;
+				return toResponse(stale, res);
+			}
+			return res;
+		}, (err) => {
+			if (init?.signal?.aborted || err?.name === "AbortError") throw err;
+			stats.staleServed++;
+			return toResponse(stale);
+		});
+	}
+	function installGraphQLLayer(yielded) {
+		const nativeFetch = win.fetch.bind(win);
+		win.fetch = async function fetch(input, init) {
+			if (yielded()) return nativeFetch(input, init);
+			let job = null;
+			try {
+				job = await classify(input, init);
+			} catch {}
+			if (!job) return nativeFetch(input, init);
+			stats.graphqlRequests++;
+			if (job.mutation) {
+				clearGlobalCache();
+				const p = nativeFetch(input, init);
+				p.then((res) => {
+					note429(res);
+					clearGlobalCache();
+				}, () => clearGlobalCache());
+				return p;
+			}
+			if (job.bypass) {
+				const p = nativeFetch(input, init);
+				p.then(note429, () => {});
+				return p;
+			}
+			return cachedFetch(nativeFetch, job, input, init, init?.__alfl === "replay");
+		};
+	}
+	var sameId = (a, b) => a === b || typeof a === "string" && typeof b === "string" && a.toLowerCase() === b.toLowerCase();
+	var isIdKey = (key) => /^(?:id|name|userName|username|userId)$|Id$/.test(key);
+	var STATIC_ROUTE = /^\/(?:home|search\/(?:anime|manga))\/?$/;
+	function parseRoute(path, search = "") {
+		const parts = path.split("/").filter(Boolean).map((x) => {
+			try {
+				return decodeURIComponent(x);
+			} catch {
+				return x;
+			}
+		});
+		if ([
+			"anime",
+			"manga",
+			"character",
+			"staff",
+			"studio"
+		].includes(parts[0]) && /^\d+$/.test(parts[1] || "")) return {
+			shape: `${parts[0]}/${parts[3] || ""}`,
+			id: Number(parts[1])
+		};
+		if (parts[0] === "user" && parts[1]) return {
+			shape: `user/${parts[2] || ""}`,
+			id: parts[1]
+		};
+		if (parts[0] === "animelist" || parts[0] === "mangalist") {
+			const myName = getLocalUsername();
+			if (myName) return {
+				shape: `user/${parts[0]}`,
+				id: myName
+			};
+		}
+		if (STATIC_ROUTE.test(path)) return {
+			shape: `static:${path.replace(/\/$/, "")}${search}`,
+			id: null,
+			static: true
+		};
+		return null;
+	}
+	var here = () => parseRoute(win.location.pathname, win.location.search);
+	function hasPageId(value, id) {
+		if (!value || typeof value !== "object") return false;
+		const targetUserId = typeof id === "string" ? userMap.get(id.toLowerCase()) : void 0;
+		return Object.keys(value).some((key) => {
+			const x = value[key];
+			if (x && typeof x === "object") return hasPageId(x, id);
+			if (isIdKey(key)) {
+				if (sameId(x, id)) return true;
+				if (targetUserId != null && (key === "userId" || key === "id") && x === targetUserId) return true;
+			}
+			return false;
+		});
+	}
+	function replacePageId(value, from, to) {
+		if (!value || typeof value !== "object") return 0;
+		const fromUserId = typeof from === "string" ? userMap.get(from.toLowerCase()) : void 0;
+		const toUserId = typeof to === "string" ? userMap.get(to.toLowerCase()) : void 0;
+		let count = 0;
+		for (const key of Object.keys(value)) {
+			const x = value[key];
+			if (x && typeof x === "object") count += replacePageId(x, from, to);
+			else if (isIdKey(key)) {
+				if (sameId(x, from)) {
+					value[key] = to;
+					count++;
+				} else if (fromUserId != null && toUserId != null && (key === "userId" || key === "id") && x === fromUserId) {
+					value[key] = toUserId;
+					count++;
+				}
+			}
+		}
+		return count;
+	}
+	var learned = new Map();
+	var ROUTES_KEY = "alfl:routes:v3";
+	var ROUTES_TTL = 2592e6;
+	var persistTimer = 0;
+	var persistRoutes = () => {
+		clearTimeout(persistTimer);
+		persistTimer = setTimeout(() => attempt(() => {
+			const out = {};
+			for (const [shape, v] of [...learned].slice(-40)) out[shape] = {
+				t: v.t,
+				id: v.route.id,
+				static: !!v.route.static,
+				reqs: v.reqs
+			};
+			win.localStorage?.setItem(ROUTES_KEY, JSON.stringify(out));
+		}), 1e3);
+	};
+	function loadRoutes() {
+		attempt(() => {
+			win.localStorage?.removeItem("alfl:routes:v1");
+			win.localStorage?.removeItem("alfl:routes:v2");
+			const raw = win.localStorage?.getItem(ROUTES_KEY);
+			if (raw) {
+				const now = Date.now();
+				for (const [shape, v] of Object.entries(JSON.parse(raw))) {
+					if (!v || !Array.isArray(v.reqs) || typeof v.t !== "number" || now - v.t > ROUTES_TTL) continue;
+					const reqs = v.reqs.filter((r) => r && typeof r.body === "string" && typeof r.url === "string" && isGraphQL(r.url) && r.headers && typeof r.headers === "object");
+					if (reqs.length) learned.set(shape, {
+						route: {
+							shape,
+							id: v.id,
+							static: !!v.static
+						},
+						reqs,
+						t: v.t
+					});
+				}
+			}
+		});
+	}
+	var learning = {
+		key: "",
+		started: 0,
+		route: null,
+		reqs: []
+	};
+	function refreshLearning() {
+		const key = win.location.pathname + (STATIC_ROUTE.test(win.location.pathname) ? win.location.search : "");
+		if (learning.key === key) return;
+		learning = {
+			key,
+			started: 0,
+			route: here(),
+			reqs: []
+		};
+	}
+	function rememberQuery(desc, parsed) {
+		refreshLearning();
+		if (!(CFG.prefetch || CFG.earlyStart) || !learning.route) return;
+		if (!learning.started) learning.started = Date.now();
+		if (Date.now() - learning.started > CFG.learnWindowMs) return;
+		if (learning.reqs.length >= CFG.learnMaxReqs) return;
+		if (!learning.route.static && !hasPageId(parsed.variables, learning.route.id)) return;
+		const headers = Object.fromEntries(desc.headers.entries());
+		delete headers["content-length"];
+		delete headers["host"];
+		delete headers["connection"];
+		delete headers["content-encoding"];
+		const authValue = headers.authorization;
+		delete headers.authorization;
+		let auth = false;
+		if (authValue !== void 0) auth = true;
+		learning.reqs.push({
+			url: desc.url,
+			body: JSON.stringify(parsed),
+			headers,
+			auth,
+			credentials: desc.credentials || "same-origin",
+			mode: desc.mode || "cors"
+		});
+		learned.delete(learning.route.shape);
+		learned.set(learning.route.shape, {
+			route: learning.route,
+			reqs: [...learning.reqs],
+			t: Date.now()
+		});
+		if (learning.route.shape === "user/animelist") {
+			const mangaReqs = learning.reqs.map((r) => ({
+				...r,
+				body: r.body.replace(/"type"\s*:\s*"ANIME"/g, "\"type\":\"MANGA\"")
+			}));
+			learned.set("user/mangalist", {
+				route: {
+					shape: "user/mangalist",
+					id: learning.route.id,
+					static: false
+				},
+				reqs: mangaReqs,
+				t: Date.now()
+			});
+		} else if (learning.route.shape === "user/mangalist") {
+			const animeReqs = learning.reqs.map((r) => ({
+				...r,
+				body: r.body.replace(/"type"\s*:\s*"MANGA"/g, "\"type\":\"ANIME\"")
+			}));
+			learned.set("user/animelist", {
+				route: {
+					shape: "user/animelist",
+					id: learning.route.id,
+					static: false
+				},
+				reqs: animeReqs,
+				t: Date.now()
+			});
+		}
+		persistRoutes();
+	}
+	function getReplayAuthToken() {
+		if (lastAuth) return lastAuth.replace(/^Bearer\s+/i, "").trim();
+		const stored = store$1.get("al_token", null);
+		if (stored) return stored;
+		const storedHeader = store$1.get("al_token_auth", null);
+		if (storedHeader) return storedHeader.replace(/^Bearer\s+/i, "").trim();
+		return null;
+	}
+	var stamps = [];
+	function replayRoute(known, route, yielded) {
+		if (yielded()) return 0;
+		let sent = 0;
+		for (const request of known.reqs) {
+			let parsed;
+			try {
+				parsed = JSON.parse(request.body);
+			} catch {
+				continue;
+			}
+			if (isMutation(parsed) || isVolatile(parsed)) continue;
+			if (!known.route.static && !sameId(known.route.id, route.id)) {
+				if (!replacePageId(parsed.variables, known.route.id, route.id)) continue;
+			}
+			const body = JSON.stringify(parsed);
+			const headers = { ...request.headers };
+			if (request.auth) {
+				const token = getReplayAuthToken();
+				if (!token) continue;
+				headers.authorization = `Bearer ${token}`;
+			}
+			stamps.push(Date.now());
+			sent++;
+			attempt(() => {
+				logDebug("[FASTLOAD] Replay/Prefetch dispatching for:", route.shape, "vars:", parsed.variables);
+				win.fetch(request.url, {
+					method: "POST",
+					headers,
+					body,
+					credentials: request.credentials || "same-origin",
+					mode: request.mode || "cors",
+					__alfl: "replay"
+				}).catch(() => {});
+			});
+		}
+		return sent;
+	}
+	var triggerEarlyStart = (yielded) => {
+		attempt(() => {
+			if (navigator.connection?.saveData) return;
+			const route = here();
+			const known = route && learned.get(route.shape);
+			if (known) stats.earlyStarts += replayRoute(known, route, yielded);
+		});
+	};
+	var prefetched = new Map();
+	var dwellTimer = 0;
+	function prefetchFor(anchor, yielded) {
+		if (yielded()) return;
+		const now = Date.now();
+		if (doc.hidden || now < pausedUntil || navigator.connection?.saveData) return;
+		let url;
+		try {
+			url = new URL(anchor.href, win.location.href);
+		} catch {
+			return;
+		}
+		if (url.origin !== win.location.origin) return;
+		const listMatch = url.pathname.match(/^\/(?:user\/([^/]+)\/)?(animelist|mangalist)/i);
+		if (listMatch) {
+			const targetUser = listMatch[1] || getLocalUsername();
+			const listType = listMatch[2].toLowerCase() === "mangalist" ? "MANGA" : "ANIME";
+			const userId = targetUser ? userMap.get(targetUser.toLowerCase()) || (targetUser.toLowerCase() === getLocalUsername()?.toLowerCase() ? Number(store$1.get("al_user_id", 0)) : 0) : 0;
+			if (userId || targetUser) prefetchWorkerList(listType, userId, targetUser || void 0);
+			return;
+		}
+		const route = parseRoute(url.pathname, url.search);
+		if (!route || route.static) return;
+		const known = learned.get(route.shape);
+		if (!known || known.route.static) return;
+		if (typeof known.route.id !== typeof route.id) {
+			if (typeof known.route.id === "number" && typeof route.id === "string") {
+				if (userMap.get(route.id.toLowerCase()) !== known.route.id) return;
+			} else if (typeof known.route.id === "string" && typeof route.id === "number") {
+				if (userMap.get(known.route.id.toLowerCase()) !== route.id) return;
+			} else return;
+		}
+		const current = here();
+		if (current && current.shape === route.shape && sameId(current.id, route.id)) return;
+		const key = `${route.shape}|${String(route.id).toLowerCase()}`;
+		const cooldown = route.shape.includes("list") ? 6e4 : CFG.gqlTtl;
+		if (now - (prefetched.get(key) || 0) < cooldown) return;
+		while (stamps.length && now - stamps[0] > 6e4) stamps.shift();
+		if (prefetched.size > 200) {
+			for (const [k, t] of prefetched) if (now - t > cooldown) prefetched.delete(k);
+		}
+		if (stamps.length + known.reqs.length > CFG.prefetchMaxPerMin) return;
+		const sent = replayRoute(known, route, yielded);
+		if (sent) {
+			prefetched.set(key, now);
+			stats.prefetched += sent;
+			logDebug("[FASTLOAD] Prefetch sent for:", route.shape, route.id);
+		}
+	}
+	var autoPrefetchTimer = 0;
+	function scheduleAutoPrefetch(yielded, delay = 600) {
+		clearTimeout(autoPrefetchTimer);
+		autoPrefetchTimer = setTimeout(() => {
+			attempt(() => autoPrefetchListsForCurrentRoute(yielded));
+		}, delay);
+	}
+	function autoPrefetchListsForCurrentRoute(yielded) {
+		if (!CFG.prefetch || yielded()) return;
+		const now = Date.now();
+		if (doc.hidden || now < pausedUntil || navigator.connection?.saveData) return;
+		const path = win.location.pathname;
+		if (path.toLowerCase().includes("/compare")) return;
+		const viewer = getViewerFromWindow();
+		const myId = viewer.id || Number(store$1.get("al_user_id", 0));
+		const myName = viewer.name || store$1.get("al_username", null);
+		const userMatch = path.match(/^\/user\/([^/]+)(?:\/([^/]+))?/i);
+		let isAnotherUserPage = false;
+		let otherUser = "";
+		let otherUserId = 0;
+		let subRoute = "";
+		if (userMatch) {
+			const targetUser = decodeURIComponent(userMatch[1]);
+			subRoute = (userMatch[2] || "").toLowerCase();
+			if (!(myName && targetUser.toLowerCase() === myName.toLowerCase() || myId > 0 && userMap.get(targetUser.toLowerCase()) === myId)) {
+				isAnotherUserPage = true;
+				otherUser = targetUser;
+				otherUserId = userMap.get(targetUser.toLowerCase()) || 0;
+			}
+		}
+		if (isAnotherUserPage) {
+			logDebug("[FASTLOAD RPC] Auto-prefetching for target user:", otherUser, "subRoute:", subRoute);
+			if (subRoute !== "animelist") setTimeout(() => {
+				prefetchWorkerList("ANIME", otherUserId, otherUser);
+			}, 100);
+			if (subRoute !== "mangalist") setTimeout(() => {
+				prefetchWorkerList("MANGA", otherUserId, otherUser);
+			}, 300);
+			if (myId || myName) {
+				setTimeout(() => {
+					prefetchWorkerList("ANIME", myId, myName || void 0);
+				}, 500);
+				setTimeout(() => {
+					prefetchWorkerList("MANGA", myId, myName || void 0);
+				}, 800);
+			}
+		} else if (myId || myName) {
+			const isMyAnimePage = path.includes("/animelist") && (myName ? path.toLowerCase().includes(myName.toLowerCase()) : true);
+			const isMyMangaPage = path.includes("/mangalist") && (myName ? path.toLowerCase().includes(myName.toLowerCase()) : true);
+			if (!isMyAnimePage) setTimeout(() => {
+				prefetchWorkerList("ANIME", myId, myName || void 0);
+			}, 100);
+			if (!isMyMangaPage) setTimeout(() => {
+				prefetchWorkerList("MANGA", myId, myName || void 0);
+			}, 300);
+		}
+	}
+	function installPointerPrefetch(yielded) {
+		const linkOf = (event) => event.target?.closest?.("a[href]") || null;
+		const opts = {
+			capture: true,
+			passive: true
+		};
+		doc.addEventListener("pointerover", (event) => {
+			if (event.pointerType && event.pointerType !== "mouse") return;
+			const anchor = linkOf(event);
+			clearTimeout(dwellTimer);
+			if (anchor) dwellTimer = setTimeout(() => prefetchFor(anchor, yielded), CFG.prefetchDwellMs);
+		}, opts);
+		doc.addEventListener("pointerout", () => clearTimeout(dwellTimer), opts);
+		doc.addEventListener("pointerdown", (event) => {
+			const anchor = linkOf(event);
+			if (anchor) prefetchFor(anchor, yielded);
+		}, opts);
+	}
 	defineFeature({
 		id: "fastLoad",
 		key: "fastLoadEnabled",
@@ -5243,13 +7393,12 @@
 		title: "AniList Fast Load",
 		help: "Performance optimizer: lazy media, off-screen row skipping, observer coalescing, safe GraphQL cache/de-duplication with stale fallback, navigation prefetch and early request start."
 	}, () => {
-		const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
 		if (win.top !== win.self) return;
 		if (win.__ANILIST_FAST_LOAD__ || win.__ANILIST_FAST_LOAD_V4__) {
 			console.warn("[AL-Additions] Built-in Fast Load skipped: the standalone AniList Fast Load script is already running. Uninstall it to use the built-in version.");
 			return;
 		}
-		win.__ALA_FAST_LOAD__ = "0.4.1";
+		win.__ALA_FAST_LOAD__ = "0.4.3";
 		markBuiltIn("fastLoad");
 		let yieldedToStandalone = false;
 		const yielded = () => {
@@ -5260,49 +7409,6 @@
 			}
 			return yieldedToStandalone;
 		};
-		const CFG = {
-			lazyMedia: false,
-			rowSkipping: false,
-			coalesceObservers: false,
-			observerBatchMs: 80,
-			fastInnerText: false,
-			memoSelectorProbes: false,
-			blockTierInData: false,
-			tierAssist: false,
-			tierAssistMs: 250,
-			gqlTtl: 15e3,
-			gqlStaleTtl: 3e5,
-			gqlMaxBytes: 67108864,
-			gqlMaxEntryBytes: 25165824,
-			prefetch: true,
-			earlyStart: false,
-			prefetchMaxPerMin: 12,
-			prefetchDwellMs: 200,
-			learnWindowMs: 8e3,
-			learnMaxReqs: 6
-		};
-		const GQL_ORIGIN = "https://graphql.anilist.co";
-		const MEDIA_ORIGIN = "https://s4.anilist.co";
-		const stats = {
-			graphqlRequests: 0,
-			cacheHits: 0,
-			deduped: 0,
-			staleServed: 0,
-			prefetched: 0,
-			earlyStarts: 0,
-			observerBatches: 0,
-			observerRecordsMerged: 0,
-			probesShared: 0,
-			labelsReleased: 0
-		};
-		win.__ALFL_STATS__ = stats;
-		const attempt = (fn) => {
-			try {
-				return fn();
-			} catch {}
-		};
-		const idle = (fn, timeout = 1500) => "requestIdleCallback" in win ? win.requestIdleCallback(fn, { timeout }) : setTimeout(fn, 0);
-		const doc = win.document;
 		attempt(() => {
 			const parent = doc.head || doc.documentElement;
 			for (const [href, cors] of [
@@ -5319,7 +7425,6 @@
 				parent.appendChild(link);
 			}
 		});
-		const navListeners = [];
 		attempt(() => {
 			const fire = () => navListeners.forEach(attempt);
 			for (const name of ["pushState", "replaceState"]) {
@@ -5332,1614 +7437,49 @@
 			}
 			win.addEventListener("popstate", fire);
 		});
-		function installLazyMedia() {
-			const lazify = (el) => {
-				if (!el || el.nodeType !== 1) return;
-				switch (el.localName) {
-					case "img":
-						if (!el.hasAttribute("loading")) el.loading = "lazy";
-						if (!el.hasAttribute("decoding")) el.decoding = "async";
-						break;
-					case "iframe":
-						if (!el.hasAttribute("loading")) el.loading = "lazy";
-						break;
-					case "video": if (!el.hasAttribute("preload")) el.preload = "metadata";
-				}
-			};
-			const patchCreate = (target) => {
-				if (!target) return;
-				const orig = target.createElement;
-				if (typeof orig !== "function") return;
-				const patched = function(tag, options) {
-					const el = orig.call(this, tag, options);
-					try {
-						lazify(el);
-					} catch {}
-					return el;
-				};
-				try {
-					target.createElement = patched;
-				} catch {
-					try {
-						Object.defineProperty(target, "createElement", {
-							value: patched,
-							writable: true,
-							configurable: true
-						});
-					} catch {}
-				}
-			};
-			patchCreate(win.Document?.prototype);
-			patchCreate(win.HTMLDocument?.prototype);
-			patchCreate(Document.prototype);
-			patchCreate(doc);
-			if (typeof document !== "undefined" && document !== doc) patchCreate(document);
-			const MEDIA_TAG = /<(?:img|iframe|video)[\s>/]/i;
-			const MEDIA_SEL = "img:not([loading]),iframe:not([loading]),video:not([preload])";
-			const lazifyTree = (root) => {
-				if (!root || typeof root.querySelectorAll !== "function") return;
-				lazify(root);
-				for (const el of root.querySelectorAll(MEDIA_SEL)) lazify(el);
-			};
-			const ElementProto = win.Element?.prototype || Element.prototype;
-			attempt(() => {
-				const desc = Object.getOwnPropertyDescriptor(ElementProto, "innerHTML");
-				if (!desc || !desc.set || !desc.configurable) return;
-				Object.defineProperty(ElementProto, "innerHTML", {
-					...desc,
-					set(value) {
-						desc.set.call(this, value);
-						if (typeof value === "string" && MEDIA_TAG.test(value)) attempt(() => lazifyTree(this instanceof win.HTMLTemplateElement ? this.content : this));
-					}
-				});
-			});
-			attempt(() => {
-				const native = ElementProto.insertAdjacentHTML;
-				ElementProto.insertAdjacentHTML = function(position, html) {
-					const r = native.call(this, position, html);
-					if (typeof html === "string" && MEDIA_TAG.test(html)) {
-						const outer = /^(?:beforebegin|afterend)$/i.test(position);
-						attempt(() => lazifyTree(outer ? this.parentNode : this));
-					}
-					return r;
-				};
-			});
+		initUserMap();
+		registerGlobalBridges();
+		attempt(() => {
+			const viewer = getViewerFromWindow();
+			if (viewer.name && viewer.id) {
+				rememberUser(viewer.name, viewer.id);
+				store$1.set("al_user_id", viewer.id);
+				store$1.set("al_username", viewer.name);
+			} else if (viewer.name) store$1.set("al_username", viewer.name);
+		});
+		let hiddenAt = 0;
+		doc.addEventListener("visibilitychange", () => {
+			if (doc.hidden) {
+				hiddenAt = Date.now();
+				return;
+			}
+			if (hiddenAt && Date.now() - hiddenAt > 6e5) {
+				incEpoch();
+				setFreshFloor(Date.now());
+			}
+			inflight.clear();
+		});
+		if (CFG.gqlTtl > 0 && typeof win.fetch === "function") {
+			installGraphQLLayer(yielded);
+			hookWorker(yielded);
 		}
-		const ROW_GROUPS = [
-			{
-				selector: ".medialist .entry.row",
-				h: 56
-			},
-			{
-				selector: ".medialist .entry-card",
-				h: 220
-			},
-			{
-				selector: ".activity-entry",
-				h: 160
-			}
-		];
-		function injectCSS(text) {
-			try {
-				if ("adoptedStyleSheets" in doc && typeof win.CSSStyleSheet !== "undefined") {
-					const sheet = new win.CSSStyleSheet();
-					sheet.replaceSync(text);
-					doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet];
-					return;
-				}
-			} catch {}
-			const style = doc.createElement("style");
-			style.textContent = text;
-			(doc.head || doc.documentElement).appendChild(style);
-		}
-		function installRowSkipping() {
-			injectCSS(`@supports (content-visibility: auto) and (contain-intrinsic-height: auto 1px) { ${ROW_GROUPS.map(({ selector, h }, i) => `
-            ${selector} {
-                content-visibility: auto;
-                contain-intrinsic-height: auto var(--alfast-h${i}, ${h}px);
-                overflow-clip-margin: 16px;
-            }
-            ${selector}:hover,
-            ${selector}:focus-within {
-                content-visibility: visible;
-            }`).join("\n")} }`);
-			const measuredFor = ROW_GROUPS.map(() => "");
-			let timers = [];
-			function measure() {
-				const path = win.location.pathname;
-				const vh = win.innerHeight || doc.documentElement.clientHeight;
-				ROW_GROUPS.forEach(({ selector }, i) => {
-					if (measuredFor[i] === path) return;
-					let nodes;
-					try {
-						nodes = doc.querySelectorAll(selector);
-					} catch {
-						return;
-					}
-					let total = 0;
-					let count = 0;
-					for (const el of nodes) {
-						const r = el.getBoundingClientRect();
-						if (r.top > vh) break;
-						if (r.height > 0 && r.bottom > 0) {
-							total += r.height;
-							if (++count >= 6) break;
-						}
-					}
-					if (!count) return;
-					doc.documentElement.style.setProperty(`--alfast-h${i}`, `${Math.max(1, Math.round(total / count))}px`);
-					measuredFor[i] = path;
-				});
-			}
-			function schedule() {
-				timers.forEach(clearTimeout);
-				timers = [
-					500,
-					1800,
-					4500
-				].map((ms) => setTimeout(() => idle(() => {
-					if (!doc.hidden) measure();
-				}), ms));
-			}
-			navListeners.push(schedule);
-			if (doc.readyState !== "loading") schedule();
-			else doc.addEventListener("DOMContentLoaded", schedule, { once: true });
-			win.addEventListener("load", schedule, { once: true });
-			let resizeTimer = 0;
-			const onResize = () => {
-				clearTimeout(resizeTimer);
-				resizeTimer = setTimeout(() => {
-					measuredFor.fill("");
-					schedule();
-				}, 200);
-			};
-			win.addEventListener("resize", onResize, { passive: true });
-			win.addEventListener("orientationchange", onResize, { passive: true });
-		}
-		function installObserverCoalescing() {
-			const Native = win.MutationObserver;
-			if (typeof Native !== "function") return;
-			const states = new WeakMap();
-			const ignoresRecords = (fn) => {
-				if (typeof fn !== "function" || fn.length !== 0) return false;
-				try {
-					const src = Function.prototype.toString.call(fn);
-					if (/\barguments\b/.test(src)) return false;
-					const params = /^[^(]*\(([^)]*)\)/.exec(src);
-					return !params || params[1].trim() === "";
-				} catch {
-					return false;
-				}
-			};
-			const isPageRoot = (t) => t === doc || t === doc.documentElement || t === doc.body;
-			function schedule(st) {
-				if (st.timer) return;
-				const wait = Math.max(0, st.last + CFG.observerBatchMs - performance.now());
-				st.timer = setTimeout(() => {
-					st.timer = 0;
-					if (!st.queue.length) return;
-					const records = st.queue.splice(0);
-					stats.observerBatches++;
-					stats.observerRecordsMerged += records.length;
-					try {
-						st.callback.call(st.self, records, st.self);
-					} catch (e) {
-						setTimeout(() => {
-							throw e;
-						});
-					}
-					st.last = performance.now();
-				}, wait);
-			}
-			class CoalescedMutationObserver extends Native {
-				constructor(callback) {
-					const st = {
-						callback,
-						eligible: ignoresRecords(callback),
-						on: false,
-						queue: [],
-						timer: 0,
-						last: -Infinity,
-						self: null
-					};
-					super(typeof callback === "function" ? (records) => {
-						if (!st.on) return callback.call(st.self, records, st.self);
-						for (const r of records) st.queue.push(r);
-						schedule(st);
-					} : callback);
-					st.self = this;
-					states.set(this, st);
-				}
-				observe(target, options) {
-					const st = states.get(this);
-					if (st && st.eligible && options && options.subtree && isPageRoot(target)) st.on = true;
-					return super.observe(target, options);
-				}
-				disconnect() {
-					const st = states.get(this);
-					if (st) {
-						st.queue.length = 0;
-						st.on = false;
-					}
-					return super.disconnect();
-				}
-				takeRecords() {
-					const st = states.get(this);
-					const pending = super.takeRecords();
-					return st ? st.queue.splice(0).concat(pending) : pending;
-				}
-			}
-			try {
-				Object.defineProperty(win, "MutationObserver", {
-					value: CoalescedMutationObserver,
-					writable: true,
-					configurable: true
-				});
-			} catch {
-				win.MutationObserver = CoalescedMutationObserver;
-			}
-		}
-		function installFastInnerText() {
-			const proto = win.HTMLElement?.prototype || HTMLElement.prototype;
-			const desc = Object.getOwnPropertyDescriptor(proto, "innerText");
-			if (!desc || !desc.get || !desc.configurable) return;
-			const LEAF = ".score, .value, .type, .percentage";
-			Object.defineProperty(proto, "innerText", {
-				...desc,
-				get() {
-					try {
-						if (this.childElementCount === 0 && this.matches(LEAF)) return (this.textContent || "").replace(/\s+/g, " ").trim();
-					} catch {}
-					return desc.get.call(this);
-				}
-			});
-		}
-		function installProbeMemo() {
-			const ElementProto = win.Element?.prototype || Element.prototype;
-			const native = ElementProto.querySelector;
-			let memo = null;
-			ElementProto.querySelector = function querySelector(sel) {
-				if (typeof sel === "string" && sel.charCodeAt(0) === 46 && sel.startsWith(".medialist.table.POINT_")) {
-					if (!memo) {
-						memo = new WeakMap();
-						queueMicrotask(() => {
-							memo = null;
-						});
-					}
-					let perEl = memo.get(this);
-					if (!perEl) memo.set(this, perEl = new Map());
-					if (perEl.has(sel)) {
-						stats.probesShared++;
-						return perEl.get(sel);
-					}
-					const r = native.call(this, sel);
-					perEl.set(sel, r);
-					return r;
-				}
-				return native.call(this, sel);
-			};
-		}
-		function installTierSupport() {
-			const DATA_VALUE = ".data .data-set .value";
-			const mark = (node) => {
-				if (!node || node.nodeType !== 1) return;
-				if (node.matches?.(DATA_VALUE)) node.dataset.tierModified = "true";
-				if (node.firstElementChild) for (const el of node.querySelectorAll(DATA_VALUE)) el.dataset.tierModified = "true";
-			};
-			const DONE_SCORE = ".medialist .score[data-tier-modified]";
-			const releases = new WeakMap();
-			let sweepTimer = 0;
-			const needsBadge = (el) => {
-				const attr = el.getAttribute("score");
-				if (!attr || !(parseFloat(attr) > 0)) return false;
-				const badge = el.firstElementChild;
-				return !badge || (badge.firstElementChild?.textContent || "").trim() !== attr.trim();
-			};
-			function sweep() {
-				sweepTimer = 0;
-				if (doc.hidden) return;
-				let released = 0;
-				for (const el of doc.querySelectorAll(DONE_SCORE)) {
-					const n = releases.get(el) || 0;
-					if (n >= 2 || !needsBadge(el)) continue;
-					releases.set(el, n + 1);
-					delete el.dataset.tierModified;
-					released++;
-				}
-				if (!released || !doc.body) return;
-				stats.labelsReleased += released;
-				const wake = doc.createComment("");
-				doc.body.appendChild(wake);
-				wake.remove();
-			}
-			const scheduleSweep = () => {
-				if (!sweepTimer) sweepTimer = setTimeout(() => attempt(sweep), CFG.tierAssistMs);
-			};
-			new (win.MutationObserver || MutationObserver)((records) => {
-				if (CFG.blockTierInData) for (const r of records) for (const n of r.addedNodes) try {
-					mark(n);
-				} catch {}
-				if (CFG.tierAssist) scheduleSweep();
-			}).observe(doc, CFG.tierAssist ? {
-				childList: true,
-				subtree: true,
-				attributes: true,
-				attributeFilter: ["score"]
-			} : {
-				childList: true,
-				subtree: true
-			});
-			if (CFG.tierAssist) doc.addEventListener("visibilitychange", () => {
-				if (!doc.hidden) scheduleSweep();
-			});
-			if (CFG.blockTierInData) attempt(() => mark(doc.documentElement));
-		}
-		function installGraphQLLayer() {
-			const nativeFetch = win.fetch.bind(win);
-			const store$1 = new Map();
-			const inflight = new Map();
-			let bytes = 0;
-			let epoch = 0;
-			let pausedUntil = 0;
-			let freshFloor = 0;
-			const isGraphQL = (u) => {
-				try {
-					const url = new URL(u, win.location.href);
-					return url.origin === "https://graphql.anilist.co" || url.origin === win.location.origin && url.pathname.replace(/\/$/, "") === "/graphql";
-				} catch {
-					return false;
-				}
-			};
-			const SKIP_HEADERS = /^(?:content-encoding|content-length|transfer-encoding)$/i;
-			const RATE_HEADERS = /^(?:retry-after|x-ratelimit-.+)$/i;
-			function toResponse(snap, live) {
-				const HeadersCtor = win.Headers || Headers;
-				const ResponseCtor = win.Response || Response;
-				const headers = new HeadersCtor(snap.headers);
-				if (live) {
-					for (const [k, v] of live.headers.entries()) if (RATE_HEADERS.test(k)) headers.set(k, v);
-				}
-				return new ResponseCtor(snap.buf, {
-					status: snap.status || 200,
-					statusText: snap.statusText || "OK",
-					headers
-				});
-			}
-			function abortable(promise, signal) {
-				if (!signal) return promise;
-				return new Promise((resolve, reject) => {
-					const fail = () => reject(signal.reason ?? new DOMException("The operation was aborted.", "AbortError"));
-					if (signal.aborted) return fail();
-					signal.addEventListener("abort", fail, { once: true });
-					const done = () => signal.removeEventListener("abort", fail);
-					promise.then((v) => {
-						done();
-						resolve(v);
-					}, (e) => {
-						done();
-						reject(e);
-					});
-				});
-			}
-			function clearAll() {
-				epoch++;
-				store$1.clear();
-				inflight.clear();
-				bytes = 0;
-			}
-			function evict() {
-				const now = Date.now();
-				for (const [key, entry] of store$1) {
-					if (now - entry.time <= CFG.gqlStaleTtl && bytes <= CFG.gqlMaxBytes) break;
-					bytes -= entry.size;
-					store$1.delete(key);
-				}
-			}
-			function put(key, snap) {
-				const old = store$1.get(key);
-				if (old) {
-					bytes -= old.size;
-					store$1.delete(key);
-				}
-				const size = snap.buf.byteLength;
-				if (size > CFG.gqlMaxEntryBytes) return;
-				store$1.set(key, {
-					time: Date.now(),
-					size,
-					snap
-				});
-				bytes += size;
-				evict();
-			}
-			function parseBody(body) {
-				try {
-					const parsed = JSON.parse(body);
-					return parsed && typeof parsed === "object" && !Array.isArray(parsed) && typeof parsed.query === "string" ? parsed : null;
-				} catch {
-					return null;
-				}
-			}
-			const isMutation = (parsed) => /\bmutation\b/i.test(String(parsed.query).replace(/#[^\n\r]*/g, " "));
-			const isVolatile = (parsed) => /\b(?:notifications|activities|Activity|Notification)\s*\(/.test(String(parsed?.query || "").replace(/#[^\n\r]*/g, " "));
-			const noStore = (d) => d.cache === "no-store" || d.cache === "reload" || !!d.headers.get("cache-control")?.toLowerCase().includes("no-store");
-			const decoder = new TextDecoder();
-			const ERROR_SCAN_BYTES = 2048;
-			function hasGraphQLErrors(buf) {
-				try {
-					const view = new Uint8Array(buf);
-					const head = decoder.decode(view.subarray(0, ERROR_SCAN_BYTES));
-					return /^\s*\{\s*"errors"\s*:/.test(head);
-				} catch {
-					return false;
-				}
-			}
-			function normalizeGqlQuery(q) {
-				if (typeof q !== "string") return "";
-				return q.replace(/#[^\n\r]*/g, "").replace(/\s+/g, " ").replace(/\s*([{}():,])\s*/g, "$1").trim();
-			}
-			function stableStringify(obj) {
-				if (obj === null || typeof obj !== "object") return JSON.stringify(obj);
-				if (Array.isArray(obj)) return "[" + obj.map(stableStringify).join(",") + "]";
-				return "{" + Object.keys(obj).sort().map((k) => JSON.stringify(k) + ":" + stableStringify(obj[k])).join(",") + "}";
-			}
-			function normalizeVariables(vars) {
-				if (!vars || typeof vars !== "object") return {};
-				const copy = {};
-				for (const k of Object.keys(vars)) if (vars[k] !== void 0 && vars[k] !== null) copy[k] = vars[k];
-				if (copy.userName && !copy.userId) {
-					const name = String(copy.userName).toLowerCase();
-					const mine = String(store.get("al_username", "") || "").toLowerCase();
-					const id = userMap.get(name) || (name === mine ? Number(store.get("al_user_id", 0)) : 0);
-					if (id) {
-						copy.userId = id;
-						delete copy.userName;
-					}
-				}
-				if (copy.userId && copy.userName) delete copy.userName;
-				return copy;
-			}
-			const isTaxonomyQuery = (parsed) => /\bGenreCollection\b|\bMediaTagCollection\b/i.test(String(parsed?.query || ""));
-			const isMediaListQuery = (parsed) => /\bMediaListCollection\b/i.test(String(parsed?.query || ""));
-			const isViewerQuery = (parsed) => /\bViewer\b/i.test(String(parsed?.query || ""));
-			function makeKey(d, parsed) {
-				if (isMediaListQuery(parsed)) {
-					const { type = "ANIME", userId, userName, ...rest } = normalizeVariables(parsed?.variables);
-					const who = userId || (userName ? String(userName).toLowerCase() : getViewerFromWindow().id || "me");
-					return `gql:MediaListCollection:${String(type).toUpperCase()}:${who}:${stableStringify(rest)}`;
-				}
-				if (isTaxonomyQuery(parsed)) return "gql:Taxonomy";
-				if (isViewerQuery(parsed)) return "gql:Viewer";
-				const normQuery = normalizeGqlQuery(parsed?.query || "");
-				const normVars = stableStringify(normalizeVariables(parsed?.variables));
-				const auth = d.headers?.get?.("authorization") ? "a" : "";
-				return `${d.url}\u0001${auth}\u0001${normQuery}\u0001${normVars}`;
-			}
-			const note429 = (res) => {
-				if (res.status === 429) pausedUntil = Date.now() + 6e4;
-			};
-			const sameId = (a, b) => a === b || typeof a === "string" && typeof b === "string" && a.toLowerCase() === b.toLowerCase();
-			const isIdKey = (key) => /^(?:id|name|userName|username|userId)$|Id$/.test(key);
-			const STATIC_ROUTE = /^\/(?:home|search\/(?:anime|manga))\/?$/;
-			const userMap = new Map();
-			const idToUserMap = new Map();
-			function rememberUser(name, id) {
-				if (!name || !id || typeof id !== "number") return;
-				const normName = String(name).trim().toLowerCase();
-				if (!normName) return;
-				userMap.set(normName, id);
-				idToUserMap.set(id, normName);
-				attempt(() => {
-					const stored = JSON.parse(win.localStorage.getItem("alfl:userMap") || "{}");
-					if (stored[normName] !== id) {
-						stored[normName] = id;
-						const keys = Object.keys(stored);
-						if (keys.length > 300) delete stored[keys[0]];
-						win.localStorage.setItem("alfl:userMap", JSON.stringify(stored));
-					}
-				});
-			}
-			attempt(() => {
-				const stored = JSON.parse(win.localStorage.getItem("alfl:userMap") || "{}");
-				for (const [k, v] of Object.entries(stored)) if (typeof v === "number" && v > 0) {
-					userMap.set(k.toLowerCase(), v);
-					idToUserMap.set(v, k.toLowerCase());
-				}
-			});
-			function getViewerFromWindow() {
-				const res = {
-					id: 0,
-					name: ""
-				};
-				attempt(() => {
-					const nuxt = win.__NUXT__;
-					const user = nuxt?.state?.auth?.user || nuxt?.state?.user;
-					if (user) {
-						if (typeof user.id === "number" && user.id > 0) res.id = user.id;
-						if (typeof user.name === "string" && user.name) res.name = user.name;
-					}
-				});
-				if (!res.id) {
-					const storedId = Number(store.get("al_user_id", 0));
-					if (storedId > 0) res.id = storedId;
-				}
-				if (!res.name) {
-					const stored = store.get("al_username", null);
-					if (stored) res.name = stored;
-				}
-				if (!res.name) {
-					const m = (doc.querySelector("nav a[href^=\"/user/\"], .nav-wrap a[href^=\"/user/\"], .nav a[href^=\"/user/\"]")?.getAttribute("href"))?.match(/^\/user\/([^/?#]+)/);
-					if (m) try {
-						res.name = decodeURIComponent(m[1]);
-					} catch {}
-				}
-				return res;
-			}
-			function getLocalUsername() {
-				return getViewerFromWindow().name || null;
-			}
-			attempt(() => {
-				const viewer = getViewerFromWindow();
-				if (viewer.name && viewer.id) {
-					rememberUser(viewer.name, viewer.id);
-					store.set("al_user_id", viewer.id);
-					store.set("al_username", viewer.name);
-				} else if (viewer.name) store.set("al_username", viewer.name);
-			});
-			function extractUserMappings(buf) {
-				try {
-					const text = decoder.decode(new Uint8Array(buf));
-					if (!text.includes("Viewer") && !text.includes("User")) return;
-					const json = JSON.parse(text);
-					const viewer = json?.data?.Viewer;
-					if (viewer && viewer.id && viewer.name) {
-						rememberUser(String(viewer.name), Number(viewer.id));
-						store.set("al_user_id", Number(viewer.id));
-						store.set("al_username", String(viewer.name));
-					}
-					const user = json?.data?.User;
-					if (user && user.id && user.name) rememberUser(String(user.name), Number(user.id));
-				} catch {}
-			}
-			function parseRoute(path, search = "") {
-				const parts = path.split("/").filter(Boolean).map((x) => {
-					try {
-						return decodeURIComponent(x);
-					} catch {
-						return x;
-					}
-				});
-				if ([
-					"anime",
-					"manga",
-					"character",
-					"staff",
-					"studio"
-				].includes(parts[0]) && /^\d+$/.test(parts[1] || "")) return {
-					shape: `${parts[0]}/${parts[3] || ""}`,
-					id: Number(parts[1])
-				};
-				if (parts[0] === "user" && parts[1]) return {
-					shape: `user/${parts[2] || ""}`,
-					id: parts[1]
-				};
-				if (parts[0] === "animelist" || parts[0] === "mangalist") {
-					const myName = getLocalUsername();
-					if (myName) return {
-						shape: `user/${parts[0]}`,
-						id: myName
-					};
-				}
-				if (STATIC_ROUTE.test(path)) return {
-					shape: `static:${path.replace(/\/$/, "")}${search}`,
-					id: null,
-					static: true
-				};
-				return null;
-			}
-			const here = () => parseRoute(win.location.pathname, win.location.search);
-			function hasPageId(value, id) {
-				if (!value || typeof value !== "object") return false;
-				const targetUserId = typeof id === "string" ? userMap.get(id.toLowerCase()) : void 0;
-				return Object.keys(value).some((key) => {
-					const x = value[key];
-					if (x && typeof x === "object") return hasPageId(x, id);
-					if (isIdKey(key)) {
-						if (sameId(x, id)) return true;
-						if (targetUserId != null && (key === "userId" || key === "id") && x === targetUserId) return true;
-					}
-					return false;
-				});
-			}
-			function replacePageId(value, from, to) {
-				if (!value || typeof value !== "object") return 0;
-				const fromUserId = typeof from === "string" ? userMap.get(from.toLowerCase()) : void 0;
-				const toUserId = typeof to === "string" ? userMap.get(to.toLowerCase()) : void 0;
-				let count = 0;
-				for (const key of Object.keys(value)) {
-					const x = value[key];
-					if (x && typeof x === "object") count += replacePageId(x, from, to);
-					else if (isIdKey(key)) {
-						if (sameId(x, from)) {
-							value[key] = to;
-							count++;
-						} else if (fromUserId != null && toUserId != null && (key === "userId" || key === "id") && x === fromUserId) {
-							value[key] = toUserId;
-							count++;
-						}
-					}
-				}
-				return count;
-			}
-			const learned = new Map();
-			const ROUTES_KEY = "alfl:routes:v3";
-			const ROUTES_TTL = 2592e6;
-			let persistTimer = 0;
-			const persistRoutes = () => {
-				clearTimeout(persistTimer);
-				persistTimer = setTimeout(() => attempt(() => {
-					const out = {};
-					for (const [shape, v] of [...learned].slice(-40)) out[shape] = {
-						t: v.t,
-						id: v.route.id,
-						static: !!v.route.static,
-						reqs: v.reqs
-					};
-					win.localStorage.setItem(ROUTES_KEY, JSON.stringify(out));
-				}), 1e3);
-			};
-			function loadRoutes() {
-				attempt(() => {
-					win.localStorage.removeItem("alfl:routes:v1");
-					win.localStorage.removeItem("alfl:routes:v2");
-					const raw = win.localStorage.getItem(ROUTES_KEY);
-					if (raw) {
-						const now = Date.now();
-						for (const [shape, v] of Object.entries(JSON.parse(raw))) {
-							if (!v || !Array.isArray(v.reqs) || typeof v.t !== "number" || now - v.t > ROUTES_TTL) continue;
-							const reqs = v.reqs.filter((r) => r && typeof r.body === "string" && typeof r.url === "string" && isGraphQL(r.url) && r.headers && typeof r.headers === "object");
-							if (reqs.length) learned.set(shape, {
-								route: {
-									shape,
-									id: v.id,
-									static: !!v.static
-								},
-								reqs,
-								t: v.t
-							});
-						}
-					}
-				});
-			}
-			let learning = {
-				key: "",
-				started: 0,
-				route: null,
-				reqs: []
-			};
-			function refreshLearning() {
-				const key = win.location.pathname + (STATIC_ROUTE.test(win.location.pathname) ? win.location.search : "");
-				if (learning.key === key) return;
-				learning = {
-					key,
-					started: 0,
-					route: here(),
-					reqs: []
-				};
-			}
-			function rememberQuery(desc, parsed) {
-				refreshLearning();
-				if (!(CFG.prefetch || CFG.earlyStart) || !learning.route) return;
-				if (!learning.started) learning.started = Date.now();
-				if (Date.now() - learning.started > CFG.learnWindowMs) return;
-				if (learning.reqs.length >= CFG.learnMaxReqs) return;
-				if (!learning.route.static && !hasPageId(parsed.variables, learning.route.id)) return;
-				const headers = Object.fromEntries(desc.headers.entries());
-				delete headers["content-length"];
-				delete headers["host"];
-				delete headers["connection"];
-				delete headers["content-encoding"];
-				const authValue = headers.authorization;
-				delete headers.authorization;
-				let auth = false;
-				if (authValue !== void 0) {
-					auth = true;
-					if (authValue.startsWith("Bearer ")) {
-						const token = authValue.slice(7).trim();
-						if (token) win.al_token = token;
-					}
-				}
-				learning.reqs.push({
-					url: desc.url,
-					body: JSON.stringify(parsed),
-					headers,
-					auth,
-					credentials: desc.credentials || "same-origin",
-					mode: desc.mode || "cors"
-				});
-				learned.delete(learning.route.shape);
-				learned.set(learning.route.shape, {
-					route: learning.route,
-					reqs: [...learning.reqs],
-					t: Date.now()
-				});
-				if (learning.route.shape === "user/animelist") {
-					const mangaReqs = learning.reqs.map((r) => ({
-						...r,
-						body: r.body.replace(/"type"\s*:\s*"ANIME"/g, "\"type\":\"MANGA\"")
-					}));
-					learned.set("user/mangalist", {
-						route: {
-							shape: "user/mangalist",
-							id: learning.route.id,
-							static: false
-						},
-						reqs: mangaReqs,
-						t: Date.now()
-					});
-				} else if (learning.route.shape === "user/mangalist") {
-					const animeReqs = learning.reqs.map((r) => ({
-						...r,
-						body: r.body.replace(/"type"\s*:\s*"MANGA"/g, "\"type\":\"ANIME\"")
-					}));
-					learned.set("user/animelist", {
-						route: {
-							shape: "user/animelist",
-							id: learning.route.id,
-							static: false
-						},
-						reqs: animeReqs,
-						t: Date.now()
-					});
-				}
-				persistRoutes();
-			}
-			async function classify(input, init) {
-				const isRequest = input instanceof (win.Request || Request);
-				const method = String(init?.method || (isRequest ? input.method : "GET")).toUpperCase();
-				if (method !== "POST") return null;
-				const rawUrl = isRequest ? input.url : input instanceof URL ? input.href : String(input);
-				if (!isGraphQL(rawUrl)) return null;
-				let resolvedUrl = rawUrl;
-				try {
-					resolvedUrl = new URL(rawUrl, win.location.href).href;
-				} catch {}
-				let body = null;
-				if (typeof init?.body === "string") body = init.body;
-				else if (isRequest) try {
-					body = await input.clone().text();
-				} catch {}
-				if (typeof body !== "string") return null;
-				const parsed = parseBody(body);
-				if (!parsed) return null;
-				const HeadersCtor = win.Headers || Headers;
-				const desc = {
-					url: resolvedUrl,
-					method,
-					body,
-					headers: new HeadersCtor(init?.headers ?? (isRequest ? input.headers : void 0)),
-					credentials: init?.credentials ?? (isRequest ? input.credentials : void 0) ?? "same-origin",
-					mode: init?.mode ?? (isRequest ? input.mode : void 0) ?? "cors",
-					cache: init?.cache ?? (isRequest ? input.cache : void 0)
-				};
-				const authHeader = desc.headers.get("authorization");
-				if (authHeader && authHeader.startsWith("Bearer ")) {
-					const token = authHeader.slice(7).trim();
-					if (token) win.al_token = token;
-				}
-				const bypass = !isMediaListQuery(parsed) && (isVolatile(parsed) || noStore(desc));
-				return {
-					desc,
-					parsed,
-					mutation: isMutation(parsed),
-					bypass
-				};
-			}
-			const TAXONOMY_STORAGE_KEY = "alfl:taxonomy:v1";
-			const TAXONOMY_TTL = 864e5;
-			function getQueryTtl(parsed) {
-				if (isTaxonomyQuery(parsed)) return TAXONOMY_TTL;
-				if (isMediaListQuery(parsed)) return 3e5;
-				if (isViewerQuery(parsed)) return 3e5;
-				return CFG.gqlTtl;
-			}
-			function loadStoredTaxonomy() {
-				try {
-					const raw = win.localStorage.getItem(TAXONOMY_STORAGE_KEY);
-					if (!raw) return null;
-					const parsed = JSON.parse(raw);
-					if (parsed && typeof parsed.time === "number" && typeof parsed.text === "string") return parsed;
-				} catch {}
-				return null;
-			}
-			function persistStoredTaxonomy(snap) {
-				attempt(() => {
-					const text = decoder.decode(snap.buf);
-					win.localStorage.setItem(TAXONOMY_STORAGE_KEY, JSON.stringify({
-						time: Date.now(),
-						text,
-						status: snap.status,
-						statusText: snap.statusText,
-						headers: snap.headers
-					}));
-				});
-			}
-			function cachedFetch(job, input, init, replay = false) {
-				const { desc, parsed } = job;
-				if (init?.signal?.aborted) return nativeFetch(input, init);
-				if (!replay) attempt(() => rememberQuery(desc, parsed));
-				let key = "";
-				let ttl = CFG.gqlTtl;
-				try {
-					key = makeKey(desc, parsed);
-					ttl = getQueryTtl(parsed);
-				} catch {
-					return nativeFetch(input, init);
-				}
-				const now = Date.now();
-				const cached = store$1.get(key);
-				if (isTaxonomyQuery(parsed)) {
-					const storedTax = loadStoredTaxonomy();
-					if (storedTax && now - storedTax.time < TAXONOMY_TTL) {
-						stats.cacheHits++;
-						logDebug("[FASTLOAD] Cache HIT (24h localStorage): GenreCollection & MediaTagCollection");
-						const HeadersCtor = win.Headers || Headers;
-						const ResponseCtor = win.Response || Response;
-						return Promise.resolve(new ResponseCtor(storedTax.text, {
-							status: storedTax.status || 200,
-							statusText: storedTax.statusText || "OK",
-							headers: new HeadersCtor(storedTax.headers)
-						}));
-					}
-				}
-				if (cached && cached.time >= freshFloor && now - cached.time < ttl) {
-					stats.cacheHits++;
-					logDebug("[FASTLOAD] Cache HIT (RAM):", isMediaListQuery(parsed) ? "MediaListCollection" : "GraphQL query", `${Math.round((now - cached.time) / 1e3)}s old`);
-					return Promise.resolve(toResponse(cached.snap));
-				}
-				const flying = inflight.get(key);
-				if (flying) {
-					stats.deduped++;
-					logDebug("[FASTLOAD] Attached to in-flight request:", isMediaListQuery(parsed) ? "MediaListCollection" : "GraphQL query");
-					return abortable(flying.then((snap) => toResponse(snap), () => nativeFetch(input, init)), init?.signal);
-				}
-				const myEpoch = epoch;
-				const stale = cached && now - cached.time < CFG.gqlStaleTtl ? cached.snap : null;
-				const opName = parsed.operationName || (isMediaListQuery(parsed) ? "MediaListCollection" : "query");
-				logDebug("[FASTLOAD] Cache MISS (network fetch):", opName, "key:", key);
-				const original = nativeFetch(input, init);
-				const snapshot = original.then(async (res) => {
-					note429(res);
-					if (res.status !== 200) {
-						logDebug("[FASTLOAD] Response not 200:", res.status, opName);
-						throw new Error("not cacheable");
-					}
-					const buf = await res.clone().arrayBuffer();
-					if (hasGraphQLErrors(buf)) {
-						logDebug("[FASTLOAD] Response had GraphQL errors:", opName);
-						throw new Error("graphql errors");
-					}
-					return {
-						buf,
-						status: res.status,
-						statusText: res.statusText,
-						headers: [...res.headers.entries()].filter(([k]) => !SKIP_HEADERS.test(k) && !RATE_HEADERS.test(k))
-					};
-				});
-				inflight.set(key, snapshot);
-				snapshot.then((snap) => {
-					if (inflight.get(key) === snapshot) inflight.delete(key);
-					if (epoch === myEpoch) {
-						put(key, snap);
-						logDebug("[FASTLOAD] Cached in RAM:", opName, `${Math.round(snap.buf.byteLength / 1024)} KB`);
-					}
-					extractUserMappings(snap.buf);
-					if (isTaxonomyQuery(parsed) && snap.status === 200) persistStoredTaxonomy(snap);
-				}, () => {
-					if (inflight.get(key) === snapshot) inflight.delete(key);
-				});
-				if (!stale) return original;
-				return original.then((res) => {
-					if (res.status === 429 || res.status >= 500) {
-						stats.staleServed++;
-						return toResponse(stale, res);
-					}
-					return res;
-				}, (err) => {
-					if (init?.signal?.aborted || err?.name === "AbortError") throw err;
-					stats.staleServed++;
-					return toResponse(stale);
-				});
-			}
-			win.fetch = async function fetch(input, init) {
-				if (yielded()) return nativeFetch(input, init);
-				let job = null;
-				try {
-					job = await classify(input, init);
-				} catch {}
-				if (!job) return nativeFetch(input, init);
-				stats.graphqlRequests++;
-				if (job.mutation) {
-					clearAll();
-					const p = nativeFetch(input, init);
-					p.then((res) => {
-						note429(res);
-						clearAll();
-					}, () => clearAll());
-					return p;
-				}
-				if (job.bypass) {
-					const p = nativeFetch(input, init);
-					p.then(note429, () => {});
-					return p;
-				}
-				return cachedFetch(job, input, init, init?.__alfl === "replay");
-			};
-			const rpcCache = new Map();
-			const rpcInflight = new Map();
-			const workerPending = new WeakMap();
-			const watched = new WeakSet();
-			let workerUrl = null;
-			let workerOpts;
-			let WorkerCtor = null;
-			let lastAuth = "";
-			const findWorkerUrl = () => workerUrl || performance.getEntriesByType("resource").map((e) => e.name).find((n) => /\.worker\.js(?:\?|$)/.test(n)) || attempt(() => win.localStorage.getItem("alfl:workerUrl") || store.get("alfl:workerUrl", null)) || null;
-			attempt(() => {
-				win.localStorage.removeItem("alfl:rpc:listTpl");
-				store.del("alfl:rpc:listTpl");
-			});
-			win.__ALFL_RPC_CACHE__ = rpcCache;
-			win.__ALFL_RPC_INFLIGHT__ = rpcInflight;
-			const RPC_MAX_ENTRIES = 32;
-			const clone = (v) => {
-				try {
-					return (win.structuredClone || structuredClone)(v);
-				} catch {
-					return JSON.parse(JSON.stringify(v));
-				}
-			};
-			let rpcEpoch = 0;
-			const clearRpc = () => {
-				rpcEpoch++;
-				freshFloor = Date.now();
-				rpcCache.clear();
-				rpcInflight.clear();
-			};
-			win.__ALFL_CLEAR__ = clearRpc;
-			const isRpcFetch = (d) => !!d && d.type === "RPC" && d.method === "fetch" && Array.isArray(d.params) && typeof d.params[1] === "string";
-			const extractUsersFromRpcResult = (res) => {
-				if (!res || typeof res !== "object") return;
-				attempt(() => {
-					const scanUsers = (obj, depth = 0) => {
-						if (!obj || typeof obj !== "object" || depth > 5) return;
-						if (obj.name && obj.id && (typeof obj.id === "number" || /^\d+$/.test(String(obj.id)))) rememberUser(String(obj.name), Number(obj.id));
-						for (const v of Object.values(obj)) if (v && typeof v === "object") scanUsers(v, depth + 1);
-					};
-					scanUsers(res);
-					const viewer = res.Viewer || res.data?.Viewer;
-					if (viewer && viewer.id && viewer.name) {
-						rememberUser(String(viewer.name), Number(viewer.id));
-						store.set("al_user_id", Number(viewer.id));
-						store.set("al_username", String(viewer.name));
-					}
-					const user = res.User || res.data?.User || res.MediaListCollection?.user || res.data?.MediaListCollection?.user;
-					if (user && user.id && user.name) rememberUser(String(user.name), Number(user.id));
-				});
-			};
-			const getMediaListKeys = (type, userId, userName) => {
-				const keys = new Set();
-				const t = String(type).toUpperCase();
-				if (userId) {
-					keys.add(`rpc:MediaListCollection:${t}:${userId}:{}`);
-					const mappedName = idToUserMap.get(userId);
-					if (mappedName) keys.add(`rpc:MediaListCollection:${t}:${mappedName}:{}`);
-				}
-				if (userName) {
-					const norm = String(userName).trim().toLowerCase();
-					keys.add(`rpc:MediaListCollection:${t}:${norm}:{}`);
-					const mappedId = userMap.get(norm);
-					if (mappedId) keys.add(`rpc:MediaListCollection:${t}:${mappedId}:{}`);
-				}
-				return [...keys];
-			};
-			const rpcKey = (params) => {
-				const [endpoint, query, variables, headers] = params;
-				const q = {
-					query,
-					variables
-				};
-				if (isMediaListQuery(q)) {
-					const { type = "ANIME", userId, userName, ...rest } = normalizeVariables(variables);
-					let resolvedId = userId;
-					if (!resolvedId && userName) resolvedId = userMap.get(String(userName).toLowerCase());
-					const who = resolvedId || (userName ? String(userName).toLowerCase() : "me");
-					return `rpc:MediaListCollection:${String(type).toUpperCase()}:${who}:${stableStringify(rest)}`;
-				}
-				if (isTaxonomyQuery(q)) return "rpc:Taxonomy";
-				if (isViewerQuery(q)) return "rpc:Viewer";
-				const normQuery = normalizeGqlQuery(query);
-				const normVars = stableStringify(normalizeVariables(variables));
-				return `${endpoint}\u0001${String(headers?.Authorization ?? headers?.authorization ?? "").slice(-16)}\u0001${normQuery}\u0001${normVars}`;
-			};
-			const onIn = function(ev) {
-				const d = ev.data;
-				if (!d || d.type !== "RPC") return;
-				const id = String(d.id);
-				const worker = ev.currentTarget || ev.target || this;
-				const pMap = workerPending.get(worker);
-				if (!pMap) return;
-				const p = pMap.get(id);
-				if (!p) return;
-				pMap.delete(id);
-				logDebug("[FASTLOAD RPC] IN", id, Object.keys(d));
-				if (d.result) extractUsersFromRpcResult(d.result);
-				if (p.mutation) return clearRpc();
-				if (p.key && d.error == null && p.epoch === rpcEpoch) attempt(() => {
-					rpcCache.delete(p.key);
-					rpcCache.set(p.key, {
-						time: Date.now(),
-						msg: clone(d)
-					});
-					while (rpcCache.size > RPC_MAX_ENTRIES) rpcCache.delete(rpcCache.keys().next().value);
-				});
-			};
-			const prefetchedWorkerKeys = new Map();
-			function prefetchWorkerList(type, userId, userName) {
-				const url = findWorkerUrl();
-				if (!url || !WorkerCtor) {
-					logDebug("[FASTLOAD RPC] Prefetch skipped: worker script unknown");
-					return;
-				}
-				if (!userId && userName) userId = userMap.get(userName.toLowerCase()) || 0;
-				if (userId && !userName) userName = idToUserMap.get(userId) || void 0;
-				const raw = attempt(() => win.localStorage.getItem("alfl:rpc:listTpl:v2") || store.get("alfl:rpc:listTpl:v2", null));
-				let tpl;
-				if (raw) try {
-					tpl = JSON.parse(raw);
-				} catch {}
-				if (!tpl) {
-					logDebug("[FASTLOAD RPC] Prefetch skipped: no list template yet");
-					return;
-				}
-				const vars = {
-					...tpl.vars || {},
-					type
-				};
-				if (userId) {
-					vars.userId = userId;
-					delete vars.userName;
-				} else if (userName) {
-					vars.userName = userName;
-					delete vars.userId;
-				}
-				const authVal = lastAuth || store.get("al_token_auth", "") || (win.al_token ? `Bearer ${win.al_token}` : "");
-				const headers = { ...tpl.headers || {} };
-				if (authVal) {
-					headers.Authorization = authVal;
-					headers.authorization = authVal;
-				}
-				const options = tpl.options ? {
-					...tpl.options,
-					...tpl.options.schemaArgs ? { schemaArgs: [type] } : {}
-				} : tpl.options;
-				const params = [
-					tpl.endpoint,
-					tpl.query,
-					vars,
-					headers,
-					options
-				];
-				const key = rpcKey(params);
-				const now = Date.now();
-				const possibleKeys = getMediaListKeys(type, userId, userName);
-				for (const k of possibleKeys) {
-					const hit = rpcCache.get(k);
-					if (hit && hit.time >= freshFloor && now - hit.time < 3e5) return;
-					if (rpcInflight.has(k)) return;
-				}
-				if (now - (prefetchedWorkerKeys.get(key) || 0) < 6e4) return;
-				prefetchedWorkerKeys.set(key, now);
-				for (const k of possibleKeys) prefetchedWorkerKeys.set(k, now);
-				let w;
-				try {
-					w = new WorkerCtor(url, workerOpts);
-				} catch (err) {
-					logDebug("[FASTLOAD RPC] Prefetch worker failed to start", err);
-					return;
-				}
-				const id = `alfl_prefetch_${type}_${now}`;
-				let resolver;
-				let rejecter;
-				const flightPromise = new Promise((resolve, reject) => {
-					resolver = resolve;
-					rejecter = reject;
-				});
-				flightPromise.catch(() => {});
-				const flight = {
-					promise: flightPromise,
-					resolve: resolver,
-					reject: rejecter
-				};
-				rpcInflight.set(key, flight);
-				for (const k of possibleKeys) if (!rpcInflight.has(k)) rpcInflight.set(k, flight);
-				const finish = () => {
-					clearTimeout(timer);
-					for (const k of [key, ...possibleKeys]) {
-						const f = rpcInflight.get(k);
-						if (f) {
-							f.reject(new Error("finished"));
-							rpcInflight.delete(k);
-						}
-					}
-					attempt(() => w.terminate());
-				};
-				const timer = setTimeout(() => {
-					logDebug("[FASTLOAD RPC] Prefetch timed out", type);
-					finish();
-				}, 3e4);
-				const startEpoch = rpcEpoch;
-				w.addEventListener("message", (ev) => {
-					const d = ev.data;
-					if (!d || d.type !== "RPC" || String(d.id) !== id) return;
-					if (startEpoch !== rpcEpoch) {
-						flight.reject(new Error("stale"));
-						clearTimeout(timer);
-						attempt(() => w.terminate());
-						return;
-					}
-					if (d.error == null) {
-						attempt(() => {
-							extractUsersFromRpcResult(d.result);
-							const mlcUser = d.result?.MediaListCollection?.user || d.result?.data?.MediaListCollection?.user;
-							const extractedUserId = mlcUser?.id ? Number(mlcUser.id) : 0;
-							const resolvedUserId = userId || extractedUserId || (userName ? userMap.get(userName.toLowerCase()) : 0) || 0;
-							if (userName && resolvedUserId) rememberUser(userName, resolvedUserId);
-							const resolvedUserName = userName || (resolvedUserId ? idToUserMap.get(resolvedUserId) : void 0);
-							const cached = {
-								time: Date.now(),
-								msg: clone(d)
-							};
-							const allKeys = [...new Set([
-								key,
-								...possibleKeys,
-								...getMediaListKeys(type, resolvedUserId, resolvedUserName)
-							])];
-							for (const k of allKeys) {
-								rpcCache.delete(k);
-								rpcCache.set(k, cached);
-							}
-							while (rpcCache.size > RPC_MAX_ENTRIES) rpcCache.delete(rpcCache.keys().next().value);
-						});
-						logDebug("[FASTLOAD RPC] Prefetch cached", type, Object.keys(d));
-						for (const k of [key, ...possibleKeys]) {
-							const f = rpcInflight.get(k);
-							if (f) {
-								f.resolve(d);
-								rpcInflight.delete(k);
-							}
-						}
-					} else {
-						logDebug("[FASTLOAD RPC] Prefetch failed", d.error);
-						for (const k of [key, ...possibleKeys]) {
-							const f = rpcInflight.get(k);
-							if (f) {
-								f.reject(d.error);
-								rpcInflight.delete(k);
-							}
-						}
-					}
-					clearTimeout(timer);
-					attempt(() => w.terminate());
-				});
-				w.addEventListener("error", (e) => {
-					logDebug("[FASTLOAD RPC] Prefetch worker error", e?.message);
-					attempt(() => {
-						win.localStorage.removeItem("alfl:workerUrl");
-						store.del("alfl:workerUrl");
-					});
-					workerUrl = null;
-					finish();
-				});
-				logDebug("[FASTLOAD RPC] Prefetch dispatching", type, vars);
-				w.postMessage({
-					type: "RPC",
-					id,
-					method: "fetch",
-					params
-				});
-			}
-			let autoPrefetchTimer = 0;
-			function scheduleAutoPrefetch(delay = 600) {
-				clearTimeout(autoPrefetchTimer);
-				autoPrefetchTimer = setTimeout(() => {
-					attempt(autoPrefetchListsForCurrentRoute);
-				}, delay);
-			}
-			function autoPrefetchListsForCurrentRoute() {
-				if (!CFG.prefetch || yielded()) return;
-				const now = Date.now();
-				if (doc.hidden || now < pausedUntil || navigator.connection?.saveData) return;
-				const path = win.location.pathname;
-				const viewer = getViewerFromWindow();
-				const myId = viewer.id || Number(store.get("al_user_id", 0));
-				const myName = viewer.name || store.get("al_username", null);
-				const userMatch = path.match(/^\/user\/([^/]+)(?:\/([^/]+))?/i);
-				let isAnotherUserPage = false;
-				let otherUser = "";
-				let otherUserId = 0;
-				let subRoute = "";
-				if (userMatch) {
-					const targetUser = decodeURIComponent(userMatch[1]);
-					subRoute = (userMatch[2] || "").toLowerCase();
-					if (!(myName && targetUser.toLowerCase() === myName.toLowerCase() || myId > 0 && userMap.get(targetUser.toLowerCase()) === myId)) {
-						isAnotherUserPage = true;
-						otherUser = targetUser;
-						otherUserId = userMap.get(targetUser.toLowerCase()) || 0;
-					}
-				}
-				if (isAnotherUserPage) {
-					logDebug("[FASTLOAD RPC] Auto-prefetching for target user:", otherUser, "subRoute:", subRoute);
-					if (subRoute !== "animelist") setTimeout(() => {
-						prefetchWorkerList("ANIME", otherUserId, otherUser);
-					}, 100);
-					if (subRoute !== "mangalist") setTimeout(() => {
-						prefetchWorkerList("MANGA", otherUserId, otherUser);
-					}, 300);
-					if (myId || myName) {
-						setTimeout(() => {
-							prefetchWorkerList("ANIME", myId, myName || void 0);
-						}, 500);
-						setTimeout(() => {
-							prefetchWorkerList("MANGA", myId, myName || void 0);
-						}, 800);
-					}
-				} else if (myId || myName) {
-					const isMyAnimePage = path.includes("/animelist") && (myName ? path.toLowerCase().includes(myName.toLowerCase()) : true);
-					const isMyMangaPage = path.includes("/mangalist") && (myName ? path.toLowerCase().includes(myName.toLowerCase()) : true);
-					if (!isMyAnimePage) setTimeout(() => {
-						prefetchWorkerList("ANIME", myId, myName || void 0);
-					}, 100);
-					if (!isMyMangaPage) setTimeout(() => {
-						prefetchWorkerList("MANGA", myId, myName || void 0);
-					}, 300);
-				}
-			}
-			navListeners.push(() => scheduleAutoPrefetch(500));
-			if (doc.readyState !== "loading") scheduleAutoPrefetch(1e3);
-			else doc.addEventListener("DOMContentLoaded", () => scheduleAutoPrefetch(1e3), { once: true });
-			attempt(() => {
-				const pageWin = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
-				const origCtor = pageWin.Worker;
-				WorkerCtor = origCtor;
-				if (origCtor && !origCtor.__alfl_ctor_hooked) try {
-					const ProxiedWorker = function(scriptURL, options) {
-						const instance = Reflect.construct(origCtor, [scriptURL, options], new.target || ProxiedWorker);
-						const urlStr = String(scriptURL || "");
-						if (urlStr.includes("worker.js") && !urlStr.includes("cloudflare")) {
-							attempt(() => {
-								workerUrl = new URL(urlStr, win.location.href).href;
-								win.localStorage.setItem("alfl:workerUrl", workerUrl);
-								store.set("alfl:workerUrl", workerUrl);
-							});
-							workerOpts = options;
-							logDebug("[FASTLOAD RPC] Page worker created:", urlStr);
-						}
-						if (!watched.has(instance)) {
-							watched.add(instance);
-							instance.addEventListener("message", onIn);
-						}
-						return instance;
-					};
-					ProxiedWorker.prototype = origCtor.prototype;
-					ProxiedWorker.__alfl_ctor_hooked = true;
-					pageWin.Worker = ProxiedWorker;
-				} catch {}
-				const W = pageWin.Worker;
-				if (!W?.prototype || W.prototype.__alfl_hooked) return;
-				W.prototype.__alfl_hooked = true;
-				const origPost = W.prototype.postMessage;
-				W.prototype.postMessage = function(data, ...rest) {
-					try {
-						if (!yielded() && isRpcFetch(data)) {
-							const id = String(data.id || "");
-							if (id.startsWith("alfl_prefetch_")) return origPost.apply(this, [data, ...rest]);
-							if (!watched.has(this)) {
-								watched.add(this);
-								this.addEventListener("message", onIn);
-							}
-							const h = data.params[3] || {};
-							const a = h.Authorization ?? h.authorization;
-							if (a) {
-								lastAuth = String(a);
-								store.set("al_token_auth", lastAuth);
-							}
-							const q = {
-								query: data.params[1],
-								variables: data.params[2]
-							};
-							if (isMediaListQuery(q)) attempt(() => {
-								const headers = { ...h };
-								delete headers.Authorization;
-								delete headers.authorization;
-								const tplStr = JSON.stringify({
-									endpoint: data.params[0],
-									query: data.params[1],
-									vars: data.params[2],
-									headers,
-									options: data.params[4]
-								});
-								win.localStorage.setItem("alfl:rpc:listTpl:v2", tplStr);
-								store.set("alfl:rpc:listTpl:v2", tplStr);
-							});
-							if (isMutation(q)) {
-								clearRpc();
-								let pMap = workerPending.get(this);
-								if (!pMap) {
-									pMap = new Map();
-									workerPending.set(this, pMap);
-								}
-								pMap.set(id, {
-									key: null,
-									mutation: true
-								});
-							} else if (!isVolatile(q)) {
-								const key = rpcKey(data.params);
-								const label = String(q.query).replace(/\s+/g, " ").slice(0, 50);
-								let hit = null;
-								let flying = null;
-								if (isMediaListQuery(q)) {
-									let { type = "ANIME", userId, userName } = normalizeVariables(q.variables);
-									const viewer = getViewerFromWindow();
-									const myId = viewer.id || Number(store.get("al_user_id", 0));
-									const isViewerReq = userId && userId === myId || userName && userName.toLowerCase() === viewer.name?.toLowerCase();
-									if (!userName && userId) userName = idToUserMap.get(userId);
-									if (!userId && userName) userId = userMap.get(userName.toLowerCase());
-									if (!isViewerReq) {
-										const userMatch = win.location.pathname.match(/^\/user\/([^/]+)/i);
-										if (userMatch) {
-											const profileUser = decodeURIComponent(userMatch[1]).trim().toLowerCase();
-											if (!userName) userName = profileUser;
-											if (userId && !userMap.has(profileUser)) rememberUser(profileUser, userId);
-										}
-									}
-									const possibleKeys = [key, ...getMediaListKeys(type || "ANIME", userId, userName)];
-									for (const k of possibleKeys) {
-										if (!hit) {
-											const h = rpcCache.get(k);
-											if (h && h.time >= freshFloor && Date.now() - h.time < getQueryTtl(q)) hit = h;
-										}
-										if (!flying) {
-											const f = rpcInflight.get(k);
-											if (f) flying = f;
-										}
-									}
-								} else {
-									const h = rpcCache.get(key);
-									if (h && h.time >= freshFloor && Date.now() - h.time < getQueryTtl(q)) hit = h;
-									flying = rpcInflight.get(key);
-								}
-								if (hit) {
-									stats.cacheHits++;
-									logDebug("[FASTLOAD RPC] HIT", label, `${Math.round((Date.now() - hit.time) / 1e3)}s old`);
-									const worker = this;
-									const reply = {
-										...clone(hit.msg),
-										id: data.id
-									};
-									const MessageEventCtor = win.MessageEvent || MessageEvent;
-									setTimeout(() => worker.dispatchEvent(new MessageEventCtor("message", { data: reply })), 0);
-									return;
-								}
-								if (flying) {
-									stats.deduped++;
-									logDebug("[FASTLOAD RPC] Attached to in-flight prefetch:", label);
-									const worker = this;
-									const replyId = data.id;
-									flying.promise.then((msg) => {
-										logDebug("[FASTLOAD RPC] In-flight prefetch delivered to page:", label);
-										const reply = {
-											...clone(msg),
-											id: replyId
-										};
-										const MessageEventCtor = win.MessageEvent || MessageEvent;
-										setTimeout(() => worker.dispatchEvent(new MessageEventCtor("message", { data: reply })), 0);
-									}, () => {
-										origPost.apply(worker, [data, ...rest]);
-									});
-									return;
-								}
-								logDebug("[FASTLOAD RPC] MISS", label, JSON.stringify(q.variables).slice(0, 80));
-								let pMap = workerPending.get(this);
-								if (!pMap) {
-									pMap = new Map();
-									workerPending.set(this, pMap);
-								}
-								pMap.set(id, {
-									key,
-									mutation: false,
-									epoch: rpcEpoch
-								});
-							}
-						}
-					} catch {}
-					return origPost.apply(this, [data, ...rest]);
-				};
-			});
-			let hiddenAt = 0;
-			doc.addEventListener("visibilitychange", () => {
-				if (doc.hidden) {
-					hiddenAt = Date.now();
-					return;
-				}
-				if (hiddenAt && Date.now() - hiddenAt > 6e5) {
-					epoch++;
-					freshFloor = Date.now();
-				}
-				inflight.clear();
-			});
-			const prefetched = new Map();
-			const stamps = [];
-			let dwellTimer = 0;
-			function getAuthToken() {
-				if (win.al_token) return win.al_token;
-				const stored = store.get("al_token", null);
-				if (stored) {
-					win.al_token = stored;
-					return stored;
-				}
-				try {
-					const nuxtToken = win.__NUXT__?.state?.auth?.token || win.__NUXT__?.state?.auth?._token;
-					if (typeof nuxtToken === "string" && nuxtToken) {
-						const clean = nuxtToken.replace(/^Bearer\s+/i, "").trim();
-						if (clean) {
-							win.al_token = clean;
-							store.set("al_token", clean);
-							return clean;
-						}
-					}
-				} catch {}
-				try {
-					for (const k of [
-						"auth._token.local",
-						"auth.token",
-						"access_token",
-						"token",
-						"al_token"
-					]) {
-						const val = win.localStorage.getItem(k);
-						if (typeof val === "string" && val) {
-							const clean = val.replace(/^"|"$/g, "").replace(/^Bearer\s+/i, "").trim();
-							if (clean && clean !== "false" && clean !== "null" && clean.length > 10) {
-								win.al_token = clean;
-								store.set("al_token", clean);
-								return clean;
-							}
-						}
-					}
-				} catch {}
-				return null;
-			}
-			function replayRoute(known, route) {
-				if (yielded()) return 0;
-				let sent = 0;
-				for (const request of known.reqs) {
-					let parsed;
-					try {
-						parsed = JSON.parse(request.body);
-					} catch {
-						continue;
-					}
-					if (isMutation(parsed) || isVolatile(parsed)) continue;
-					if (!known.route.static && !sameId(known.route.id, route.id)) {
-						if (!replacePageId(parsed.variables, known.route.id, route.id)) continue;
-					}
-					const body = JSON.stringify(parsed);
-					const headers = { ...request.headers };
-					if (request.auth) {
-						const token = getAuthToken();
-						if (!token) continue;
-						headers.authorization = `Bearer ${token}`;
-					}
-					stamps.push(Date.now());
-					sent++;
-					attempt(() => {
-						logDebug("[FASTLOAD] Replay/Prefetch dispatching for:", route.shape, "vars:", parsed.variables);
-						win.fetch(request.url, {
-							method: "POST",
-							headers,
-							body,
-							credentials: request.credentials || "same-origin",
-							mode: request.mode || "cors",
-							__alfl: "replay"
-						}).catch(() => {});
-					});
-				}
-				return sent;
-			}
-			const triggerEarlyStart = () => {
-				attempt(() => {
-					if (navigator.connection?.saveData) return;
-					const route = here();
-					const known = route && learned.get(route.shape);
-					if (known) stats.earlyStarts += replayRoute(known, route);
-				});
-			};
-			if (CFG.earlyStart) {
-				loadRoutes();
-				triggerEarlyStart();
-				navListeners.push(triggerEarlyStart);
-			} else if (CFG.prefetch) loadRoutes();
-			if (!CFG.prefetch) return;
-			function prefetchFor(anchor) {
-				if (yielded()) return;
-				const now = Date.now();
-				if (doc.hidden || now < pausedUntil || navigator.connection?.saveData) return;
-				let url;
-				try {
-					url = new URL(anchor.href, win.location.href);
-				} catch {
-					return;
-				}
-				if (url.origin !== win.location.origin) return;
-				const listMatch = url.pathname.match(/^\/(?:user\/([^/]+)\/)?(animelist|mangalist)/i);
-				if (listMatch) {
-					const targetUser = listMatch[1] || getLocalUsername();
-					const listType = listMatch[2].toLowerCase() === "mangalist" ? "MANGA" : "ANIME";
-					const userId = targetUser ? userMap.get(targetUser.toLowerCase()) || (targetUser.toLowerCase() === getLocalUsername()?.toLowerCase() ? Number(store.get("al_user_id", 0)) : 0) : 0;
-					if (userId || targetUser) prefetchWorkerList(listType, userId, targetUser || void 0);
-					return;
-				}
-				const route = parseRoute(url.pathname, url.search);
-				if (!route || route.static) return;
-				const known = learned.get(route.shape);
-				if (!known || known.route.static) return;
-				if (typeof known.route.id !== typeof route.id) {
-					if (typeof known.route.id === "number" && typeof route.id === "string") {
-						if (userMap.get(route.id.toLowerCase()) !== known.route.id) return;
-					} else if (typeof known.route.id === "string" && typeof route.id === "number") {
-						if (userMap.get(known.route.id.toLowerCase()) !== route.id) return;
-					} else return;
-				}
-				const current = here();
-				if (current && current.shape === route.shape && sameId(current.id, route.id)) return;
-				const key = `${route.shape}|${String(route.id).toLowerCase()}`;
-				const cooldown = route.shape.includes("list") ? 6e4 : CFG.gqlTtl;
-				if (now - (prefetched.get(key) || 0) < cooldown) return;
-				while (stamps.length && now - stamps[0] > 6e4) stamps.shift();
-				if (prefetched.size > 200) {
-					for (const [k, t] of prefetched) if (now - t > cooldown) prefetched.delete(k);
-				}
-				if (stamps.length + known.reqs.length > CFG.prefetchMaxPerMin) return;
-				const sent = replayRoute(known, route);
-				if (sent) {
-					prefetched.set(key, now);
-					stats.prefetched += sent;
-					logDebug("[FASTLOAD] Prefetch sent for:", route.shape, route.id);
-				}
-			}
-			const linkOf = (event) => event.target?.closest?.("a[href]") || null;
-			const opts = {
-				capture: true,
-				passive: true
-			};
-			doc.addEventListener("pointerover", (event) => {
-				if (event.pointerType && event.pointerType !== "mouse") return;
-				const anchor = linkOf(event);
-				clearTimeout(dwellTimer);
-				if (anchor) dwellTimer = setTimeout(() => prefetchFor(anchor), CFG.prefetchDwellMs);
-			}, opts);
-			doc.addEventListener("pointerout", () => clearTimeout(dwellTimer), opts);
-			doc.addEventListener("pointerdown", (event) => {
-				const anchor = linkOf(event);
-				if (anchor) prefetchFor(anchor);
-			}, opts);
-		}
-		if (CFG.gqlTtl > 0 && typeof win.fetch === "function") attempt(installGraphQLLayer);
 		if (CFG.coalesceObservers) attempt(installObserverCoalescing);
 		if (CFG.fastInnerText) attempt(installFastInnerText);
 		if (CFG.memoSelectorProbes) attempt(installProbeMemo);
 		if (CFG.blockTierInData || CFG.tierAssist) attempt(installTierSupport);
 		if (CFG.lazyMedia) attempt(installLazyMedia);
 		if (CFG.rowSkipping) attempt(installRowSkipping);
+		if (CFG.earlyStart) {
+			loadRoutes();
+			triggerEarlyStart(yielded);
+			navListeners.push(() => triggerEarlyStart(yielded));
+		} else if (CFG.prefetch) loadRoutes();
+		if (CFG.prefetch) {
+			navListeners.push(() => scheduleAutoPrefetch(yielded, 500));
+			if (doc.readyState !== "loading") scheduleAutoPrefetch(yielded, 1e3);
+			else doc.addEventListener("DOMContentLoaded", () => scheduleAutoPrefetch(yielded, 1e3), { once: true });
+			installPointerPrefetch(yielded);
+		}
 	});
 	defineFeature({
 		id: "tagPercent",
@@ -7551,17 +8091,19 @@
 			clearTimeout(timer);
 			timer = setTimeout(() => render(), ms);
 		};
-		function renderConnect(key) {
+		function renderConnect(key, reason = "none") {
 			const spot = findSpot();
 			if (!spot) return void schedule(800);
 			const box = document.createElement("div");
 			box.id = ID;
 			box.dataset.mode = "connect";
-			box.innerHTML = `<div style="margin-bottom:10px;color:rgb(var(--color-text-lighter))">Connect AniList to edit your score and progress here.</div><button class="ala-mi-save" type="button">Connect AniList</button>`;
-			box.querySelector("button").addEventListener("click", alConnect);
+			box.innerHTML = `<div style="margin-bottom:10px;color:rgb(var(--color-text-lighter))">${reason === "rejected" ? "Couldn't verify your AniList session. Log in to AniList to edit your score and progress." : "Log in to AniList to edit your score and progress here."}</div><a class="ala-mi-save" href="/login" style="display:inline-block;text-decoration:none;color:#fff;text-align:center;">Log in to AniList</a>`;
 			panel()?.remove();
 			spot.parent.insertBefore(box, spot.before);
 			shown = key;
+			if (reason === "none") setTimeout(() => {
+				if (panel()?.dataset.mode === "connect" && AniList.hasAuth()) render(true);
+			}, 3e3);
 		}
 		function changeProgress(delta, input, limit) {
 			const next = Number(input.value) + delta;
@@ -7634,15 +8176,26 @@
 				if (Date.now() - routeAt < 15e3) schedule(800);
 				return;
 			}
-			if (!store.get("al_token", null)) return renderConnect(key);
+			if (!AniList.hasAuth()) return renderConnect(key, "none");
 			const g = gen;
 			const stale = () => g !== gen || mediaRoute()?.id !== route.id;
 			rendering = true;
 			logDebug("[MEDIAINFO]", "Rendering media info panel for:", key);
 			try {
-				const info = await MediaData.get(route.id, route.type);
+				let info = null;
+				let fmt = null;
+				try {
+					info = await MediaData.get(route.id, route.type, { throwAuth: true });
+					if (stale()) return;
+					if (info) fmt = (await AniList.viewer())?.scoreFormat || null;
+				} catch (e) {
+					if (stale()) return;
+					if (e?.auth) return renderConnect(key, "rejected");
+					info = null;
+				}
 				if (stale()) return;
-				if (!info) {
+				if (!info || !fmt) {
+					if (!AniList.hasAuth()) return renderConnect(key, "none");
 					retry = {
 						key,
 						at: Date.now() + 15e3,
@@ -7651,8 +8204,6 @@
 					if (retry.count < MAX_FAILURES) schedule(15500);
 					return;
 				}
-				const fmt = await scoreFormat();
-				if (stale()) return;
 				const spot = findSpot();
 				if (!spot) {
 					schedule(800);
@@ -7841,7 +8392,7 @@
 			schedule(500);
 		});
 		window.addEventListener("focus", () => {
-			if (panel()?.dataset.mode === "connect" && store.get("al_token", null)) render(true);
+			if (panel()?.dataset.mode === "connect" && AniList.hasAuth()) render(true);
 		});
 	});
 	defineFeature({
@@ -8464,9 +9015,9 @@
 			{
 				key: "tierLabelsAverageScore",
 				type: "toggle",
-				def: true,
-				title: "Show on Average & Mean scores",
-				help: "Display tier badge next to Average Score / Mean Score on profile and media pages."
+				def: false,
+				title: "Show on Weighted Score",
+				help: "Display tier badge next to the Weighted Score on media pages."
 			},
 			{
 				key: "tierLabels",
@@ -8482,11 +9033,11 @@
 			const legacy = localStorage.getItem("anilistTierLabelsSettings");
 			if (legacy) {
 				const parsed = JSON.parse(legacy);
-				if (Array.isArray(parsed.tiers) && parsed.tiers.length && store.get("ala_setting_tierLabels", null) === null) {
+				if (Array.isArray(parsed.tiers) && parsed.tiers.length && store$1.get("ala_setting_tierLabels", null) === null) {
 					const check = validateTiers(parsed.tiers);
-					if (check.valid && check.tiers) store.set(PREFIX + "tierLabels", check.tiers);
+					if (check.valid && check.tiers) store$1.set(PREFIX + "tierLabels", check.tiers);
 				}
-				if (typeof parsed.enableRatingTextColor === "boolean" && store.get("ala_setting_tierLabelsColorScore", null) === null) store.set(PREFIX + "tierLabelsColorScore", parsed.enableRatingTextColor);
+				if (typeof parsed.enableRatingTextColor === "boolean" && store$1.get("ala_setting_tierLabelsColorScore", null) === null) store$1.set(PREFIX + "tierLabelsColorScore", parsed.enableRatingTextColor);
 			}
 		} catch (_) {}
 		addStyle("ala-tier-labels-css", `
@@ -8538,7 +9089,7 @@
 				if (container.querySelector(".medialist.table.POINT_5, .medialist.POINT_5")) return "POINT_5";
 				if (container.querySelector(".medialist.table.POINT_3, .medialist.POINT_3")) return "POINT_3";
 			}
-			const viewerFmt = store.get("al_score_format", null);
+			const viewerFmt = store$1.get("al_score_format", null);
 			if (viewerFmt) return viewerFmt;
 			return "UNKNOWN";
 		}
@@ -8550,7 +9101,7 @@
 			if (!compareRoot._colFormats) compareRoot._colFormats = {};
 			if (compareRoot._colFormats[sideKey]) return compareRoot._colFormats[sideKey];
 			if (isAuthUser) {
-				const viewerFmt = store.get("al_score_format", null);
+				const viewerFmt = store$1.get("al_score_format", null);
 				if (viewerFmt) {
 					compareRoot._colFormats[sideKey] = viewerFmt;
 					return viewerFmt;
@@ -8677,12 +9228,12 @@
 			if (showAverage) document.querySelectorAll(".data-set").forEach((dataSet) => {
 				const label = dataSet.querySelector(".type");
 				const value = dataSet.querySelector(".value");
-				if (label && value && ((label.textContent || "").includes("Average Score") || (label.textContent || "").includes("Mean Score"))) processScoreElement(value, tiers, colorScore, true, false);
+				if (label && value && (label.textContent || "").includes("Weighted Score")) processScoreElement(value, tiers, colorScore, true, false);
 			});
 			processTop100Elements(tiers, colorScore);
 		}
 		const HINT_KEY = "ala_standalone_seen_tierLabels";
-		let paused = !!store.get(HINT_KEY, false);
+		let paused = !!store$1.get(HINT_KEY, false);
 		const runScan = () => {
 			if (!paused) applyTierLabels();
 		};
@@ -8704,7 +9255,7 @@
 				}, 100);
 			});
 			detectStandalone("tierLabels").then((found) => {
-				store.set(HINT_KEY, found);
+				store$1.set(HINT_KEY, found);
 				const wasPaused = paused;
 				paused = found;
 				if (found && !wasPaused) console.warn("[AL-Additions] Built-in Tier Labels paused: the standalone AniList Tier Labels script is installed. Uninstall it to use the built-in version.");
@@ -8720,13 +9271,13 @@
 		"Dropped"
 	];
 	function normalizeStatus(raw) {
-		const s = raw.trim().toLowerCase();
+		const s = (raw || "").trim().toLowerCase();
 		if (s.includes("plan")) return "Planning";
 		if (s.includes("complete")) return "Completed";
 		if (s.includes("current") || s.includes("watch") || s.includes("read") || s.includes("repeat")) return "Current";
 		if (s.includes("pause") || s.includes("hold")) return "Paused";
 		if (s.includes("drop")) return "Dropped";
-		return raw.trim();
+		return raw ? raw.trim() : "Planning";
 	}
 	function getEntryData(el) {
 		const cached = el._alaCompareData;
@@ -8734,7 +9285,7 @@
 		const title = (el.querySelector(".title a, .title")?.textContent || "").trim();
 		const scores = el.querySelectorAll(".score");
 		const yourScoreEl = el.querySelector(".score[label=\"Score\"]") || scores[0];
-		const otherScoreEl = el.querySelector(".score:not([label=\"Score\"])") || scores[1];
+		const otherScoreEl = Array.from(scores).find((s) => s !== yourScoreEl) || scores[1];
 		const yourScoreAttr = yourScoreEl?.getAttribute("score");
 		let yourScore = yourScoreAttr ? parseFloat(yourScoreAttr) : parseFloat(yourScoreEl?.textContent?.replace(/[^\d.]/g, "") || "0");
 		if (!Number.isFinite(yourScore)) yourScore = 0;
@@ -8743,7 +9294,7 @@
 		if (!Number.isFinite(otherScore)) otherScore = 0;
 		const statuses = el.querySelectorAll(".status");
 		const yourStatusEl = el.querySelector(".status[label=\"Your Status\"]") || statuses[0];
-		const otherStatusEl = el.querySelector(".status:not([label=\"Your Status\"])") || statuses[1];
+		const otherStatusEl = Array.from(statuses).find((s) => s !== yourStatusEl) || statuses[1];
 		const yourStatus = normalizeStatus(yourStatusEl?.textContent || "");
 		const otherStatus = normalizeStatus(otherStatusEl?.textContent || "");
 		const data = {
@@ -9067,8 +9618,12 @@
 		let lastProcessedCount = -1;
 		let currentRoute = "";
 		let isLoadingAll = false;
+		let isCompareLoaded = false;
+		let loadFailed = false;
+		let isMutatingDOM = false;
 		let loadAbortState = null;
 		let resizeCleanup = null;
+		let indicatorTimer = null;
 		function getCompareVue() {
 			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
 			const scrollerEl = win.document?.querySelector?.(".scroller") || document.querySelector(".scroller");
@@ -9076,6 +9631,88 @@
 			const compareEl = win.document?.querySelector?.(".compare") || document.querySelector(".compare");
 			if (compareEl && compareEl.__vue__) return compareEl.__vue__;
 			return null;
+		}
+		const pageWin = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+		const setRpcBlock = (fn) => {
+			pageWin.__ALFL_RPC_BLOCK__ = fn;
+		};
+		const compareBlocker = (q, vars) => isComparePage() && (/\bcompareWithAuthList\b/i.test(q || "") || Boolean(vars?.compareWithAuthList));
+		const installBlocker = () => {
+			setRpcBlock(compareBlocker);
+		};
+		function disableNativeScrollers(listContainer) {
+			(listContainer?.parentElement || listContainer || document).querySelectorAll(".scroller").forEach((el) => {
+				try {
+					const v = el.__vue__;
+					if (v) {
+						if (typeof v.check === "function") {
+							window.removeEventListener("scroll", v.check);
+							window.removeEventListener("resize", v.check);
+							v._scrollContainer?.removeEventListener?.("scroll", v.check);
+							v._scrollContainer?.removeEventListener?.("resize", v.check);
+						}
+						v.execute = () => {};
+						v.handler = () => {};
+						if (v.$parent) {
+							v.$parent.complete = true;
+							v.$parent.loading = false;
+						}
+						v.$destroy?.();
+					}
+				} catch {}
+				el.remove();
+			});
+		}
+		async function resolveCompareUsers() {
+			const type = location.pathname.toLowerCase().includes("mangalist") ? "MANGA" : "ANIME";
+			const win = typeof _unsafeWindow !== "undefined" ? _unsafeWindow : window;
+			const userMap = win.__ALFL_USER_MAP__;
+			let otherName;
+			let otherId;
+			const urlMatch = location.pathname.match(/\/user\/([^/]+)\/(animelist|mangalist)\/compare/i);
+			if (urlMatch) try {
+				otherName = decodeURIComponent(urlMatch[1]);
+			} catch {
+				otherName = urlMatch[1];
+			}
+			if (!otherName) {
+				const queryUser = new URLSearchParams(location.search).get("user");
+				if (queryUser) otherName = queryUser;
+			}
+			const vue = getCompareVue();
+			if (vue) {
+				if (!otherName) otherName = vue.user?.name || vue.userName || void 0;
+				if (!otherId) otherId = Number(vue.user?.id || vue.userId) || void 0;
+			}
+			if (otherName && !otherId && userMap) otherId = userMap.get(otherName.toLowerCase());
+			if (otherName && otherId) {
+				if (userMap) userMap.set(otherName.toLowerCase(), otherId);
+				if (win.__ALFL_ID_MAP__) win.__ALFL_ID_MAP__.set(otherId, otherName);
+			}
+			let viewerId = Number(store$1.get("al_user_id", 0)) || void 0;
+			let viewerName = store$1.get("al_username", null) || void 0;
+			if (!viewerId || !viewerName) {
+				const nuxtUser = win.__NUXT__?.state?.auth?.user || win.__NUXT__?.state?.user;
+				if (nuxtUser) {
+					if (!viewerId && nuxtUser.id) viewerId = Number(nuxtUser.id);
+					if (!viewerName && nuxtUser.name) viewerName = String(nuxtUser.name);
+				}
+			}
+			if (!viewerId || !viewerName) {
+				const viewer = await AniList.viewer();
+				if (viewer) {
+					viewerId = viewer.id;
+					viewerName = viewer.name;
+				}
+			}
+			if (!viewerId && viewerName && userMap) viewerId = userMap.get(viewerName.toLowerCase());
+			return {
+				viewerId,
+				viewerName,
+				otherId,
+				otherName,
+				type
+			};
 		}
 		function updateHeaderHoverColor() {
 			const testEl = document.createElement("div");
@@ -9147,13 +9784,8 @@
 				el.style.display = "";
 				if (show) visibleCount++;
 			}
-			logDebug("[COMPARE]", "Filter applied:", {
-				activeStatuses: [...activeStatuses],
-				visibleCount,
-				total: entries.length
-			});
 			let emptyEl = listContainer.querySelector(".ala-compare-empty");
-			if (visibleCount === 0) {
+			if (visibleCount === 0 && entries.length > 0) {
 				if (!emptyEl) {
 					emptyEl = document.createElement("div");
 					emptyEl.className = "ala-compare-empty";
@@ -9164,19 +9796,17 @@
 			} else if (emptyEl) emptyEl.style.display = "none";
 		}
 		function applySort(listContainer, entries, col, dir) {
+			if (entries.length > 0) listContainer.querySelector(".no-results")?.remove();
 			entries.sort((a, b) => {
 				return compareEntries(getEntryData(a), getEntryData(b), col, dir);
 			});
-			for (const el of entries) listContainer.appendChild(el);
+			const frag = document.createDocumentFragment();
+			for (const el of entries) frag.appendChild(el);
+			isMutatingDOM = true;
+			listContainer.appendChild(frag);
 			const emptyEl = listContainer.querySelector(".ala-compare-empty");
 			if (emptyEl) listContainer.appendChild(emptyEl);
-			const scroller = listContainer.querySelector(".scroller");
-			if (scroller) listContainer.appendChild(scroller);
-			logDebug("[COMPARE]", "Sort applied:", {
-				col,
-				dir,
-				totalEntries: entries.length
-			});
+			isMutatingDOM = false;
 		}
 		function updateStatusCounts(sidebar, entries) {
 			const counts = {
@@ -9199,9 +9829,13 @@
 			if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
 		}
 		function setLoadIndicator(sidebar, text) {
+			if (indicatorTimer) {
+				clearTimeout(indicatorTimer);
+				indicatorTimer = null;
+			}
 			let indicator = sidebar.querySelector("#ala-compare-load-indicator");
 			if (!text) {
-				if (indicator) indicator.style.display = "none";
+				indicator?.remove();
 				return;
 			}
 			if (!indicator) {
@@ -9218,78 +9852,219 @@
 			const textEl = indicator.querySelector(".ala-compare-load-text");
 			if (textEl) textEl.textContent = text;
 		}
-		async function autoLoadAllEntries(listContainer, sidebar) {
-			if (isLoadingAll) return;
+		function getActiveCompareContainer(fallback) {
+			return document.getElementById("ala-compare-table") || fallback || document.querySelector(".ala-compare-main .compare") || null;
+		}
+		function triggerFilterUpdate(sidebar, fallback) {
+			const badge = sidebar.querySelector(".ala-compare-active-badge");
+			if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
+			const target = getActiveCompareContainer(fallback);
+			if (!target) return;
+			applyFilter(target, Array.from(target.querySelectorAll(".entry:not(.header)")));
+		}
+		function triggerSort(col, fallback) {
+			if (activeSortCol === col) activeSortDir = activeSortDir === "asc" ? "desc" : "asc";
+			else {
+				activeSortCol = col;
+				activeSortDir = col === "title" ? "asc" : "desc";
+			}
+			const target = getActiveCompareContainer(fallback);
+			if (!target) return;
+			const currentHeader = target.querySelector(".entry.header");
+			if (currentHeader) {
+				const titleH = currentHeader.querySelector(".title");
+				const scores = currentHeader.querySelectorAll(".score");
+				updateSortArrows(titleH, scores[0] || null, scores[1] || null, activeSortCol, activeSortDir);
+			}
+			applySort(target, Array.from(target.querySelectorAll(".entry:not(.header)")), activeSortCol, activeSortDir);
+		}
+		async function loadAllEntriesViaMediaList(compareRoot, sidebar) {
+			if (isLoadingAll || isCompareLoaded || loadFailed) return;
 			isLoadingAll = true;
 			const abortState = { abort: false };
 			loadAbortState = abortState;
+			indicatorTimer = setTimeout(() => {
+				if (!abortState.abort && isComparePage()) setLoadIndicator(sidebar, "Loading full compare list...");
+			}, 250);
 			try {
-				let iterations = 0;
-				const MAX_PAGES = 100;
-				while (!abortState.abort && isComparePage() && iterations < MAX_PAGES) {
-					iterations++;
-					const scrollerEl = document.querySelector(".scroller");
-					const vue = getCompareVue();
-					if (vue) {
-						const currentEntries = listContainer.querySelectorAll(".entry:not(.header)").length;
-						if (currentEntries > 0) setLoadIndicator(sidebar, `Loading all entries (${currentEntries})...`);
-						else if (scrollerEl) setLoadIndicator(sidebar, "Loading all entries...");
-						if (vue.hasNextPage === false || vue.complete) break;
-						if (vue.loading) {
-							await new Promise((r) => setTimeout(r, 100));
-							continue;
-						}
-						try {
-							if (typeof vue.scrollHandler === "function") await vue.scrollHandler();
-							else if (typeof scrollerEl?.__vue__?.handler === "function") await scrollerEl.__vue__.handler();
-						} catch (_) {}
-						await new Promise((r) => setTimeout(r, 140));
-					} else if (scrollerEl) {
-						const currentEntries = listContainer.querySelectorAll(".entry:not(.header)").length;
-						if (currentEntries > 0) setLoadIndicator(sidebar, `Loading all entries (${currentEntries})...`);
-						else setLoadIndicator(sidebar, "Loading all entries...");
-						const prevCount = currentEntries;
-						scrollerEl.scrollIntoView({
-							behavior: "auto",
-							block: "end"
-						});
-						window.dispatchEvent(new Event("scroll"));
-						await new Promise((r) => setTimeout(r, 300));
-						if (listContainer.querySelectorAll(".entry:not(.header)").length === prevCount) {
-							await new Promise((r) => setTimeout(r, 400));
-							if (listContainer.querySelectorAll(".entry:not(.header)").length === prevCount) break;
-						}
-					} else break;
+				const { viewerId, viewerName, otherId, otherName, type } = await resolveCompareUsers();
+				if (abortState.abort || !isComparePage()) return;
+				const viewerTarget = viewerId || viewerName;
+				const otherTarget = otherId || otherName;
+				if (!viewerTarget || !otherTarget) {
+					logDebug("[COMPARE] Missing viewer or other user for getMediaList, keeping fallback");
+					loadFailed = true;
+					return;
 				}
+				const [myListRes, otherListRes] = await Promise.all([AniList.getMediaList(viewerTarget, type, {
+					userId: viewerId,
+					userName: viewerId ? void 0 : viewerName
+				}), AniList.getMediaList(otherTarget, type, {
+					userId: otherId,
+					userName: otherId ? void 0 : otherName
+				})]);
+				if (abortState.abort || !isComparePage()) return;
+				const myMap = new Map();
+				for (const entry of myListRes.allEntries) myMap.set(entry.mediaId, entry);
+				const safeOtherName = esc(otherListRes.user?.name || otherName || "User");
+				const scopeAttr = Array.from(compareRoot.attributes).map((a) => a.name).find((n) => /^data-v-[a-f0-9]+$/i.test(n));
+				const seenMediaIds = new Set();
+				const matchedNodes = [];
+				for (const otherEntry of otherListRes.allEntries) {
+					const mediaId = otherEntry.mediaId;
+					if (seenMediaIds.has(mediaId)) continue;
+					const myEntry = myMap.get(mediaId);
+					if (!myEntry) continue;
+					seenMediaIds.add(mediaId);
+					const title = otherEntry.media?.title?.userPreferred || otherEntry.media?.title?.romaji || otherEntry.media?.title?.english || myEntry.media?.title?.userPreferred || "Unknown";
+					const yourScore = myEntry.score || 0;
+					const otherScore = otherEntry.score || 0;
+					const yourStatus = normalizeStatus(myEntry.status);
+					const otherStatus = normalizeStatus(otherEntry.status);
+					const row = document.createElement("div");
+					row.className = "entry";
+					if (scopeAttr) row.setAttribute(scopeAttr, "");
+					row.innerHTML = `
+            <div class="title"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
+              <a href="/${type.toLowerCase()}/${mediaId}/" class=""${scopeAttr ? ` ${scopeAttr}=""` : ""}></a>
+            </div>
+            <div class="score" label="Score" score="${yourScore}"${scopeAttr ? ` ${scopeAttr}=""` : ""}><span>${yourScore > 0 ? yourScore : "0"}</span></div>
+            <div class="score" label="${safeOtherName}'s Score" score="${otherScore}"${scopeAttr ? ` ${scopeAttr}=""` : ""}><span>${otherScore > 0 ? otherScore : "0"}</span></div>
+            <div class="status" label="Your Status"${scopeAttr ? ` ${scopeAttr}=""` : ""}><span>${yourStatus}</span></div>
+            <div class="status" label="${safeOtherName}'s Status"${scopeAttr ? ` ${scopeAttr}=""` : ""}><span>${otherStatus}</span></div>
+          `;
+					const link = row.querySelector(".title a");
+					if (link) link.textContent = title;
+					row._alaCompareData = {
+						el: row,
+						title,
+						yourScore,
+						otherScore,
+						yourStatus,
+						otherStatus
+					};
+					matchedNodes.push(row);
+				}
+				logDebug("[COMPARE] Matched entries via MediaListCollection:", matchedNodes.length);
+				const main = compareRoot.parentElement || document.querySelector(".ala-compare-main");
+				if (!main) return;
+				let customTable = main.querySelector("#ala-compare-table");
+				if (!customTable) {
+					customTable = document.createElement("div");
+					customTable.id = "ala-compare-table";
+					customTable.className = "compare";
+					if (scopeAttr) customTable.setAttribute(scopeAttr, "");
+					main.appendChild(customTable);
+				}
+				let customHeader = customTable.querySelector(".entry.header");
+				if (!customHeader) {
+					customHeader = document.createElement("div");
+					customHeader.className = "entry header";
+					if (scopeAttr) customHeader.setAttribute(scopeAttr, "");
+					customHeader.innerHTML = `
+            <div class="title ala-sortable-header"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
+              <div class="ala-header-wrap"><span class="ala-header-label">Title</span></div>
+            </div>
+            <div class="score ala-sortable-header"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
+              <div class="ala-header-wrap"><span class="ala-header-label">Your Score</span></div>
+            </div>
+            <div class="score ala-sortable-header"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
+              <div class="ala-header-wrap"><span class="ala-header-label">${safeOtherName}'s Score</span></div>
+            </div>
+            <div class="status"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
+              <span class="ala-header-label">Your Status</span>
+            </div>
+            <div class="status"${scopeAttr ? ` ${scopeAttr}=""` : ""}>
+              <span class="ala-header-label">${safeOtherName}'s Status</span>
+            </div>
+          `;
+					customTable.appendChild(customHeader);
+					const titleH = customHeader.querySelector(".title");
+					const scores = customHeader.querySelectorAll(".score");
+					titleH?.addEventListener("click", () => triggerSort("title", compareRoot));
+					scores[0]?.addEventListener("click", () => triggerSort("yourScore", compareRoot));
+					scores[1]?.addEventListener("click", () => triggerSort("otherScore", compareRoot));
+				}
+				const titleH = customHeader.querySelector(".title");
+				const scores = customHeader.querySelectorAll(".score");
+				updateSortArrows(titleH, scores[0] || null, scores[1] || null, activeSortCol, activeSortDir);
+				matchedNodes.sort((a, b) => {
+					return compareEntries(getEntryData(a), getEntryData(b), activeSortCol, activeSortDir);
+				});
+				isMutatingDOM = true;
+				customTable.querySelectorAll(".entry:not(.header)").forEach((el) => el.remove());
+				const frag = document.createDocumentFragment();
+				for (const el of matchedNodes) frag.appendChild(el);
+				customTable.appendChild(frag);
+				if (matchedNodes.length === 0) {
+					let empty = customTable.querySelector(".no-results");
+					if (!empty) {
+						empty = document.createElement("div");
+						empty.className = "no-results";
+						empty.textContent = `You don't have any ${type.toLowerCase()} in common ｡ﾟヽ(ﾟ´Д｀)ﾉﾟ｡`;
+						customTable.appendChild(empty);
+					}
+					customHeader.style.display = "none";
+				} else {
+					customTable.querySelector(".no-results")?.remove();
+					customHeader.style.display = "";
+				}
+				const emptyEl = customTable.querySelector(".ala-compare-empty");
+				if (emptyEl) customTable.appendChild(emptyEl);
+				isMutatingDOM = false;
+				compareRoot.style.display = "none";
+				disableNativeScrollers(compareRoot);
+				lastProcessedCount = matchedNodes.length;
+				isCompareLoaded = true;
+				installBlocker();
+				updateStatusCounts(sidebar, matchedNodes);
+				applyFilter(customTable, matchedNodes);
+			} catch (err) {
+				loadFailed = true;
+				setRpcBlock();
+				console.error("[AL-Additions] CompareView getMediaList error:", err);
 			} finally {
 				isLoadingAll = false;
 				loadAbortState = null;
 				setLoadIndicator(sidebar, null);
-				if (isComparePage()) {
-					const finalEntries = Array.from(listContainer.querySelectorAll(".entry:not(.header)"));
-					if (finalEntries.length > 0) {
-						updateStatusCounts(sidebar, finalEntries);
-						applyFilter(listContainer, finalEntries);
-						applySort(listContainer, finalEntries, activeSortCol, activeSortDir);
-					}
-				}
 			}
 		}
 		function cleanup() {
+			if (!isComparePage()) setRpcBlock();
+			else installBlocker();
+			if (indicatorTimer) {
+				clearTimeout(indicatorTimer);
+				indicatorTimer = null;
+			}
 			if (loadAbortState) {
 				loadAbortState.abort = true;
 				loadAbortState = null;
 			}
 			isLoadingAll = false;
+			isCompareLoaded = false;
+			loadFailed = false;
+			isMutatingDOM = false;
 			if (resizeCleanup) {
 				resizeCleanup();
 				resizeCleanup = null;
 			}
+			const customTable = document.getElementById("ala-compare-table");
+			if (customTable) customTable.remove();
 			const wrap = document.getElementById("ala-compare-wrap");
 			if (wrap) {
-				const compareRoot = wrap.querySelector(".ala-compare-main")?.firstElementChild;
-				if (compareRoot && wrap.parentElement) wrap.parentElement.insertBefore(compareRoot, wrap);
+				const main = wrap.querySelector(".ala-compare-main");
+				const compareRoot = main?.querySelector(".compare:not(#ala-compare-table)") || main?.firstElementChild;
+				if (compareRoot && wrap.parentElement) {
+					if (compareRoot.style) compareRoot.style.display = "";
+					wrap.parentElement.insertBefore(compareRoot, wrap);
+				}
 				wrap.remove();
+			} else {
+				const compareRoot = document.querySelector(".compare:not(#ala-compare-table)");
+				if (compareRoot) {
+					delete compareRoot.dataset.alaCompareInit;
+					compareRoot.style.display = "";
+				}
 			}
 			document.querySelectorAll(".ala-compare-page-container").forEach((el) => {
 				el.classList.remove("ala-compare-page-container");
@@ -9297,7 +10072,7 @@
 			document.querySelectorAll(".compare .entry.ala-hidden").forEach((el) => {
 				el.classList.remove("ala-hidden");
 			});
-			const header = document.querySelector(".entry.header");
+			const header = document.querySelector(".compare:not(#ala-compare-table) .entry.header, .entry.header");
 			if (header) {
 				delete header._alaHeaderBound;
 				delete header.dataset.alaCompareInit;
@@ -9314,17 +10089,14 @@
 			}
 			lastProcessedCount = -1;
 		}
-		function setupCompareView(header, listContainer, entries) {
-			logDebug("[COMPARE]", "Setting up Compare View UI with", entries.length, "entries");
-			header.querySelectorAll(".status").forEach((statusEl) => {
+		function setupCompareView(compareRoot, header, entries) {
+			if (header) header.querySelectorAll(".status").forEach((statusEl) => {
 				if (!statusEl.querySelector(".ala-header-label")) statusEl.innerHTML = `<span class="ala-header-label">${statusEl.textContent?.trim() || ""}</span>`;
 			});
-			const headerCells = Array.from(header.children);
-			if (headerCells.length < 3) return;
-			const titleHeader = header.querySelector(".title") || headerCells.find((el) => /title/i.test(el.textContent || "")) || headerCells[0];
-			const yourScoreHeader = headerCells.find((el) => /your score/i.test(el.textContent || "")) || header.querySelector(".score:first-of-type") || headerCells[1];
-			const otherScoreHeader = headerCells.find((el) => el !== yourScoreHeader && /score/i.test(el.textContent || "")) || header.querySelectorAll(".score")[1] || headerCells[2];
-			const compareRoot = header.closest(".compare") || listContainer;
+			const headerCells = header ? Array.from(header.children) : [];
+			const titleHeader = headerCells.length >= 3 ? header.querySelector(".title") || headerCells.find((el) => /title/i.test(el.textContent || "")) || headerCells[0] : null;
+			const yourScoreHeader = headerCells.length >= 3 ? headerCells.find((el) => /your score/i.test(el.textContent || "")) || header.querySelector(".score:first-of-type") || headerCells[1] : null;
+			const otherScoreHeader = headerCells.length >= 3 ? headerCells.find((el) => el !== yourScoreHeader && /score/i.test(el.textContent || "")) || header.querySelectorAll(".score")[1] || headerCells[2] : null;
 			const container = compareRoot.closest(".content.container") || compareRoot.parentElement;
 			if (container) container.classList.add("ala-compare-page-container");
 			let wrap = document.getElementById("ala-compare-wrap");
@@ -9396,52 +10168,54 @@
 						const st = cb.dataset.status;
 						if (cb.checked) activeStatuses.add(st);
 						else activeStatuses.delete(st);
-						const badge = sidebar?.querySelector(".ala-compare-active-badge");
-						if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
-						applyFilter(listContainer, Array.from(listContainer.querySelectorAll(".entry:not(.header)")));
+						triggerFilterUpdate(sidebar, compareRoot);
 					});
 				});
 				sidebar.querySelector("#ala-compare-all")?.addEventListener("click", () => {
 					for (const s of STATUSES) activeStatuses.add(s);
 					sidebar?.querySelectorAll(".ala-compare-cb").forEach((cb) => cb.checked = true);
-					const badge = sidebar?.querySelector(".ala-compare-active-badge");
-					if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
-					applyFilter(listContainer, Array.from(listContainer.querySelectorAll(".entry:not(.header)")));
+					triggerFilterUpdate(sidebar, compareRoot);
 				});
 				sidebar.querySelector("#ala-compare-none")?.addEventListener("click", () => {
 					activeStatuses.clear();
 					sidebar?.querySelectorAll(".ala-compare-cb").forEach((cb) => cb.checked = false);
-					const badge = sidebar?.querySelector(".ala-compare-active-badge");
-					if (badge) badge.textContent = `${activeStatuses.size}/${STATUSES.length}`;
-					applyFilter(listContainer, Array.from(listContainer.querySelectorAll(".entry:not(.header)")));
+					triggerFilterUpdate(sidebar, compareRoot);
 				});
 			}
-			if (sidebar) updateStatusCounts(sidebar, entries);
-			if (!header._alaHeaderBound) {
+			if (sidebar && entries.length > 0) updateStatusCounts(sidebar, entries);
+			if (header && titleHeader && yourScoreHeader && otherScoreHeader && !header._alaHeaderBound) {
 				header._alaHeaderBound = true;
 				const attachSortClick = (el, col) => {
 					if (!el) return;
 					el.addEventListener("click", () => {
-						if (activeSortCol === col) activeSortDir = activeSortDir === "asc" ? "desc" : "asc";
-						else {
-							activeSortCol = col;
-							activeSortDir = col === "title" ? "asc" : "desc";
-						}
-						updateSortArrows(titleHeader, yourScoreHeader, otherScoreHeader, activeSortCol, activeSortDir);
-						applySort(listContainer, Array.from(listContainer.querySelectorAll(".entry:not(.header)")), activeSortCol, activeSortDir);
+						triggerSort(col, compareRoot);
 					});
 				};
 				attachSortClick(titleHeader, "title");
 				attachSortClick(yourScoreHeader, "yourScore");
 				attachSortClick(otherScoreHeader, "otherScore");
 			}
-			header.dataset.alaCompareInit = "true";
-			updateSortArrows(titleHeader, yourScoreHeader, otherScoreHeader, activeSortCol, activeSortDir);
-			applyFilter(listContainer, entries);
-			applySort(listContainer, entries, activeSortCol, activeSortDir);
-			if (!isLoadingAll && sidebar) autoLoadAllEntries(listContainer, sidebar);
+			if (header && titleHeader) {
+				header.dataset.alaCompareInit = "true";
+				updateSortArrows(titleHeader, yourScoreHeader, otherScoreHeader, activeSortCol, activeSortDir);
+			}
+			compareRoot.dataset.alaCompareInit = "true";
+			entries.forEach((el) => {
+				el.querySelectorAll(".score").forEach((scoreEl) => {
+					const text = scoreEl.textContent?.trim();
+					if (!text || text === "") scoreEl.textContent = "0";
+				});
+			});
+			disableNativeScrollers(compareRoot);
+			if (entries.length > 0) {
+				applyFilter(compareRoot, entries);
+				applySort(compareRoot, entries, activeSortCol, activeSortDir);
+			}
+			installBlocker();
+			if (!isLoadingAll && !isCompareLoaded && !loadFailed && sidebar) loadAllEntriesViaMediaList(compareRoot, sidebar);
 		}
 		const checkView = debounce(() => {
+			if (isMutatingDOM) return;
 			const path = location.pathname;
 			if (!isComparePage()) {
 				if (currentRoute) {
@@ -9456,24 +10230,29 @@
 				activeSortDir = "desc";
 				for (const s of STATUSES) activeStatuses.add(s);
 				cleanup();
+				installBlocker();
 			}
-			const header = document.querySelector(".entry.header");
-			if (!header) return;
-			const listContainer = header.parentElement;
-			if (!listContainer) return;
-			const entries = Array.from(listContainer.querySelectorAll(".entry:not(.header)"));
-			if (entries.length === 0) return;
-			if (!header.dataset.alaCompareInit || entries.length !== lastProcessedCount) {
+			if (isCompareLoaded) return;
+			const compareRoot = document.querySelector(".compare:not(#ala-compare-table)");
+			if (!compareRoot) return;
+			const header = compareRoot.querySelector(".entry.header");
+			const entries = Array.from(compareRoot.querySelectorAll(".entry:not(.header)"));
+			if (!compareRoot.dataset.alaCompareInit || !isCompareLoaded && entries.length !== lastProcessedCount) {
 				lastProcessedCount = entries.length;
-				setupCompareView(header, listContainer, entries);
+				setupCompareView(compareRoot, header, entries);
 			}
 		}, 60);
+		installBlocker();
 		Core.ready(checkView);
 		Core.onNavigate(() => {
+			installBlocker();
 			checkView();
 		});
 		Core.onBodyMutation(() => {
-			if (isComparePage()) checkView();
+			if (isComparePage() && !isMutatingDOM) {
+				installBlocker();
+				checkView();
+			}
 		});
 	});
 	addStyle("almal-style", `
@@ -9616,29 +10395,27 @@
 	var refreshTimes = () => document.querySelectorAll("#almal-panel time[data-ts]").forEach((el) => {
 		el.textContent = ago(Number(el.dataset.ts));
 	});
-	function connItem(svc, connected) {
-		const name = svc === "al" ? "AniList" : "MyAnimeList";
-		const what = svc === "al" ? "access token" : "authorization code";
-		const manual = ui.manual && !connected ? `<div class="almal-manual"><input id="almal-${svc}-manual" type="text" placeholder="Paste ${svc === "al" ? "token" : "code"}" aria-label="${name} ${what}" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="almal-btn almal-btn--sm" data-act="${svc}-manual-save">Save</button></div>` : "";
+	function connItem(connected) {
+		const manual = ui.manual && !connected ? `<div class="almal-manual"><input id="almal-mal-manual" type="text" placeholder="Paste code" aria-label="MyAnimeList authorization code" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="almal-btn almal-btn--sm" data-act="mal-manual-save">Save</button></div>` : "";
 		const status = connected ? `<span class="almal-ok">${icon("check", 12)}Connected</span>` : "";
-		const connect = connected ? "" : `<button class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" data-act="${svc}-connect">Connect ${name}</button>`;
-		return `<div class="almal-conn-item"><div class="almal-conn-row">${chip(svc, true)}<span class="almal-conn-name"><span>${name}</span>${status}</span></div>${connect}${manual}</div>`;
+		const connect = connected ? "" : `<button class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" data-act="mal-connect">Connect MyAnimeList</button>`;
+		return `<div class="almal-conn-item"><div class="almal-conn-row">${chip("mal", true)}<span class="almal-conn-name"><span>MyAnimeList</span>${status}</span></div>${connect}${manual}</div>`;
 	}
 	function renderPanel() {
 		const panelEl = document.getElementById("almal-panel");
 		if (!panelEl) return;
-		const alOk = !!store.get("al_token", null);
-		const malOk = !!store.get("mal_token", null);
+		const alOk = AniList.hasAuth();
+		const malOk = !!store$1.get("mal_token", null);
 		const ready = alOk && malOk;
 		const tone = syncStatus.syncing ? "busy" : ready ? "ok" : "idle";
 		let html = `<div class="almal-head"><div class="almal-flow almal-flow--${tone}" role="img" aria-label="${{
 			busy: "Syncing from AniList to MyAnimeList",
 			ok: "AniList to MyAnimeList sync",
-			idle: "Connect both accounts to sync"
+			idle: !alOk ? "Log in to AniList to sync" : "Connect MyAnimeList to sync"
 		}[tone]}">${chip("al", false, !alOk)}${ARROW}${chip("mal", false, !malOk)}</div></div>`;
 		if (ready) {
 			const t = currentListType();
-			const rows = (t ? [[t, "Last sync"]] : [["ANIME", "Anime sync"], ["MANGA", "Manga sync"]]).map(([type, label]) => `<div class="almal-meta-row">${label}: ${timeEl(store.get("last_run_" + type, 0))}</div>`).join("");
+			const rows = (t ? [[t, "Last sync"]] : [["ANIME", "Anime sync"], ["MANGA", "Manga sync"]]).map(([type, label]) => `<div class="almal-meta-row">${label}: ${timeEl(store$1.get("last_run_" + type, 0))}</div>`).join("");
 			html += `<div class="almal-actions">
         ${syncStatus.syncing ? `<button class="almal-btn almal-btn--icon almal-btn--danger" data-act="stop" ${syncStatus.cancelled ? "disabled" : ""} aria-label="${syncStatus.cancelled ? "Stopping" : "Stop sync"}" title="${syncStatus.cancelled ? "Stopping…" : "Stop sync"}">${icon("stop", 16)}</button>` : `<button class="almal-btn almal-btn--icon" data-act="resync" aria-label="Full resync" title="Full resync">${icon("resync", 16)}</button>`}
         <button class="almal-btn almal-btn--primary almal-btn--grow" data-act="sync" ${syncStatus.syncing ? "disabled" : ""}><span>${syncStatus.syncing ? "Syncing…" : "Sync"}</span></button>
@@ -9646,8 +10423,16 @@
       </div>`;
 			if (syncStatus.syncing) html += "<div class=\"almal-progress\" role=\"progressbar\" aria-label=\"Sync progress\"><div id=\"almal-progress-fill\"></div></div><div id=\"almal-progress-text\">Starting…</div>";
 			html += `<div class="almal-meta">${rows}</div>`;
-		} else html += `<p class="almal-intro">Connect both accounts to copy your AniList list to MyAnimeList.</p>
-      <div class="almal-conn">${connItem("al", alOk)}${connItem("mal", malOk)}</div>
+		} else if (!alOk) html += `<p class="almal-intro">Log in to AniList to sync your list to MyAnimeList.</p>
+      <div class="almal-conn">
+        <a class="almal-btn almal-btn--primary almal-btn--sm almal-btn--block" href="/login" target="_blank" style="text-decoration:none;color:#fff;text-align:center;">Log in to AniList</a>
+      </div>
+      <div id="almal-hint" class="almal-hint" role="status">${esc(lastNotice)}</div>
+      <div class="almal-foot">
+        <button class="almal-link" data-act="logs" aria-expanded="${ui.showLogs}">${ui.showLogs ? "Hide logs" : "Logs"}</button>
+      </div>`;
+		else html += `<p class="almal-intro">Connect your MyAnimeList account to copy your AniList list to MyAnimeList.</p>
+      <div class="almal-conn">${connItem(malOk)}</div>
       <div id="almal-hint" class="almal-hint" role="status">${esc(lastNotice)}</div>
       <div class="almal-foot">
         <button class="almal-link" data-act="manual-toggle" aria-expanded="${ui.manual}">${ui.manual ? "Hide manual entry" : "Trouble connecting?"}</button>
@@ -9673,19 +10458,10 @@
 		renderRateLimitWarning(panelEl);
 	}
 	var ACTIONS = {
-		"al-connect": alConnect,
 		"mal-connect": malConnect,
 		"manual-toggle": () => {
 			ui.manual = !ui.manual;
 			renderPanel();
-		},
-		"al-manual-save": () => {
-			const token = document.getElementById("almal-al-manual")?.value.trim();
-			if (!token) return;
-			saveAniListToken(token);
-			log("AniList connected (manual).");
-			renderPanel();
-			maybeAutoSync();
 		},
 		"mal-manual-save": async () => {
 			const code = document.getElementById("almal-mal-manual")?.value.trim();
@@ -9744,8 +10520,8 @@
 	function isOwnList() {
 		const owner = decodeName(location.pathname.match(OWNER_RE)?.[1] || "");
 		if (!owner) return false;
-		const me = store.get("al_username", null) || navUser();
-		if (!me && store.get("al_token", null) && !selfLookup) {
+		const me = store$1.get("al_username", null) || navUser();
+		if (!me && AniList.hasAuth() && !selfLookup) {
 			selfLookup = true;
 			tryOr(() => AniList.viewer()).then(() => mountSoon());
 		}
@@ -9768,11 +10544,8 @@
 			if (a && a.dataset.act && ACTIONS[a.dataset.act]) ACTIONS[a.dataset.act]();
 		});
 		panelEl.addEventListener("keydown", (e) => {
-			const svc = {
-				"almal-al-manual": "al",
-				"almal-mal-manual": "mal"
-			}[e.target?.id || ""];
-			if (e.key === "Enter" && svc) ACTIONS[`${svc}-manual-save`]();
+			const target = e.target;
+			if (e.key === "Enter" && target?.id === "almal-mal-manual") ACTIONS["mal-manual-save"]();
 		});
 		anchor.insertAdjacentElement("afterend", panelEl);
 		renderPanel();
@@ -9793,8 +10566,8 @@
 		let lastAl = null;
 		let lastMal = null;
 		setInterval(() => {
-			const al = !!store.get("al_token", null);
-			const mal = !!store.get("mal_token", null);
+			const al = AniList.hasAuth();
+			const mal = !!store$1.get("mal_token", null);
 			if (al !== lastAl || mal !== lastMal) {
 				lastAl = al;
 				lastMal = mal;
@@ -9939,6 +10712,9 @@
 	}
 	var ALL_KEYS = [
 		...SENSITIVE_KEYS,
+		"al_username",
+		"al_user_id",
+		"al_score_format",
 		"al_token_auth",
 		"sync_lock_heartbeat",
 		"sync_onboarded",
@@ -10035,7 +10811,7 @@
 		]
 	}, () => {
 		initDeletionInterceptor();
-		if (store.get("sync_schema", 0) < 2) safe(() => {
+		if (store$1.get("sync_schema", 0) < 2) safe(() => {
 			for (const k of [
 				"mal_mirror_ANIME",
 				"mal_mirror_MANGA",
@@ -10045,12 +10821,12 @@
 				"mal_idmap_ANIME",
 				"mal_idmap_MANGA",
 				"last_full_sync"
-			]) store.del(k);
-			for (const t of TYPES) if (!store.get(`last_run_${t}`, 0) && store.get(`last_sync_${t}`, 0)) store.set(`last_run_${t}`, store.get(`last_sync_${t}`, 0));
-			store.set("sync_schema", 2);
+			]) store$1.del(k);
+			for (const t of TYPES) if (!store$1.get(`last_run_${t}`, 0) && store$1.get(`last_sync_${t}`, 0)) store$1.set(`last_run_${t}`, store$1.get(`last_sync_${t}`, 0));
+			store$1.set("sync_schema", 2);
 		}, "sync schema upgrade");
 		_GM_registerMenuCommand("🗑️ AL→MAL Sync: Reset all data", () => {
-			ALL_KEYS.forEach((k) => store.del(k));
+			ALL_KEYS.forEach((k) => store$1.del(k));
 			for (const t of TYPES) {
 				clearCache(stores[t].ids);
 				clearCache(stores[t].settled);
@@ -10058,17 +10834,12 @@
 			log("All stored data cleared.");
 			renderPanel();
 		});
-		_GM_registerMenuCommand("🔵 AL→MAL Sync: Disconnect AniList", () => {
-			clearAniListAuth();
-			log("AniList disconnected.");
-			renderPanel();
-		});
 		_GM_registerMenuCommand("🟦 AL→MAL Sync: Disconnect MAL", () => {
 			clearMalAuth();
 			log("MAL disconnected.");
 			renderPanel();
 		});
-		initSyncPanel();
+		if (location.hostname === "anilist.co") initSyncPanel();
 	});
 	defineFeature({
 		id: "manualOverrides",
