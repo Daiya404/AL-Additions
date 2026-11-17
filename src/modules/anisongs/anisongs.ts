@@ -15,7 +15,9 @@ import {
 export { DEFAULT_ANISONGS_CONFIG, validateAniSongsConfig, getValidAniSongsConfig, buildProviderUrl };
 
 export interface ThemeVersionEntry {
-  version: number;
+  version?: number;
+  label: string;
+  songTitle?: string;
   episodes?: string;
   notes?: string;
   url: string | null;
@@ -152,10 +154,15 @@ function firstEpisodeNum(eps?: string): number {
 }
 
 export function sortEpisodes(raw: string): string {
+  const seen = new Set<string>();
   const parts = raw
     .split(',')
     .map((p) => p.trim())
-    .filter(Boolean);
+    .filter((p) => {
+      if (!p || seen.has(p)) return false;
+      seen.add(p);
+      return true;
+    });
   if (parts.length <= 1) return parts[0] || '';
   parts.sort((a, b) => firstEpisodeNum(a) - firstEpisodeNum(b) || a.localeCompare(b));
   return parts.join(', ');
@@ -166,11 +173,35 @@ export function formatEpsTag(eps: string): string {
   return `(${/[-,]/.test(eps) ? 'eps' : 'ep'} ${eps})`;
 }
 
-export function parseTheme(theme: any, meta: AnimeMetaInfo): SongEntry | null {
+const LANGUAGE_GROUP_RE = /\b(english|dub(?:bed)?|spanish|french|german|italian|portuguese|korean|chinese|castilian|latin)\b/i;
+
+function cleanGroupName(group: string): string {
+  return group.replace(/\s+Version\b/i, '').trim();
+}
+
+const normTitle = (s: string): string => s.trim().toLowerCase();
+
+interface RawParsedTheme {
+  type: 'OP' | 'ED';
+  rawSequence: number | null;
+  sequence: number;
+  title: string;
+  titleJp?: string;
+  artists: string[];
+  artistCredit: string;
+  groupName: string;
+  entries: ThemeVersionEntry[];
+  resources?: Record<string, string>;
+}
+
+function extractRawTheme(theme: any): RawParsedTheme | null {
   const songTitle = str(theme?.song?.title?.romaji || theme?.song?.title);
   if (!songTitle) return null;
-  const seq = Number(theme?.sequence);
-  const sequence = Number.isFinite(seq) && seq >= 1 ? Math.floor(seq) : 1;
+
+  const rawSeqVal =
+    theme?.sequence != null && Number.isFinite(Number(theme.sequence)) ? Math.floor(Number(theme.sequence)) : null;
+  const rawSequence = rawSeqVal != null && rawSeqVal >= 1 ? rawSeqVal : null;
+  const sequence = rawSequence ?? 1;
 
   const { artists, credit: artistCredit } = extractSongArtists(theme?.song);
 
@@ -187,25 +218,21 @@ export function parseTheme(theme: any, meta: AnimeMetaInfo): SongEntry | null {
     return firstEpisodeNum(str(a?.episodes)) - firstEpisodeNum(str(b?.episodes));
   });
 
-  const versions: ThemeVersionEntry[] = sortedEntries.map((e: any, idx: number) => {
+  const entries: ThemeVersionEntry[] = sortedEntries.map((e: any, idx: number) => {
     const vNum = e?.version != null && Number.isFinite(Number(e.version)) ? Math.floor(Number(e.version)) : idx + 1;
     const ep = sortEpisodes(str(e?.episodes));
     const notes = str(e?.notes);
     return {
       version: vNum,
+      label: `v${vNum}`,
       ...(ep ? { episodes: ep } : {}),
       ...(notes ? { notes } : {}),
       url: pickVideo([e])
     };
   });
 
-  const multiVersion = versions.length > 1;
-  const eps = sortEpisodes(versions.map((v) => v.episodes).filter(Boolean).join(', '));
-  const epsSuffix = !multiVersion && eps ? ` ${formatEpsTag(eps)}` : '';
-
-  const group = typeof theme?.group === 'object' && theme?.group !== null ? str(theme.group.name) : str(theme?.group);
+  const groupName = typeof theme?.group === 'object' && theme?.group !== null ? str(theme.group.name) : str(theme?.group);
   const type = str(theme?.type).toUpperCase() === 'ED' ? 'ED' : 'OP';
-
   const nativeTitle = str(theme?.song?.title?.native);
   const hasJp = !!nativeTitle || /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(songTitle);
 
@@ -218,12 +245,69 @@ export function parseTheme(theme: any, meta: AnimeMetaInfo): SongEntry | null {
   }
 
   return {
+    type,
+    rawSequence,
     sequence,
     title: songTitle,
-    title_romaji: songTitle,
-    title_jp: nativeTitle || (hasJp ? songTitle : undefined),
+    titleJp: nativeTitle || (hasJp ? songTitle : undefined),
     artists,
-    type,
+    artistCredit,
+    groupName,
+    entries,
+    resources: Object.keys(resources).length ? resources : undefined
+  };
+}
+
+function buildSongEntry(bucket: RawParsedTheme[], meta: AnimeMetaInfo): SongEntry {
+  const ordered = [...bucket].sort((a, b) => {
+    const ag = a.groupName ? 1 : 0;
+    const bg = b.groupName ? 1 : 0;
+    if (ag !== bg) return ag - bg;
+    return a.groupName.localeCompare(b.groupName);
+  });
+  const primary = ordered[0];
+  const merged = ordered.length > 1;
+
+  let versions: ThemeVersionEntry[];
+  if (!merged) {
+    versions = primary.entries;
+  } else {
+    const hasLanguageSibling = ordered.some((t) => t.groupName && LANGUAGE_GROUP_RE.test(t.groupName));
+    versions = [];
+    for (const sub of ordered) {
+      const grpLabel = sub.groupName
+        ? cleanGroupName(sub.groupName)
+        : hasLanguageSibling
+        ? 'Japanese'
+        : 'Original';
+      const subSongDiffers = normTitle(sub.title) !== normTitle(primary.title);
+      const subEntries = sub.entries.length ? sub.entries : [{ version: 1, label: 'v1', url: null }];
+      const multiInSub = subEntries.length > 1;
+      for (const e of subEntries) {
+        versions.push({
+          version: e.version,
+          label: multiInSub ? `${grpLabel} v${e.version}` : grpLabel,
+          ...(subSongDiffers ? { songTitle: sub.title } : {}),
+          ...(e.episodes ? { episodes: e.episodes } : {}),
+          ...(e.notes ? { notes: e.notes } : {}),
+          url: e.url
+        });
+      }
+    }
+  }
+
+  const multiVersion = versions.length > 1;
+  const eps = sortEpisodes(versions.map((v) => v.episodes).filter(Boolean).join(', '));
+  const epsSuffix = !multiVersion && eps ? ` ${formatEpsTag(eps)}` : '';
+  const singleGroupTag = !merged && primary.groupName ? ` (${cleanGroupName(primary.groupName)})` : '';
+
+  return {
+    sequence: primary.sequence,
+    title: primary.title,
+    title_romaji: primary.title,
+    title_jp: primary.titleJp,
+    artists: primary.artists,
+    type: primary.type,
     animeName: meta.animeName,
     animeRomaji: meta.animeRomaji,
     animeEn: meta.animeEn,
@@ -232,14 +316,19 @@ export function parseTheme(theme: any, meta: AnimeMetaInfo): SongEntry | null {
     season: meta.season,
     eps: eps || undefined,
     ...(multiVersion ? { versions } : {}),
-    resources: Object.keys(resources).length ? resources : undefined,
+    resources: primary.resources,
     name:
-      `${sequence}. "${songTitle}"` +
-      (artistCredit ? ` by ${artistCredit}` : '') +
+      `${primary.sequence}. "${primary.title}"` +
+      (primary.artistCredit ? ` by ${primary.artistCredit}` : '') +
       epsSuffix +
-      (group && group.toLowerCase().includes('dubbed') ? ` (${group})` : ''),
+      singleGroupTag,
     url: versions.find((v) => v.url)?.url || null
   };
+}
+
+export function parseTheme(theme: any, meta: AnimeMetaInfo): SongEntry | null {
+  const raw = extractRawTheme(theme);
+  return raw ? buildSongEntry([raw], meta) : null;
 }
 
 export function groupThemes(anime: any, meta: AnimeMetaInfo): ThemesGroup {
@@ -249,14 +338,40 @@ export function groupThemes(anime: any, meta: AnimeMetaInfo): ThemesGroup {
     : Array.isArray(anime?.animethemes)
     ? anime.animethemes
     : [];
+
+  const buckets: Record<'OP' | 'ED', Map<string, RawParsedTheme[]>> = {
+    OP: new Map(),
+    ED: new Map()
+  };
+  let anonIdx = 0;
+
   for (const theme of themeList) {
-    const parsed = parseTheme(theme, meta);
-    const type = str(theme?.type).toUpperCase() as 'OP' | 'ED';
-    if (parsed && out[type]) out[type].push(parsed);
+    const raw = extractRawTheme(theme);
+    if (!raw) continue;
+    const map = buckets[raw.type];
+    let key: string;
+    if (raw.rawSequence != null) {
+      key = `seq:${raw.rawSequence}`;
+    } else if (raw.groupName) {
+      const target = [...map.entries()].find(
+        ([k, items]) => k.startsWith('anon:') && normTitle(items[0].title) === normTitle(raw.title)
+      );
+      key = target ? target[0] : `anon:${anonIdx++}`;
+    } else {
+      key = `anon:${anonIdx++}`;
+    }
+    const list = map.get(key) || [];
+    list.push(raw);
+    map.set(key, list);
   }
-  const sort = (a: SongEntry, b: SongEntry) => a.sequence - b.sequence || a.name.localeCompare(b.name);
-  out.OP.sort(sort);
-  out.ED.sort(sort);
+
+  for (const type of ['OP', 'ED'] as const) {
+    for (const bucket of buckets[type].values()) {
+      out[type].push(buildSongEntry(bucket, meta));
+    }
+    out[type].sort((a, b) => a.sequence - b.sequence || a.name.localeCompare(b.name));
+  }
+
   return out;
 }
 
@@ -419,10 +534,11 @@ export function createSongCard(song: SongEntry, activePresets: SongProviderPrese
 
       const badge = document.createElement('span');
       badge.className = 'daiya-anisong-version-tag';
-      badge.textContent = `v${v.version}`;
+      badge.textContent = v.label || (v.version != null ? `v${v.version}` : '');
       row.appendChild(badge);
 
       const metaParts: string[] = [];
+      if (v.songTitle) metaParts.push(`"${v.songTitle}"`);
       if (v.episodes) metaParts.push(formatEpsTag(v.episodes));
       if (v.notes) metaParts.push(`— ${v.notes}`);
       if (metaParts.length) {
@@ -467,6 +583,138 @@ export function createSongCard(song: SongEntry, activePresets: SongProviderPrese
   });
 
   return el;
+}
+
+const INITIAL_VISIBLE_SONGS = 5;
+
+function getDocumentHeight(): number {
+  if (typeof document === 'undefined') return 0;
+  return Math.max(document.documentElement?.scrollHeight || 0, document.body?.scrollHeight || 0);
+}
+
+function followElementWhileCollapsing(
+  anchor: HTMLElement,
+  collapsible: HTMLElement,
+  startScrollY: number,
+  startDocHeight: number,
+  startAnchorDocTop: number
+): () => void {
+  if (typeof window === 'undefined' || typeof window.scrollBy !== 'function') return () => {};
+
+  const stepScroll = () => {
+    const docShrink = Math.max(0, startDocHeight - getDocumentHeight());
+    if (docShrink <= 0.5) return;
+    const currentAnchorDocTop = anchor.getBoundingClientRect().top + window.scrollY;
+    const anchorShift = Math.max(0, startAnchorDocTop - currentAnchorDocTop);
+    const follow = Math.min(docShrink, anchorShift);
+    const desiredScrollY = Math.max(0, startScrollY - follow);
+    const delta = desiredScrollY - window.scrollY;
+    if (Math.abs(delta) > 0.5) window.scrollBy(0, delta);
+  };
+
+  if (prefersReducedMotion()) {
+    stepScroll();
+    return () => {};
+  }
+
+  let rafId = 0;
+  let active = true;
+  const stop = () => {
+    if (!active) return;
+    active = false;
+    if (rafId) cancelAnimationFrame(rafId);
+    clearTimeout(timer);
+    collapsible.removeEventListener('transitionend', onEnd);
+    window.removeEventListener('wheel', stop);
+    window.removeEventListener('touchstart', stop);
+  };
+  const onEnd = (e: TransitionEvent) => {
+    if (e.target === collapsible && e.propertyName === 'grid-template-rows') {
+      stepScroll();
+      stop();
+    }
+  };
+  const tick = () => {
+    if (!active) return;
+    stepScroll();
+    rafId = requestAnimationFrame(tick);
+  };
+
+  const timer = setTimeout(() => {
+    stepScroll();
+    stop();
+  }, COLLAPSE_FALLBACK_MS);
+
+  collapsible.addEventListener('transitionend', onEnd);
+  window.addEventListener('wheel', stop, { passive: true, once: true });
+  window.addEventListener('touchstart', stop, { passive: true, once: true });
+  rafId = requestAnimationFrame(tick);
+  return stop;
+}
+
+export function createSongGroup(
+  title: string,
+  songs: SongEntry[],
+  activePresets: SongProviderPreset[],
+  groupType: 'OP' | 'ED'
+): HTMLDivElement {
+  const g = document.createElement('div');
+  g.className = 'daiya-anisongs-group';
+  const h = document.createElement('h2');
+  h.textContent = title;
+  g.appendChild(h);
+
+  if (!songs.length) {
+    const empty = document.createElement('div');
+    empty.className = 'daiya-anisongs-empty';
+    empty.textContent = 'No songs to show (つ﹏<)･ﾟ｡';
+    g.appendChild(empty);
+    return g;
+  }
+
+  const initial = songs.slice(0, INITIAL_VISIBLE_SONGS);
+  const rest = songs.slice(INITIAL_VISIBLE_SONGS);
+  initial.forEach((s) => g.appendChild(createSongCard(s, activePresets, groupType)));
+
+  if (!rest.length) return g;
+
+  const extraWrap = document.createElement('div');
+  extraWrap.className = 'daiya-anisong-collapsible daiya-anisongs-extra';
+  const extraInner = document.createElement('div');
+  extraInner.className = 'daiya-anisong-collapsible-inner';
+  rest.forEach((s) => extraInner.appendChild(createSongCard(s, activePresets, groupType)));
+  extraWrap.appendChild(extraInner);
+  g.appendChild(extraWrap);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'daiya-anisongs-toggle';
+  const showAllLabel = `Show all (${songs.length})`;
+  btn.textContent = showAllLabel;
+  btn.setAttribute('aria-expanded', 'false');
+
+  let expanded = false;
+  let stopFollow: (() => void) | null = null;
+  btn.addEventListener('click', () => {
+    stopFollow?.();
+    stopFollow = null;
+    const startScrollY = typeof window !== 'undefined' ? window.scrollY : 0;
+    const startDocHeight = getDocumentHeight();
+    const startBtnDocTop = btn.getBoundingClientRect().top + startScrollY;
+    expanded = !expanded;
+    if (!expanded) {
+      extraWrap.querySelectorAll('video').forEach((v) => v.pause?.());
+    }
+    extraWrap.classList.toggle('is-open', expanded);
+    btn.textContent = expanded ? 'Show less' : showAllLabel;
+    btn.setAttribute('aria-expanded', String(expanded));
+    if (!expanded) {
+      stopFollow = followElementWhileCollapsing(btn, extraWrap, startScrollY, startDocHeight, startBtnDocTop);
+    }
+  });
+
+  g.appendChild(btn);
+  return g;
 }
 
 export function extractSongParams(song: SongEntry, groupType: 'OP' | 'ED' = 'OP'): SongParams {
@@ -555,24 +803,26 @@ defineFeature(
       #${ROOT} .daiya-anisong-link{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:4px;background:rgba(var(--color-text-lighter),.08);padding:3px;transition:all .15s;text-decoration:none}
       #${ROOT} .daiya-anisong-link:hover{background:rgba(var(--color-blue),.2);transform:translateY(-1px)}
       #${ROOT} .daiya-anisong-icon{width:16px;height:16px;object-fit:contain;display:block;border-radius:2px}
-      #${ROOT} .daiya-anisong-collapsible{display:grid;grid-template-rows:0fr;transition:grid-template-rows .22s cubic-bezier(0.4,0,0.2,1),visibility 0s .22s;visibility:hidden;overflow:hidden}
+      #${ROOT} .daiya-anisong-collapsible{display:grid;grid-template-rows:0fr;transition:grid-template-rows .22s cubic-bezier(0.4,0,0.2,1),visibility 0s .22s;visibility:hidden;overflow:hidden;overflow-anchor:none}
       #${ROOT} .daiya-anisong-collapsible.is-open{grid-template-rows:1fr;transition:grid-template-rows .22s cubic-bezier(0.4,0,0.2,1),visibility 0s 0s;visibility:visible}
       #${ROOT} .daiya-anisong-collapsible-inner{min-height:0;overflow:hidden}
       #${ROOT} .daiya-anisong-video-pad{padding-top:10px}
       #${ROOT} .daiya-anisongs-versions .daiya-anisong-video-pad{padding:4px 0 6px}
       #${ROOT} video{display:block;width:100%;max-width:39em;aspect-ratio:16/9;background:#000;border-radius:4px;cursor:auto}
       #${ROOT} .daiya-anisongs-versions{display:flex;flex-direction:column;margin-top:8px;padding-top:6px;border-top:1px solid rgba(var(--color-text-lighter),.15)}
-      #${ROOT} .daiya-anisong-version{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;font-size:1.2rem;color:rgb(var(--color-text-lighter));transition:color .15s,background .15s}
+      #${ROOT} .daiya-anisong-version{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;font-size:1.2rem;color:rgb(var(--color-text-lighter));transition:color .15s,background .15s}
       #${ROOT} .daiya-anisongs-versions>.daiya-anisong-version~.daiya-anisong-version{margin-top:4px}
-      #${ROOT} .daiya-anisong-version-tag{font-weight:700;color:rgb(var(--color-text))}
+      #${ROOT} .daiya-anisong-version-tag{font-weight:700;color:rgb(var(--color-text));white-space:nowrap}
       #${ROOT} .daiya-anisong-version.has-video{cursor:pointer}
       #${ROOT} .daiya-anisong-version.has-video:hover{color:rgb(var(--color-blue));background:rgba(var(--color-blue),.08)}
       #${ROOT} .daiya-anisong-version.has-video:hover .daiya-anisong-version-tag{color:rgb(var(--color-blue))}
       #${ROOT} .daiya-anisong-version.is-active{color:rgb(var(--color-blue));background:rgba(var(--color-blue),.14)}
       #${ROOT} .daiya-anisong-version.is-active .daiya-anisong-version-tag{color:rgb(var(--color-blue))}
+      #${ROOT} .daiya-anisongs-toggle{display:block;width:100%;padding:7px 10px;border:0;border-radius:4px;background:rgb(var(--color-foreground));color:rgb(var(--color-text-lighter));font:inherit;font-size:1.2rem;font-weight:600;cursor:pointer;text-align:center;transition:color .15s,background .15s}
+      #${ROOT} .daiya-anisongs-toggle:hover{color:rgb(var(--color-blue));background:rgba(var(--color-blue),.1)}
       #${ROOT} .daiya-anisongs-empty{text-align:center;opacity:.7;padding:10px}
       @media (max-width:700px){#${ROOT} .daiya-anisongs-columns{flex-direction:column;gap:10px}}
-      @media (prefers-reduced-motion:reduce){#${ROOT} .daiya-anisong-collapsible,#${ROOT} .daiya-anisong-entry.has-video .daiya-anisong-title,#${ROOT} .daiya-anisong-link,#${ROOT} .daiya-anisong-version{transition:none!important}}`
+      @media (prefers-reduced-motion:reduce){#${ROOT} .daiya-anisong-collapsible,#${ROOT} .daiya-anisong-entry.has-video .daiya-anisong-title,#${ROOT} .daiya-anisong-link,#${ROOT} .daiya-anisong-version,#${ROOT} .daiya-anisongs-toggle{transition:none!important}}`
     );
 
     const cacheStore = persistent<Record<string, AnimeThemesCacheEntry>>('daiya_anisongs_cache_v8', (d) => {
@@ -679,23 +929,6 @@ defineFeature(
       return data;
     });
 
-    function groupEl(title: string, songs: SongEntry[], activePresets: SongProviderPreset[], groupType: 'OP' | 'ED'): HTMLDivElement {
-      const g = document.createElement('div');
-      g.className = 'daiya-anisongs-group';
-      const h = document.createElement('h2');
-      h.textContent = title;
-      g.appendChild(h);
-      if (!songs.length) {
-        const empty = document.createElement('div');
-        empty.className = 'daiya-anisongs-empty';
-        empty.textContent = 'No songs to show (つ﹏<)･ﾟ｡';
-        g.appendChild(empty);
-      } else {
-        songs.forEach((s) => g.appendChild(createSongCard(s, activePresets, groupType)));
-      }
-      return g;
-    }
-
     function mount(state: { id: string; themes: ThemesGroup }, overview: HTMLElement): void {
       document.getElementById(ROOT)?.remove();
       const config = getValidAniSongsConfig();
@@ -709,8 +942,8 @@ defineFeature(
       const cols = document.createElement('div');
       cols.className = 'daiya-anisongs-columns';
       cols.append(
-        groupEl('Openings', state.themes.OP, activePresets, 'OP'),
-        groupEl('Endings', state.themes.ED, activePresets, 'ED')
+        createSongGroup('Openings', state.themes.OP, activePresets, 'OP'),
+        createSongGroup('Endings', state.themes.ED, activePresets, 'ED')
       );
       root.appendChild(cols);
       overview.appendChild(root);

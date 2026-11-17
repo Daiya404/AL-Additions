@@ -16,6 +16,7 @@ import {
   sortEpisodes,
   formatEpsTag,
   createSongCard,
+  createSongGroup,
   type SongEntry,
   type AnimeMetaInfo
 } from '../src/modules/anisongs/anisongs';
@@ -421,6 +422,7 @@ describe('AniSongs: Episode Sorting, Formatting & Multi-Version Theme Cards', ()
 
   it('sorts comma-separated episode segments numerically and formats ep vs eps', () => {
     expect(sortEpisodes('2, 5, 3, 6, 4')).toBe('2, 3, 4, 5, 6');
+    expect(sortEpisodes('1-47, 1-47, 1000')).toBe('1-47, 1000');
     expect(sortEpisodes('10, 2, 1-3')).toBe('1-3, 2, 10');
     expect(sortEpisodes('7-')).toBe('7-');
     expect(formatEpsTag('4')).toBe('(ep 4)');
@@ -466,23 +468,263 @@ describe('AniSongs: Episode Sorting, Formatting & Multi-Version Theme Cards', ()
     expect(entry?.versions).toEqual([
       {
         version: 1,
+        label: 'v1',
         episodes: '2, 5',
         notes: 'scissors',
         url: 'https://v.animethemes.moe/NiaListon-ED1.webm'
       },
       {
         version: 2,
+        label: 'v2',
         episodes: '3, 6',
         notes: 'rock',
         url: 'https://v.animethemes.moe/NiaListon-ED1v2.webm'
       },
       {
         version: 3,
+        label: 'v3',
         episodes: '4',
         notes: 'paper',
         url: 'https://v.animethemes.moe/NiaListon-ED1v3.webm'
       }
     ]);
+  });
+
+  it('merges same-sequence themes across language/dub groups with Japanese/English labels (One Piece)', () => {
+    const onePieceAnime = {
+      title: { romaji: 'One Piece' },
+      themes: [
+        {
+          type: 'OP',
+          sequence: 1,
+          group: { name: 'English Version', slug: 'EN' },
+          song: { title: { romaji: 'We Are!' }, staff: [] },
+          entries: [{ version: 1, episodes: '1-47', videos: { nodes: [{ link: 'https://v.animethemes.moe/OnePiece-OP1-EN.webm' }] } }]
+        },
+        {
+          type: 'OP',
+          sequence: 1,
+          group: null,
+          song: {
+            title: { romaji: 'We Are!' },
+            staff: [{ role: 'Performance', relevance: 1, artist: { name: { main: 'Hiroshi Kitadani' } } }]
+          },
+          entries: [
+            { version: 1, episodes: '1-47', videos: { nodes: [{ link: 'https://v.animethemes.moe/OnePiece-OP1.webm' }] } },
+            { version: 2, episodes: '1000', videos: { nodes: [{ link: 'https://v.animethemes.moe/OnePiece-OP1v2.webm' }] } }
+          ]
+        },
+        {
+          type: 'OP',
+          sequence: 1,
+          group: { name: 'English Version - 4Kids', slug: 'EN4Kids' },
+          song: { title: { romaji: 'One Piece Theme' }, staff: [] },
+          entries: [{ version: 1, episodes: null, videos: { nodes: [{ link: 'https://v.animethemes.moe/OnePiece-OP1-EN4Kids.webm' }] } }]
+        },
+        {
+          type: 'ED',
+          sequence: 1,
+          group: { name: 'English Version', slug: 'EN' },
+          song: { title: { romaji: 'memories' }, staff: [] },
+          entries: [{ version: 1, episodes: '1-30', videos: { nodes: [{ link: 'https://v.animethemes.moe/OnePiece-ED1-EN.webm' }] } }]
+        },
+        {
+          type: 'ED',
+          sequence: 1,
+          group: null,
+          song: {
+            title: { romaji: 'memories' },
+            staff: [{ role: 'Performance', relevance: 1, artist: { name: { main: 'Maki Ootsuki' } } }]
+          },
+          entries: [{ version: 1, episodes: '1-30', videos: { nodes: [{ link: 'https://v.animethemes.moe/OnePiece-ED1.webm' }] } }]
+        }
+      ]
+    };
+
+    const grouped = groupThemes(onePieceAnime, meta);
+    expect(grouped.OP).toHaveLength(1);
+    expect(grouped.OP[0].name).toBe('1. "We Are!" by Hiroshi Kitadani');
+    expect(grouped.OP[0].artists).toEqual(['Hiroshi Kitadani']);
+    expect(grouped.OP[0].eps).toBe('1-47, 1000');
+    expect(grouped.OP[0].versions).toEqual([
+      { version: 1, label: 'Japanese v1', episodes: '1-47', url: 'https://v.animethemes.moe/OnePiece-OP1.webm' },
+      { version: 2, label: 'Japanese v2', episodes: '1000', url: 'https://v.animethemes.moe/OnePiece-OP1v2.webm' },
+      { version: 1, label: 'English', episodes: '1-47', url: 'https://v.animethemes.moe/OnePiece-OP1-EN.webm' },
+      { version: 1, label: 'English - 4Kids', songTitle: 'One Piece Theme', url: 'https://v.animethemes.moe/OnePiece-OP1-EN4Kids.webm' }
+    ]);
+
+    expect(grouped.ED).toHaveLength(1);
+    expect(grouped.ED[0].name).toBe('1. "memories" by Maki Ootsuki');
+    expect(grouped.ED[0].versions).toEqual([
+      { version: 1, label: 'Japanese', episodes: '1-30', url: 'https://v.animethemes.moe/OnePiece-ED1.webm' },
+      { version: 1, label: 'English', episodes: '1-30', url: 'https://v.animethemes.moe/OnePiece-ED1-EN.webm' }
+    ]);
+  });
+
+  it('does not collapse distinct unnumbered (sequence: null) themes together', () => {
+    const anime = {
+      themes: [
+        { type: 'ED', sequence: null, group: null, song: { title: { romaji: 'Song A' } } },
+        { type: 'ED', sequence: null, group: null, song: { title: { romaji: 'Song B' } } }
+      ]
+    };
+    const grouped = groupThemes(anime, meta);
+    expect(grouped.ED).toHaveLength(2);
+  });
+
+  it('limits song groups to 5 items initially with independent Show all / Show less toggles and scroll follow', () => {
+    vi.useFakeTimers();
+    const pauseSpy = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const scrollBySpy = vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
+    const originalMatchMedia = window.matchMedia;
+    const origScrollYDesc = Object.getOwnPropertyDescriptor(window, 'scrollY');
+    const origDocScrollHeightDesc = Object.getOwnPropertyDescriptor(document.documentElement, 'scrollHeight');
+    let reduced = false;
+    let scrollY = 700;
+    let docHeight = 3000;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(prefers-reduced-motion: reduce)' ? reduced : false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false
+    }));
+    Object.defineProperty(window, 'scrollY', { configurable: true, get: () => scrollY });
+    Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, get: () => docHeight });
+
+    try {
+      const fiveSongs: SongEntry[] = Array.from({ length: 5 }, (_, i) => ({
+        sequence: i + 1,
+        name: `${i + 1}. "OP ${i + 1}"`,
+        url: null
+      }));
+      const fiveGroup = createSongGroup('Openings', fiveSongs, [], 'OP');
+      expect(fiveGroup.querySelectorAll('.daiya-anisong-entry')).toHaveLength(5);
+      expect(fiveGroup.querySelector('.daiya-anisongs-toggle')).toBeNull();
+
+      const eightSongs: SongEntry[] = Array.from({ length: 8 }, (_, i) => ({
+        sequence: i + 1,
+        name: `${i + 1}. "ED ${i + 1}"`,
+        url: `https://v.animethemes.moe/ED${i + 1}.webm`
+      }));
+      const eightGroup = createSongGroup('Endings', eightSongs, [], 'ED');
+      const extraWrap = eightGroup.querySelector('.daiya-anisongs-extra') as HTMLElement;
+      const toggleBtn = eightGroup.querySelector('.daiya-anisongs-toggle') as HTMLButtonElement;
+
+      expect(extraWrap).not.toBeNull();
+      expect(extraWrap.classList.contains('is-open')).toBe(false);
+      expect(toggleBtn.textContent).toBe('Show all (8)');
+      expect(toggleBtn.getAttribute('aria-expanded')).toBe('false');
+
+      // Expand
+      toggleBtn.click();
+      expect(extraWrap.classList.contains('is-open')).toBe(true);
+      expect(toggleBtn.textContent).toBe('Show less');
+      expect(toggleBtn.getAttribute('aria-expanded')).toBe('true');
+
+      // Start playing an item inside extraWrap, then simulate shrinking document height during collapse
+      const hiddenHeader = extraWrap.querySelector('.daiya-anisong-header') as HTMLElement;
+      hiddenHeader.click();
+      const pausesBeforeCollapse = pauseSpy.mock.calls.length;
+
+      let btnDocTop = 1200;
+      scrollY = 700;
+      docHeight = 3000;
+      scrollBySpy.mockImplementation((_x: any, y: any) => {
+        scrollY += Number(y || 0);
+      });
+      toggleBtn.getBoundingClientRect = () => ({ top: btnDocTop - scrollY } as DOMRect);
+
+      // 1. Mobile / taller-column collapse: total page height shrinks alongside button
+      toggleBtn.click();
+      expect(pauseSpy.mock.calls.length).toBe(pausesBeforeCollapse + 1);
+      expect(extraWrap.classList.contains('is-open')).toBe(false);
+      expect(toggleBtn.textContent).toBe('Show all (8)');
+      expect(toggleBtn.getAttribute('aria-expanded')).toBe('false');
+
+      // Midway collapse: both content and document shrink by 400px -> scroll follows so button stays at 500px
+      btnDocTop = 800;
+      docHeight = 2600;
+      vi.advanceTimersByTime(100);
+      expect(toggleBtn.getBoundingClientRect().top).toBe(500);
+      expect(scrollY).toBe(300);
+
+      // Finish collapse: total shrink 600px -> button remains anchored at 500px
+      btnDocTop = 600;
+      docHeight = 2400;
+      vi.advanceTimersByTime(200);
+      expect(toggleBtn.getBoundingClientRect().top).toBe(500);
+      expect(scrollY).toBe(100);
+
+      // 2. PC side-by-side layout where sibling column keeps page height unchanged -> do not scroll
+      btnDocTop = 1200;
+      docHeight = 3000;
+      scrollY = 700;
+      toggleBtn.click(); // expand
+      scrollBySpy.mockClear();
+      toggleBtn.click(); // collapse
+      btnDocTop = 600;
+      docHeight = 3000;
+      vi.advanceTimersByTime(300);
+      expect(scrollBySpy).not.toHaveBeenCalled();
+      expect(scrollY).toBe(700);
+
+      // 3. Partial shrink: collapsing column only reduces document height by 150px before matching sibling height
+      btnDocTop = 1200;
+      docHeight = 3000;
+      scrollY = 700;
+      toggleBtn.click(); // expand
+      scrollBySpy.mockClear();
+      toggleBtn.click(); // collapse
+      btnDocTop = 600;
+      docHeight = 2850;
+      vi.advanceTimersByTime(300);
+      expect(scrollY).toBe(550);
+
+      // 4. Reduced motion adjusts synchronously only by document height shrink
+      reduced = true;
+      let isOpen = false;
+      let collapsedDocHeight = 3000;
+      const prevToggle = extraWrap.classList.toggle.bind(extraWrap.classList);
+      vi.spyOn(extraWrap.classList, 'toggle').mockImplementation((cls, force) => {
+        if (cls === 'is-open') {
+          isOpen = Boolean(force);
+          docHeight = isOpen ? 3000 : collapsedDocHeight;
+        }
+        return prevToggle(cls, force);
+      });
+      toggleBtn.getBoundingClientRect = () => ({ top: (isOpen ? 1200 : 600) - scrollY } as DOMRect);
+
+      // Reduced motion with unchanged docHeight -> stays put
+      toggleBtn.click(); // expand (isOpen -> true, docHeight -> 3000)
+      scrollY = 700;
+      collapsedDocHeight = 3000;
+      scrollBySpy.mockClear();
+      toggleBtn.click(); // collapse
+      expect(scrollBySpy).not.toHaveBeenCalled();
+      expect(scrollY).toBe(700);
+
+      // Reduced motion with shrinking docHeight -> adjusts synchronously
+      toggleBtn.click(); // expand
+      scrollY = 700;
+      collapsedDocHeight = 2400;
+      toggleBtn.click(); // collapse
+      expect(scrollY).toBe(100);
+    } finally {
+      if (origScrollYDesc) Object.defineProperty(window, 'scrollY', origScrollYDesc);
+      else delete (window as any).scrollY;
+      if (origDocScrollHeightDesc) Object.defineProperty(document.documentElement, 'scrollHeight', origDocScrollHeightDesc);
+      else delete (document.documentElement as any).scrollHeight;
+      window.matchMedia = originalMatchMedia;
+      vi.useRealTimers();
+      scrollBySpy.mockRestore();
+      pauseSpy.mockRestore();
+      playSpy.mockRestore();
+    }
   });
 
   it('keeps single-version card clickable via header and animates multi-version switching across rows', () => {
@@ -533,9 +775,9 @@ describe('AniSongs: Episode Sorting, Formatting & Multi-Version Theme Cards', ()
         url: 'https://v.animethemes.moe/NiaListon-ED1.webm',
         title: 'Tokimeki Un Deux Trois♪',
         versions: [
-          { version: 1, episodes: '2, 5', notes: 'scissors', url: 'https://v.animethemes.moe/NiaListon-ED1.webm' },
-          { version: 2, episodes: '3, 6', notes: 'rock', url: 'https://v.animethemes.moe/NiaListon-ED1v2.webm' },
-          { version: 3, episodes: '4', notes: 'paper', url: 'https://v.animethemes.moe/NiaListon-ED1v3.webm' }
+          { version: 1, label: 'v1', episodes: '2, 5', notes: 'scissors', url: 'https://v.animethemes.moe/NiaListon-ED1.webm' },
+          { version: 2, label: 'v2', episodes: '3, 6', notes: 'rock', url: 'https://v.animethemes.moe/NiaListon-ED1v2.webm' },
+          { version: 3, label: 'v3', episodes: '4', notes: 'paper', url: 'https://v.animethemes.moe/NiaListon-ED1v3.webm' }
         ]
       };
 
