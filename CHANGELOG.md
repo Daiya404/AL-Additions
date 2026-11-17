@@ -6,6 +6,44 @@ Each version groups changes under **Added**, **Changed** and **Fixed**. Larger r
 
 ---
 
+## 0.9.1
+
+### Highlights
+
+- **Anime OP/ED songs now use AnimeThemes' new GraphQL API.** The old JSON API is deprecated, so the module has been moved to the new service. Theme data, credits and links come from the same source, now through a more reliable connection.
+- **Multi-version themes in one card.** An OP or ED with several versions (v1, v2, v3, …) now appears as a single card with a row per version. Click a row to play that version's video directly beneath it.
+- **Cleaner lists for long-running shows.** Themes that share the same number are merged into one card with readable language and release labels (such as `Japanese v1`, `English` or `English - 4Kids`). Openings and Endings each show 5 items at first, with a **Show all** button for the rest.
+
+### Added
+
+- **Anime OP/ED songs:** a combined card for themes with two or more versions, with clickable version rows that show each version's episodes and notes.
+- **Anime OP/ED songs:** themes with the same type and number (for example, a Japanese version and an English dub of OP1) are now combined into one card instead of appearing as duplicate entries. Each version gets a readable label, and a different song title is shown when a version uses one (such as an English dub title).
+- **Anime OP/ED songs:** Openings and Endings each show the first 5 items, with a **Show all (N)** / **Show less** button that expands the rest with a smooth animation. Any video playing in a section you collapse is paused.
+- **Anime OP/ED songs:** direct links to Spotify, YouTube, YouTube Music and Apple Music when AnimeThemes provides them for a song. If no direct link exists, the usual search link is used.
+- **Anime OP/ED songs:** smooth open and close animations for the video player, matching the Settings panel. Switching between versions opens and closes in sync. Animations are turned off if your system is set to reduce motion.
+
+### Changed
+
+- **Anime OP/ED songs:** theme requests now go to `rs.animethemes.moe` (GraphQL) instead of `api.animethemes.moe`, and the script's network permissions are updated to match.
+- **Anime OP/ED songs:** performer credits now list only performers and featured artists. Composers, lyricists and arrangers are no longer shown as artists. Credits are ordered by relevance, repeated unit or member credits are merged, and featured artists display as `Main feat. Featured`. Search links still use the clean artist name.
+- **Anime OP/ED songs:** when you collapse a section, the page now follows the button smoothly on narrow and mobile layouts instead of jumping to the bottom, and stays still on desktop when a taller column keeps the page height unchanged. It stops following as soon as you scroll yourself.
+- **Anime OP/ED songs:** versions are sorted in order, and episode lists are sorted numerically with repeated episodes removed. Both ranges (`1-12`) and lists (`1, 3, 5`) are now labelled "eps".
+- **Anime OP/ED songs:** when several videos are available, web videos are preferred over Blu-ray rips.
+- **Anime OP/ED songs:** custom and search-based providers (such as YouTube Theme, YouTube JP, AniPlaylist and your own presets) always use their configured search templates.
+- **Anime OP/ED songs:** the theme cache has been reset, so themes are fetched again on your first visit to each anime page.
+
+### Fixed
+
+- **Anime OP/ED songs:** the video player now reserves a 16:9 area, so the page no longer jumps while the video loads.
+- **Anime OP/ED songs:** clicking versions in quick succession no longer breaks the player while it is still closing.
+
+### Upgrade notes
+
+- Your userscript manager may ask you to approve the new `rs.animethemes.moe` network permission. Accept it for OP/ED themes to keep working.
+- No settings changes are needed. Your saved search providers and presets are kept.
+
+---
+
 ## 0.9.0
 
 ### Highlights

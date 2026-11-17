@@ -4,7 +4,7 @@ AL Additions is a userscript that adds practical tools to [AniList](https://anil
 
 | Project detail | Information                                                                                                                     |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **Version**    | 0.9.0 ([changelog](./CHANGELOG.md))                                                                                             |
+| **Version**    | 0.9.1 ([changelog](./CHANGELOG.md))                                                                                             |
 | **License**    | [GPL-3.0-or-later](./LICENSE)                                                                                                   |
 | **Author**     | [Daiya](https://github.com/Daiya404)                                                                                            |
 | **Install**    | [GitHub userscript](https://raw.githubusercontent.com/Daiya404/AL-Additions/main/al-additions.user.js)                          |
@@ -89,7 +89,7 @@ Each feature can be enabled or disabled in **AniList Settings â†’ AL Additions â
 
 **Airing Progress Indicator** checks entries in the Watching section of your anime list and caches results to reduce requests.
 
-**Anime Opening & Ending Songs:** theme data comes from [AnimeThemes](https://animethemes.moe/) and is cached. Search providers and their order can be configured in the settings.
+**Anime Opening & Ending Songs:** theme data comes from [AnimeThemes](https://animethemes.moe/) (via its GraphQL API) and is cached. Themes with the same type and number are merged into a single card with a row per version or language (for example `Japanese v1`, `English`, `English - 4Kids`) showing its episodes and notes; clicking a row opens that version's video inline directly beneath it. Openings and Endings each show the first 5 items, with a **Show all** / **Show less** button for long-running shows. Performer and featuring credits are shown, and direct provider links (Spotify, YouTube, YouTube Music, Apple Music) are used when AnimeThemes provides them, otherwise a search link is used. Search providers and their order can be configured in the settings.
 
 ---
 
@@ -130,6 +130,8 @@ The panel groups features into sections. Change the settings you want, then pres
 ### Defaults and upgrades
 
 Most enhancement modules are disabled by default on a clean installation. After an update, check your settings and re-enable anything you want to use. Existing saved preferences are generally retained, while newly added settings use their configured defaults.
+
+Version 0.9.1 moves OP/ED theme data to a new AnimeThemes host, so your userscript manager may ask you to approve the new network permission on update. The theme cache is rebuilt automatically on first visit.
 
 ---
 
@@ -219,7 +221,7 @@ AL Additions runs on `anilist.co` and `myanimelist.net`. It contacts services ne
 | ---------------------------------------------- | ----------------------------------------------------------------- |
 | `graphql.anilist.co`                           | AniList media/list data, sync, score editor, and related lookups. |
 | `myanimelist.net`, `api.myanimelist.net`       | MAL account connection, list reading, and sync updates.           |
-| `api.animethemes.moe`                          | OP/ED theme data.                                                 |
+| `rs.animethemes.moe`                           | OP/ED theme data (GraphQL API).                                   |
 | `api.mangaupdates.com`, `www.mangaupdates.com` | Latest chapter counts for manga.                                  |
 | `www.novelupdates.com`                         | Latest chapter counts for novels.                                 |
 | `s4.anilist.co`                                | AniList-hosted images, such as banners.                           |
@@ -240,6 +242,7 @@ The MAL connection uses OAuth with PKCE and a public client ID, so no client sec
 | **A value is not accepted by MAL**                    | Check the log for the entry and field. Some rejected values may be suppressed to avoid repeated write attempts until the AniList entry changes or you run Full resync. |
 | **The API limit is reached**                          | The sync should honour the cooldown and continue when possible. Check the log before retrying.                                                                         |
 | **Fast Load or Tier Labels does not run**             | Check that the feature is enabled. If the corresponding standalone userscript is installed, AL Additions pauses its built-in counterpart to avoid duplicate execution. |
+| **OP/ED themes do not load**                          | Make sure your userscript manager allowed the `rs.animethemes.moe` permission after updating to 0.9.1, then reload the page.                                           |
 | **A feature stopped working after an AniList update** | AniList sometimes changes its page layout. Please [open an issue](https://github.com/Daiya404/AL-Additions/issues) with the affected page and what happened.           |
 
 ### Reporting bugs or requesting features
