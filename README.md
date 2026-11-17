@@ -89,7 +89,7 @@ Each feature can be enabled or disabled in **AniList Settings → AL Additions �
 
 **Airing Progress Indicator** checks entries in the Watching section of your anime list and caches results to reduce requests.
 
-**Anime Opening & Ending Songs:** theme data comes from [AnimeThemes](https://animethemes.moe/) (via its GraphQL API) and is cached. Themes with multiple versions appear in a single card with a row per version (v1, v2, …) showing its episodes and notes; clicking a row opens that version's video inline directly beneath it. Performer and featuring credits are shown, and direct provider links (Spotify, YouTube, YouTube Music, Apple Music) are used when AnimeThemes provides them, otherwise a search link is used. Search providers and their order can be configured in the settings.
+**Anime Opening & Ending Songs:** theme data comes from [AnimeThemes](https://animethemes.moe/) (via its GraphQL API) and is cached. Themes with the same type and number are merged into a single card with a row per version or language (for example `Japanese v1`, `English`, `English - 4Kids`) showing its episodes and notes; clicking a row opens that version's video inline directly beneath it. Openings and Endings each show the first 5 items, with a **Show all** / **Show less** button for long-running shows. Performer and featuring credits are shown, and direct provider links (Spotify, YouTube, YouTube Music, Apple Music) are used when AnimeThemes provides them, otherwise a search link is used. Search providers and their order can be configured in the settings.
 
 ---
 
